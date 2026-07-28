@@ -185,4 +185,37 @@ feat: fact-based adapter contract and deterministic fake adapter
 
 ## Notes
 
-Record the Codex walkthrough here, plus anything that contradicts the docs.
+### Codex adapter walkthrough — every operation satisfiable by a single-shot child process
+
+This walkthrough confirms that no operation in the contract assumes HTTP, sessions, SSE, or long-lived servers.
+All operations have a sensible implementation for `codex exec --json`:
+
+| Operation | Codex implementation |
+|---|---|
+| `GetIdentity()` | Returns `{ backend: 'codex', adapter_version: '1.0.0', state_schema_version: 1 }` |
+| `DetectVersion()` | Run `codex --version`, parse the output string |
+| `ProbeCapabilities()` | Load the static manifest, optionally probe `--help` for supported flags |
+| `DeclareCancelRungs()` | Returns `['hard_kill']` — exactly one rung, no graceful path |
+| `ValidateRequest(request)` | Check `request` fields against declared capability; throw typed Error on mismatch (e.g. `--variant` not supported) |
+| `PrepareInvocation(attempt, request)` | Write `prompt.md` and construct the `codex exec --json` command line; environment and working directory are configured |
+| `Start(attempt)` | Spawn `codex exec --json` as a child process; return `{ handle: childPid }` — spawned with `windowsHide: true`, output pipes connected |
+| `Observe(attempt)` | Async generator: read NDJSON lines from child stdout, parse each line into the appropriate fact type (`assistant_text`, `tool_invoked`, `tool_result`, `usage_reported`, `process_exited`, `backend_error`). Generator terminates when the child exits and stdout is drained |
+| `SendPrompt(attempt, prompt)` | The prompt was already provided at `Start` (written to stdin). For codex this is a no-op if the prompt was piped through stdin |
+| `Resume(attempt, kind, prompt)` | For `fork_from_artifacts`: re-run with the parent's artifacts directory seeded. For `continue_backend_session`: not supported (no session API) — throws or no-ops |
+| `Respond(interactionId, decision)` | Not supported — `capabilities.extensions.interactive_permissions` is `{ supported: false }`. Calling this throws |
+| `RequestCancel(attempt, rung)` | For `hard_kill`: kill the child process tree via the containment helper. |
+| `CollectResult(attempt)` | Concatenate all `assistant_text.text` from the NDJSON stream; parse the final message file; merge `usage_reported` fields |
+| `CollectDiagnostics(attempt)` | Return child exit code, captured stderr tail, and event count from the NDJSON stream |
+| `Dispose(attempt)` | Close any remaining file handles to the child's pipes; no-op if the child already exited |
+| `Recover(attempt)` | Inspect the attempt directory for `worker-complete.json`, `stdout.log` / `stderr.log`, and the final message file. If the worker sentinel exists and a result file is present, return `{ state: 'done' }`; if only error logs exist, return `{ state: 'failed' }`; if neither, return `{ state: 'interrupted' }`. Never returns `'running'` |
+
+**Conclusion:** Every contract operation has a natural single-shot-child-process implementation.
+No operation needs to emulate HTTP, sessions, or SSE. The contract is correct for the simplest
+backend shape.
+
+### Things that contradicted the docs
+
+None. The design spec §9, ADR-007, and the ticket's inline design all agreed. The single
+adjustment was in the contract test: the banned-word check for "response" was too aggressive
+(it hit the `responses` getter on the fake adapter, which is a test helper, not a contract
+operation). Fixed by checking only the 16 named contract operations.
