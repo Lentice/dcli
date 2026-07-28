@@ -1094,6 +1094,107 @@ console.log('PASS: atomic write cleanup');
 console.log('PASS: path handling with long paths, UNC, symlinks, and junctions');
 
 // ===========================================================================
+// 17. Heartbeat writer updates heartbeat_at in status.json
+// ===========================================================================
+
+{
+  loadModules();
+  const root = tmpStateRoot();
+  const store = new JobStore({ stateRoot: root });
+  const repoKeyResult = computeRepoKeyWithPath(__dirname);
+  const jobId = generateJobId();
+
+  store.createJob({
+    jobId,
+    repoKey: repoKeyResult.repoKey,
+    repoRoot: repoKeyResult.fullPath,
+    backend: 'fake',
+    backendVersion: '1.0.0',
+    adapterVersion: '1.0.0',
+    mode: 'review',
+    access: 'read-only',
+  });
+
+  // Initially heartbeat_at is null
+  const before = store.readStatus({ repoKey: repoKeyResult.repoKey, jobId });
+  assert.strictEqual(before.heartbeat_at, null, 'heartbeat_at must be null initially');
+
+  // Write heartbeat
+  store.writeHeartbeat({ repoKey: repoKeyResult.repoKey, jobId });
+
+  const after = store.readStatus({ repoKey: repoKeyResult.repoKey, jobId });
+  assert.strictEqual(typeof after.heartbeat_at, 'string', 'heartbeat_at must be a string after writeHeartbeat');
+  assert.ok(after.heartbeat_at.endsWith('Z'), 'heartbeat_at must be UTC');
+
+  // Journal must contain the heartbeat entry
+  const journal = store.readJournal({ repoKey: repoKeyResult.repoKey, jobId });
+  const heartbeatEntry = journal.find(e => e.kind === 'heartbeat');
+  assert.ok(heartbeatEntry, 'Journal must contain a heartbeat entry');
+  assert.strictEqual(heartbeatEntry.detail.heartbeat_at, after.heartbeat_at,
+    'Journal heartbeat_at must match status.json heartbeat_at');
+
+  // Multiple heartbeats: each one updates heartbeat_at and adds a journal entry
+  store.writeHeartbeat({ repoKey: repoKeyResult.repoKey, jobId });
+
+  const journal2 = store.readJournal({ repoKey: repoKeyResult.repoKey, jobId });
+  const heartbeatEntries = journal2.filter(e => e.kind === 'heartbeat');
+  assert.strictEqual(heartbeatEntries.length, 2, 'Two heartbeats must produce two journal entries');
+
+  // Regenerate status from journal preserves latest heartbeat_at
+  const regenerated = store.regenerateStatus({ repoKey: repoKeyResult.repoKey, jobId });
+  const lastHeartbeat = heartbeatEntries[heartbeatEntries.length - 1];
+  assert.strictEqual(regenerated.heartbeat_at, lastHeartbeat.detail.heartbeat_at,
+    'Regenerated status must have the latest heartbeat_at');
+
+  clean(root);
+}
+
+console.log('PASS: heartbeat writer');
+
+// ===========================================================================
+// 18. Zero-wait: readStatus and regenerateStatus never block
+// ===========================================================================
+
+{
+  loadModules();
+  const root = tmpStateRoot();
+  const store = new JobStore({ stateRoot: root });
+  const repoKeyResult = computeRepoKeyWithPath(__dirname);
+  const jobId = generateJobId();
+
+  store.createJob({
+    jobId,
+    repoKey: repoKeyResult.repoKey,
+    repoRoot: repoKeyResult.fullPath,
+    backend: 'fake',
+    backendVersion: '1.0.0',
+    adapterVersion: '1.0.0',
+    mode: 'review',
+    access: 'read-only',
+  });
+
+  // readStatus must return promptly — it reads a file, no waiting
+  const start = Date.now();
+  for (let i = 0; i < 100; i++) {
+    store.readStatus({ repoKey: repoKeyResult.repoKey, jobId });
+  }
+  const readTime = Date.now() - start;
+  assert.ok(readTime < 5000, '100 readStatus calls must complete in under 5s');
+
+  // regenerateStatus must return promptly — it reads journal and replays
+  const start2 = Date.now();
+  for (let i = 0; i < 50; i++) {
+    store.regenerateStatus({ repoKey: repoKeyResult.repoKey, jobId });
+  }
+  const regenTime = Date.now() - start2;
+  assert.ok(regenTime < 5000, '50 regenerateStatus calls must complete in under 5s');
+
+  clean(root);
+}
+
+console.log('PASS: zero-wait reads');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 

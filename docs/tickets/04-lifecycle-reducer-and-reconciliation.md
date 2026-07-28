@@ -120,3 +120,20 @@ feat: engine-owned lifecycle reducer with evidence-based reconciliation
 ```
 
 ## Notes
+
+Implemented:
+
+- `core/reducer.js` — single `reduce(state, facts, evidence)` function. Synchronous, zero-wait.
+  Returns `{ state, phase, failure?, failure_reason?, backend_session_id?, warning? }`.
+- `core/job-store.js#writeHeartbeat` — writes `heartbeat_at` via journal entry.
+- `tests/core/reducer.test.js` — 16 tests covering all checklist items.
+- `tests/core/job-store.test.js` — tests 17 and 18: heartbeat writer + zero-wait reads.
+
+Design notes:
+- PID-reuse safety is delegated to the evidence layer: the evidence layer must check
+  `executionToken` against the stored `execution_token` and set `workerAlive = false` on
+  mismatch. The reducer accepts `executionTokenMatch` as optional evidence input.
+- The 5s heartbeat interval is the caller's responsibility (the engine that runs the
+  worker calls `writeHeartbeat` every 5s). The reducer only reacts to stale heartbeats.
+- Zero-wait is inherent: `readStatus` and `regenerateStatus` are O(1) file reads with
+  no locking, and `reduce` is a pure synchronous function.

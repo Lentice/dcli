@@ -103,6 +103,11 @@ class JobStore {
         updated.execution_token = d.execution_token || null;
         break;
       }
+      case 'heartbeat': {
+        const d = entry.detail || {};
+        if (d.heartbeat_at !== undefined) updated.heartbeat_at = d.heartbeat_at;
+        break;
+      }
       case 'attempt_state_changed': {
         if (entry.to !== undefined) {
           updated.state = entry.to;
@@ -294,6 +299,26 @@ class JobStore {
   regenerateStatus({ repoKey, jobId }) {
     const jobDir = this._jobDir(repoKey, jobId);
     return this._regenerateStatus(jobDir);
+  }
+
+  writeHeartbeat({ repoKey, jobId }) {
+    const jobDir = this._jobDir(repoKey, jobId);
+    const journalPath = path.join(jobDir, 'journal.jsonl');
+    const seq = this._lastJournalSeq(jobDir) + 1;
+
+    const entry = {
+      seq,
+      at: new Date().toISOString(),
+      kind: 'heartbeat',
+      attempt: null,
+      from: null,
+      to: null,
+      detail: { heartbeat_at: new Date().toISOString() },
+    };
+
+    appendJsonLine(journalPath, entry);
+    const status = this._regenerateStatus(jobDir);
+    this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
   }
 }
 
