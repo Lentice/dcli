@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./fs-text');
+const { maybeInject } = require('./inject-points');
 
 const ATOMIC_WRITE_MAX_RETRIES = 10;
 const ATOMIC_WRITE_DELAY_MS = 20;
@@ -272,6 +273,9 @@ class JobStore {
     };
 
     appendJsonLine(journalPath, entry);
+
+    maybeInject('journal-before-status-write');
+
     const status = this._regenerateStatus(jobDir);
     this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
 

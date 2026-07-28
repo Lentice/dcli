@@ -81,7 +81,7 @@ dcli/
   core/
     job-store.js  job-schema.js  lifecycle.js  locking.js
     process-identity.js  containment.js  deadlines.js
-    child-process.js  bounded-tail.js
+    child-process.js  bounded-tail.js  inject-points.js
     worktree.js  snapshot.js  results.js  exit-codes.js
     capabilities.js  validate.js
     commands/                # one file per core command

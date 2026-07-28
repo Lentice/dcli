@@ -110,3 +110,48 @@ test: fault-injection harness proving crash recovery at nine injection points
 ```
 
 ## Notes
+
+### Implementation
+
+- `core/inject-points.js` — shared marker module. Exports `maybeInject(name)` (no-op in production),
+  `__setInjectHook(fn)`, and `__resetInject()`. Inert unless the hook is set by the test harness.
+
+- Two markers placed in existing production code:
+  - `cancel-before-rungs` in `core/cancel.js` (Point 8): after the cancel.request is atomically written
+    and journaled, before `adapter.DeclareCancelRungs()`.
+  - `journal-before-status-write` in `core/job-store.js` (Point 9): after `appendJsonLine()`, before
+    `_atomicWriteJsonWithRetry()` for `status.json`. This is the journal-then-projection ordering
+    the invariant depends on.
+
+- Points 1-7 have no orchestrator yet (ticket 10+), so the tests simulate the crash-recovery state
+  directly: create the job state that would exist on disk after the controller died at that point,
+  call `reduce()` with evidence that the controller/worker is unrecoverable, and assert invariants.
+
+- `tests/helpers/fault-injection.js` — harness helpers: `makeBaseState`, `makeEvidence`,
+  `assertAllInvariants` (checks terminal state, journal coherence, zero locks, idempotency).
+
+- `tests/core/fault-injection.test.js` — `// @suite full`, skipped by name in quick suite.
+
+### Discoveries
+
+- **`assertAllInvariants` cannot check "no orphaned backend process" without real processes.**
+  The fake adapter does not create OS processes, so orphan detection is structural (asserting the
+  invariant exists as a contract). Real orphan checking requires the process-containment integration
+  and will be tested in adapter-specific fault-injection tests.
+
+- **The reducer requires stale heartbeat or absent heartbeat to produce `interrupted`** when the
+  worker is alive but the controller is dead at points 4-6. A fresh heartbeat (≤15s) means the
+  reducer rightfully keeps the job `running`. Evidence must report `heartbeatAgeMs > 15000` or
+  `heartbeatAgeMs: null` for the crash-recovery path to trigger.
+
+- **`journalTransition` with `to: null` resets `status.state` to `null`.** The test originally
+  used `to: null` for phase-only detail updates, which wiped the state field. Fixed by passing
+  `to: 'running'` (preserving current state) when only adding session/phase detail.
+
+### Files changed
+- `core/inject-points.js` — NEW: injection point marker mechanism
+- `core/cancel.js` — added `maybeInject('cancel-before-rungs')` (Point 8)
+- `core/job-store.js` — added `maybeInject('journal-before-status-write')` (Point 9)
+- `tests/helpers/fault-injection.js` — NEW: harness helpers
+- `tests/core/fault-injection.test.js` — NEW: 9-point × 5-invariant tests (`@suite full`)
+- `docs/2026-07-28-design-spec.md` — added `inject-points.js` to core/ module listing

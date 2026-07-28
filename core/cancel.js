@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeTextFileAtomic } = require('./fs-text');
 const { isProcessAlive } = require('./process-identity');
+const { maybeInject } = require('./inject-points');
 
 const DEFAULT_RUNG_WAIT_MS = 2000;
 const DEFAULT_HARD_KILL_WAIT_MS = 3000;
@@ -61,6 +62,8 @@ async function cancelJob(opts) {
     to: null,
     detail: { cancel_requested_at: now },
   });
+
+  maybeInject('cancel-before-rungs');
 
   const rungs = adapter.DeclareCancelRungs();
   let cancelRungReached = null;
