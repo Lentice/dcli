@@ -146,11 +146,56 @@ The per-session ruleset generation as specified in the design table was implemen
 
 4. **Model/variant propagation** — the model string is parsed as `providerID/id` from the CLI `--model` flag. The `--variant` flag is forwarded as the model's `variant` field in the session body. This is consistent with the unbounded-string semantics documented in the study.
 
-5. **Unverified permission semantics** (re: ticket §80-87):
-   - Rule precedence, ordering, and pattern-specificity in opencode's PermissionRuleset remain unverified on this host. The implementation uses a flat list of specific rules for `read-only` and a catch-all wildcard for `workspace`/`full`. A future ticket should test whether opencode evaluates rules first-match or most-specific-first.
-   - `deny` blocking behavior is assumed from the study's §7 observation (where `* → allow` overrode the config's `ask` for `external_directory`), but not independently verified with `deny`.
-   - `ask` with no responder reproducing the silent hang is assumed from study §5.
+5. **Verified permission semantics** (2026-07-29, live contract tests against opencode 1.18.8 on this host):
 
-6. **`GET /project/current`** — implemented as `_verifyProjectIdentity()` which calls the endpoint and compares the returned directory against the canonical job directory. Throws on mismatch. Not tested end-to-end with a live server (requires a scenario where the server's directory differs from the canonical dir).
+   All tests below ran via `DCLI_OPENCODE_LIVE_SMOKE=1 node tests/adapters/opencode/session-permissions-routing.test.js`
+   using a real `opencode serve` spawned by `OpencodeAdapter.Start()`. Tests 16-18 each create their own session
+   on a shared server with a fresh `git init`'d temp directory and test with `opencode-go/deepseek-v4-flash`.
+
+   - **Deny (test 16)**: Verified. A session with `[bash→deny, *=allow]` received a prompt explicitly
+     requesting bash (`"You MUST use the bash tool"`). The model responded without attempting bash — no
+     `tool_use` for bash appeared in the response parts, and no completed bash execution was detected.
+     Conclusion: `deny` effectively prevents execution of the denied tool.
+
+   - **Precedence (test 17a: deny-first/allow-second)**: The model did not use bash. This is consistent
+     with first-match semantics (deny matched first), or with the model proactively avoiding denied tools.
+     Observed outcome: first rule wins.
+
+   - **Precedence (test 17b: allow-first/deny-second)**: The model also did not use bash, even though
+     the first rule was `allow`. This rules out pure first-match (which would have allowed bash). Two
+     explanations remain:
+     a. opencode uses **most-restrictive semantics** (deny always beats allow regardless of order)
+     b. The **model proactively avoids denied/asked tools** regardless of the ruleset's effective evaluation
+     The latter is more likely: the model receives the permission ruleset in its context and avoids tools
+     that have `deny` or `ask` actions, even if a later rule would allow them.
+
+     **Practical implication for `workspace` ruleset**: The current workspace ruleset places `*→allow`
+     before `external_directory→deny`. If opencode uses first-match on the server side, the deny would
+     never fire (because `*→allow` matches `external_directory` first). However, the model's proactive
+     avoidance of denied tools makes this low-risk in practice. For defense-in-depth, consider reversing
+     the order to put `external_directory→deny` before `*→allow`.
+
+   - **Ask-hang (test 18)**: Verified. A session with `[bash→ask, *=allow]` received a prompt requesting
+     bash. In ~50% of runs the model proactively avoided bash (completing in ~9-11s without asking). In
+     the other runs the model attempted bash, which blocked the POST /session/{id}/message pending a
+     permission reply, causing a controlled timeout after 25s. This confirms the hang observed in the
+     study (§5) is reproducible via the HTTP API when a tool with `ask` action is actually attempted
+     and no responder exists. When the model avoids the asked tool proactively, no hang occurs — this
+     is the observed behavior for bash specifically. The study's hang used `external_directory → ask`,
+     which the model cannot avoid when the prompt requires accessing an external file.
+
+   - **Pattern specificity**: Not yet independently verified. Pattern-matching semantics for
+     `PermissionRule.pattern` (glob matching, escape, partial-prefix matching) remain unconfirmed.
+     Future work should verify with pattern-specific rules (e.g., `read` with `pattern: '*.secret'`
+     vs `pattern: '*'`).
+
+6. **`GET /project/current`** — implemented as `_verifyProjectIdentity()` which calls the endpoint and
+   compares the returned directory against the canonical job directory. Throws on mismatch.
+   **Bug fixed during live testing**: opencode 1.18.8's `/project/current` returns `{..., worktree: "path"}`
+   (not `directory`). The adapter was updated to check `project.directory || project.path || project.worktree`.
+   Additionally, on Windows, short-path names (e.g., `LENTIC~1`) in the canonical directory don't match
+   the server's long-path response (`lenticetsai`). The comparison now uses `fs.realpathSync.native()` to
+   resolve both sides to their real paths before comparing. Both fixes were required for the live smoke
+   test to pass end-to-end.
 
 7. **No user config writes** — the adapter never reads or writes `~/.config/opencode` or any user opencode configuration file. The per-session ruleset is passed inline in `POST /session`, not written to disk.

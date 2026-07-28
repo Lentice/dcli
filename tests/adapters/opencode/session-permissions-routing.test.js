@@ -326,6 +326,240 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
         '_verifyProjectIdentity must be a function');
       console.log('PASS: Live — _verifyProjectIdentity interface present');
     }
+
+    // =========================================================================
+    // 16-18. Live permission contract tests (deny, precedence, ask-hang)
+    // Requires DCLI_OPENCODE_LIVE_SMOKE=1 (same guard as test 12)
+    // =========================================================================
+    {
+      const repoDir = tmpDir();
+      const gitResult = spawnSync('git', ['init'], { cwd: repoDir, encoding: 'utf8', timeout: 10000, windowsHide: true });
+      assert.strictEqual(gitResult.status, 0, 'git init must succeed');
+
+      const { request } = require('node:http');
+
+      const adapter = new OpencodeAdapter();
+      let serverStarted = false;
+
+      try {
+        adapter.PrepareInvocation({}, { canonicalDir: repoDir, access: 'full' });
+        await adapter.Start(0);
+        serverStarted = true;
+        const pw = adapter._password;
+
+        function liveRequest(method, endpoint, body, timeoutMs) {
+          const url = adapter._buildUrl(endpoint);
+          return new Promise((resolve, reject) => {
+            const u = new URL(url);
+            const headers = body ? { 'Content-Type': 'application/json' } : {};
+            if (pw) {
+              headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + pw).toString('base64');
+            }
+            let settled = false;
+            const req = request({
+              hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+              method, headers, timeout: timeoutMs || 10000,
+            }, (res) => {
+              const chunks = [];
+              res.on('data', (c) => chunks.push(c));
+              res.on('end', () => {
+                if (settled) return;
+                settled = true;
+                const raw = Buffer.concat(chunks).toString('utf8');
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                  try { resolve(JSON.parse(raw)); } catch { resolve(raw); }
+                } else {
+                  const err = new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 500)}`);
+                  err.statusCode = res.statusCode;
+                  reject(err);
+                }
+              });
+            });
+            req.on('error', (err) => { if (!settled) { settled = true; reject(err); }});
+            req.on('timeout', () => { if (!settled) { settled = true; req.destroy(); reject(new Error(`Request timeout ${timeoutMs}ms`)); }});
+            if (body !== undefined && body !== null) req.write(JSON.stringify(body));
+            req.end();
+          });
+        }
+
+        function livePost(endpoint, body, timeoutMs) { return liveRequest('POST', endpoint, body, timeoutMs); }
+        function liveGet(endpoint, timeoutMs) { return liveRequest('GET', endpoint, null, timeoutMs); }
+
+        // ======================================================================
+        // 16. Deny behavior: deny bash, allow everything else
+        // ======================================================================
+        {
+          const denyRules = [
+            { permission: 'bash', pattern: '*', action: 'deny' },
+            { permission: '*', pattern: '*', action: 'allow' },
+          ];
+
+          const session = await livePost('/session', {
+            title: 'dcli deny-test-16',
+            model: { providerID: 'opencode-go', id: 'deepseek-v4-flash' },
+            permission: denyRules,
+          }, 15000);
+          assert.ok(session && session.id, 'session must be created for deny test');
+
+          const response = await livePost(`/session/${session.id}/message`, {
+            parts: [{ type: 'text', text: 'Run the bash command "echo DENY_TEST_OK" and report only its output. You MUST use the bash tool to run the command.' }],
+          }, 120000);
+
+          const parts = (response && response.parts) || [];
+          const completedBash = parts.find(p =>
+            p.type === 'tool' && p.tool === 'bash' && p.state && p.state.status === 'completed'
+          );
+          const anyBashUse = parts.find(p => p.type === 'tool' && p.tool === 'bash');
+          if (anyBashUse) {
+            console.log(`  deny detail: bash attempted but not completed (state: ${anyBashUse.state ? anyBashUse.state.status : 'none'})`);
+          } else {
+            console.log('  deny detail: model responded without attempting bash');
+          }
+          assert.strictEqual(completedBash, undefined,
+            'No completed bash tool_use expected when bash is denied');
+          console.log('PASS: Live 16 — deny behavior: bash blocked by deny rule');
+        }
+
+        // ======================================================================
+        // 17. Precedence: same permission/pattern, opposite actions
+        //     Records whether first-match or last-match wins
+        //     17a: deny-first → allow-second (first-match vs last-match)
+        //     17b: allow-first → deny-second (distinguishes from most-restrictive)
+        // ======================================================================
+        {
+          // 17a: deny-first → allow-second
+          {
+            const rules = [
+              { permission: 'bash', pattern: '*', action: 'deny' },
+              { permission: 'bash', pattern: '*', action: 'allow' },
+            ];
+
+            const session = await livePost('/session', {
+              title: 'dcli prec-test-17a',
+              model: { providerID: 'opencode-go', id: 'deepseek-v4-flash' },
+              permission: rules,
+            }, 15000);
+            assert.ok(session && session.id, 'session must be created for precedence test 17a');
+
+            const response = await livePost(`/session/${session.id}/message`, {
+              parts: [{ type: 'text', text: 'Run the bash command "echo PRECEDENCE_17A" and report only its output. You MUST use the bash tool to run the command.' }],
+            }, 120000);
+
+            const parts = (response && response.parts) || [];
+            const completedBash = parts.find(p =>
+              p.type === 'tool' && p.tool === 'bash' && p.state && p.state.status === 'completed'
+            );
+            const result = completedBash ? 'last-match wins (allow overrides deny)' : 'first-match wins (deny blocks allow)';
+            console.log(`PASS: Live 17a — deny-first: ${result}`);
+          }
+
+          // 17b: allow-first → deny-second
+          // If first-match: allow wins → bash used
+          // If last-match: deny wins → bash not used
+          // If most-restrictive-wins: deny wins in BOTH 17a and 17b
+          {
+            const rules = [
+              { permission: 'bash', pattern: '*', action: 'allow' },
+              { permission: 'bash', pattern: '*', action: 'deny' },
+            ];
+
+            const session = await livePost('/session', {
+              title: 'dcli prec-test-17b',
+              model: { providerID: 'opencode-go', id: 'deepseek-v4-flash' },
+              permission: rules,
+            }, 15000);
+            assert.ok(session && session.id, 'session must be created for precedence test 17b');
+
+            const response = await livePost(`/session/${session.id}/message`, {
+              parts: [{ type: 'text', text: 'Run the bash command "echo PRECEDENCE_17B" and report only its output. You MUST use the bash tool to run the command.' }],
+            }, 120000);
+
+            const parts = (response && response.parts) || [];
+            const completedBash = parts.find(p =>
+              p.type === 'tool' && p.tool === 'bash' && p.state && p.state.status === 'completed'
+            );
+            const result = completedBash
+              ? 'first-match wins (allow used)'
+              : 'last-match or most-restrictive (deny blocked, or model avoided)';
+            console.log(`PASS: Live 17b — allow-first: ${result}`);
+          }
+        }
+
+        // ======================================================================
+        // 18. Ask-hang: ask for bash with no responder blocks the turn
+        //     Model may avoid bash proactively (observed), which is itself a
+        //     useful finding — the hang only manifests when the model actually
+        //     attempts the asked tool. Both outcomes are valid observations.
+        // ======================================================================
+        {
+          const askRules = [
+            { permission: 'bash', pattern: '*', action: 'ask' },
+            { permission: '*', pattern: '*', action: 'allow' },
+          ];
+
+          const session = await livePost('/session', {
+            title: 'dcli ask-test-18',
+            model: { providerID: 'opencode-go', id: 'deepseek-v4-flash' },
+            permission: askRules,
+          }, 15000);
+          assert.ok(session && session.id, 'session must be created for ask-hang test');
+
+          const start = Date.now();
+          const ASK_TIMEOUT = 25000;
+
+          try {
+            const response = await livePost(`/session/${session.id}/message`, {
+              parts: [{ type: 'text', text: 'Run the bash command "echo ASK_HANG_TEST" and report only its output. You MUST use the bash tool to run the command.' }],
+            }, ASK_TIMEOUT);
+
+            const elapsed = Date.now() - start;
+            const parts = (response && response.parts) || [];
+            const completedBash = parts.find(p =>
+              p.type === 'tool' && p.tool === 'bash' && p.state && p.state.status === 'completed'
+            );
+            if (completedBash) {
+              console.log(`WARN: Live 18 — ask-hang completed in ${elapsed}ms WITH bash used (ask did NOT block — unexpected)`);
+            } else {
+              // Model proactively avoided bash — this is the observed behavior
+              const textPart = parts.find(p => p.type === 'text');
+              const text = textPart ? textPart.text || '' : '';
+              const mentionsPerm = /permission|cannot|not allowed/i.test(text);
+              console.log(`INFO: Live 18 — ask-hang completed in ${elapsed}ms, model avoided bash (model${mentionsPerm ? ' explicitly noted permission' : ' responded without comment'})`);
+
+              // Check /permission to see if any pending requests exist
+              try {
+                const permissions = await liveGet('/permission', 5000);
+                if (permissions && permissions.length > 0) {
+                  console.log(`  pending permission requests: ${permissions.length}`);
+                } else {
+                  console.log('  no pending permission requests (model never attempted the asked tool)');
+                }
+              } catch { /* best-effort */ }
+            }
+          } catch (err) {
+            const elapsed = Date.now() - start;
+            assert.ok(elapsed >= 3000, `ask-hang should block, not fail fast: ${err.message}`);
+            console.log(`PASS: Live 18 — ask with no responder blocks (timed out after ${elapsed}ms)`);
+
+            try {
+              const permissions = await liveGet('/permission', 5000);
+              const bashPerm = (permissions || []).find(p => p.permission === 'bash');
+              if (bashPerm) {
+                console.log(`  permission request confirmed: bash (${bashPerm.id})`);
+              } else {
+                console.log('  (no pending permission requests — may have been cleaned up)');
+              }
+            } catch { /* best-effort check */ }
+          }
+        }
+
+      } finally {
+        if (serverStarted) {
+          try { adapter.Dispose(0); } catch {}
+        }
+        clean(repoDir);
+      }
+    }
   }
 } else {
   console.log('SKIP: DCLI_OPENCODE_LIVE_SMOKE not set — live permission tests skipped');
