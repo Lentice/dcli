@@ -876,6 +876,224 @@ console.log('PASS: path handling with spaces and non-ASCII');
 console.log('PASS: atomic write cleanup');
 
 // ===========================================================================
+// 16. Path handling — long paths, UNC, symlinks, junctions
+// ===========================================================================
+
+{
+  loadModules();
+
+  const isWin = process.platform === 'win32';
+
+  // ---------------------------------------------------------------------------
+  // 16a. Long path — deeply nested directories approaching/exceeding 260 chars
+  // ---------------------------------------------------------------------------
+  {
+    const base = path.join(os.tmpdir(), `dcli-long-${Math.random().toString(36).slice(2)}`);
+
+    let under = base;
+    while (under.length < 240) {
+      const seg = 'l' + Math.random().toString(36).slice(2, 7);
+      if (under.length + seg.length + 1 > 245) break;
+      under = path.join(under, seg);
+    }
+
+    let over = base;
+    while (over.length < 270) {
+      const seg = 'L' + Math.random().toString(36).slice(2, 7);
+      if (over.length + seg.length + 1 > 280) break;
+      over = path.join(over, seg);
+    }
+
+    for (const [label, dir] of [['under-260', under], ['over-260', over]]) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch (e) {
+        console.log(`  (skipping long path "${label}": ${e.message})`);
+        continue;
+      }
+
+      const rk = computeRepoKeyWithPath(dir);
+      assert.strictEqual(rk.repoKey.length, 12, `repo-key for ${label} must be 12 chars`);
+
+      const root = tmpStateRoot();
+      const store = new JobStore({ stateRoot: root });
+      const jid = generateJobId();
+
+      store.createJob({
+        jobId: jid,
+        repoKey: rk.repoKey,
+        repoRoot: rk.fullPath,
+        backend: 'fake',
+        backendVersion: '1.0.0',
+        adapterVersion: '1.0.0',
+        mode: 'review',
+        access: 'read-only',
+      });
+
+      const st = store.readStatus({ repoKey: rk.repoKey, jobId: jid });
+      assert.strictEqual(st.repo_root, rk.fullPath, `repo_root must match for ${label}`);
+
+      clean(root);
+      clean(dir);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 16b. UNC path — \\?\ prefix (Windows only)
+  // ---------------------------------------------------------------------------
+  (function() {
+    if (!isWin) {
+      console.log('  (skipping UNC path test: not Windows)');
+      return;
+    }
+
+    const dirName = `dcli-unc-${Math.random().toString(36).slice(2)}`;
+    const normalPath = path.join(os.tmpdir(), dirName);
+    const uncPath = '\\\\?\\' + normalPath;
+
+    try {
+      fs.mkdirSync(uncPath, { recursive: true });
+    } catch (e) {
+      console.log(`  (skipping UNC \\\\?\\ path test: ${e.message})`);
+      return;
+    }
+
+    try {
+      const rk = computeRepoKeyWithPath(uncPath);
+      assert.strictEqual(rk.repoKey.length, 12, 'repo-key for UNC path must be 12 chars');
+
+      const root = tmpStateRoot();
+      const store = new JobStore({ stateRoot: root });
+      const jid = generateJobId();
+
+      store.createJob({
+        jobId: jid,
+        repoKey: rk.repoKey,
+        repoRoot: rk.fullPath,
+        backend: 'fake',
+        backendVersion: '1.0.0',
+        adapterVersion: '1.0.0',
+        mode: 'review',
+        access: 'read-only',
+      });
+
+      const st = store.readStatus({ repoKey: rk.repoKey, jobId: jid });
+      assert.strictEqual(st.repo_root, rk.fullPath, 'repo_root must match for UNC path');
+
+      clean(root);
+    } finally {
+      clean(uncPath);
+    }
+  })();
+
+  // ---------------------------------------------------------------------------
+  // 16c. Directory symlink
+  // ---------------------------------------------------------------------------
+  (function() {
+    const realDir = path.join(os.tmpdir(), `dcli-real-${Math.random().toString(36).slice(2)}`);
+    fs.mkdirSync(realDir, { recursive: true });
+
+    const linkDir = path.join(os.tmpdir(), `dcli-link-${Math.random().toString(36).slice(2)}`);
+
+    try {
+      fs.symlinkSync(realDir, linkDir, 'dir');
+    } catch (e) {
+      console.log(`  (skipping symlink test: ${e.message})`);
+      clean(realDir);
+      return;
+    }
+
+    try {
+      const rk = computeRepoKeyWithPath(linkDir);
+      assert.strictEqual(rk.repoKey.length, 12, 'repo-key through symlink must be 12 chars');
+
+      // normalizePath does not resolve symlinks, so key differs from real path
+      // This is current behavior — future work may add fs.realpathSync resolution
+
+      const root = tmpStateRoot();
+      const store = new JobStore({ stateRoot: root });
+      const jid = generateJobId();
+
+      store.createJob({
+        jobId: jid,
+        repoKey: rk.repoKey,
+        repoRoot: rk.fullPath,
+        backend: 'fake',
+        backendVersion: '1.0.0',
+        adapterVersion: '1.0.0',
+        mode: 'review',
+        access: 'read-only',
+      });
+
+      const st = store.readStatus({ repoKey: rk.repoKey, jobId: jid });
+      assert.strictEqual(st.repo_root, rk.fullPath, 'repo_root must match through symlink');
+
+      clean(root);
+    } finally {
+      clean(linkDir);
+      clean(realDir);
+    }
+  })();
+
+  // ---------------------------------------------------------------------------
+  // 16d. NTFS junction — mklink /J pointing at repo root
+  // ---------------------------------------------------------------------------
+  (function() {
+    if (!isWin) {
+      console.log('  (skipping junction test: not Windows)');
+      return;
+    }
+
+    const jctTarget = path.resolve(__dirname, '..', '..');
+    const junctionDir = path.join(os.tmpdir(), `dcli-jct-${Math.random().toString(36).slice(2)}`);
+
+    const result = spawnSync(
+      process.env.ComSpec || 'cmd.exe',
+      ['/d', '/s', '/c', `mklink /J "${junctionDir}" "${jctTarget}"`],
+      { windowsHide: true, encoding: 'utf8' }
+    );
+
+    if (result.status !== 0) {
+      console.log(`  (skipping junction test: mklink failed — ${(result.stderr || result.stdout).trim()})`);
+      return;
+    }
+
+    try {
+      const rk = computeRepoKeyWithPath(junctionDir);
+      assert.strictEqual(rk.repoKey.length, 12, 'repo-key through junction must be 12 chars');
+
+      // normalizePath does not resolve junctions, so key differs from the real repo key
+      // This is current behavior — future work may add fs.realpathSync resolution
+
+      const root = tmpStateRoot();
+      const store = new JobStore({ stateRoot: root });
+      const jid = generateJobId();
+
+      store.createJob({
+        jobId: jid,
+        repoKey: rk.repoKey,
+        repoRoot: rk.fullPath,
+        backend: 'fake',
+        backendVersion: '1.0.0',
+        adapterVersion: '1.0.0',
+        mode: 'review',
+        access: 'read-only',
+      });
+
+      const st = store.readStatus({ repoKey: rk.repoKey, jobId: jid });
+      assert.strictEqual(st.repo_root, rk.fullPath, 'repo_root must match through junction');
+      assert.strictEqual(st.state, 'created', 'Job state must be created through junction');
+
+      clean(root);
+    } finally {
+      clean(junctionDir);
+    }
+  })();
+}
+
+console.log('PASS: path handling with long paths, UNC, symlinks, and junctions');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 

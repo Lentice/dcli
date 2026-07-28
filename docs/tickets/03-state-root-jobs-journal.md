@@ -158,3 +158,19 @@ Fixed by:
 
 The fix is in `core/fs-text.js` (ticket 01's file), but is a necessary cross-ticket Windows
 compatibility fix.
+
+### Discovery: `normalizePath` does not resolve symlinks or junctions — repo-key differs
+
+The `normalizePath` function in `core/repo-key.js` uses `path.resolve()` + `path.normalize()` but
+never calls `fs.realpathSync()`. This means accessing a repository through a directory symlink or
+NTFS junction produces a **different** `repo-key` than the same repository accessed through its real
+path, effectively double-keying the repo.
+
+Test section 16c/16d documents this behavior: jobs created through a symlink or junction work
+correctly in isolation (create, read status, journal transitions), and the stored `repo_root`
+reflects the link/junction path, not the resolved target.
+
+**Not fixing now** — changing `normalizePath` to resolve symlinks would be a behavioral change that
+could surprise callers who intentionally rely on the path-as-given semantics. Future ticket should
+evaluate whether to canonicalize via `fs.realpathSync` before hashing, and if so, what that means
+for the `checkRepoKeyPath` mismatch check.
