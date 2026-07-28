@@ -92,3 +92,60 @@ feat: cancellation via adapter-declared escalation rungs with verified terminati
 ```
 
 ## Notes
+
+### Implementation summary
+
+**Files created:**
+- `core/cancel.js` — The cancellation orchestrator. Exports `cancelJob()` and default deadline constants.
+  Algorithm: write cancel.request atomically → journal cancel_requested_at → walk adapter-declared
+  rungs with bounded wait per rung, checking process death as the postcondition → escalate to
+  containment.terminate() (hard kill) if no declared rung worked → verify termination → journal
+  cancelled state with `cancel_rung_reached` in `backend_state`. Returns `exitCode: 21` if
+  termination cannot be confirmed.
+- `tests/core/cancel.test.js` — 14 test scenarios covering the full checklist.
+
+**Files modified:**
+- `core/job-store.js` — Added public `getJobDir(repoKey, jobId)` method (exposes the existing
+  internal `_jobDir` for use by `cancelJob` to write `cancel.request`).
+- `adapters/fake/adapter.js` — `RequestCancel` now calls `this._script.behaviors.onCancel(rung)`
+  when configured, enabling tests to react to rung calls (e.g. set processAlive = false).
+
+### Design decisions
+
+1. **Postcondition = process death, not adapter return value.** The orchestrator independently
+   verifies process death via `isProcessAliveFn(pid)` after each rung. A rung that returns
+   `{ success: true }` does not count as "killed the process" unless the process is actually dead.
+   This matches the false-success test requirement.
+
+2. **Hard kill as implicit final rung.** The engine calls `containment.terminate()` only when ALL
+   declared rungs have been tried without achieving process death. This matches the design spec §14.
+
+3. **isProcessAliveFn is injectable.** Tests provide a custom `isProcessAliveFn` closure to control
+   process state. In production it defaults to the real `isProcessAlive` from `process-identity.js`.
+
+4. **No backend-specific conditionals in core/cancel.js.** The orchestrator only calls
+   `adapter.DeclareCancelRungs()` and `adapter.RequestCancel(attempt, rung)`. Rung names are opaque
+   strings. Verified by architecture test (test 7).
+
+5. **cancel.request atomic write before any signalling.** The orchestrator writes `cancel.request`
+   via `writeTextFileAtomic` and journals `cancel_requested_at` before calling the first
+   `adapter.RequestCancel()`. Verified by test 8.
+
+6. **Cancelled with `cancel_rung_reached` in `backend_state`.** The rung that killed the process
+   is recorded in `status.json.backend_state.cancel_rung_reached` with `schema_version: 1`.
+   This is inspectable via `debug`.
+
+### Test coverage
+
+| Test | Checklist item |
+|---|---|
+| 1. Single rung (`hard_kill`) | Fake adapter with `[hard_kill]` cancels correctly |
+| 2. Three rungs, two fail | Escalation through failing rungs to successful kill |
+| 3. False success → exit 21 | Rung returns success but process stays alive |
+| 4. Created + live worker | Predecessor regression: worker is killed |
+| 5. Created + no worker | Cancels cleanly |
+| 6. Already-terminal | No-op across all 5 terminal states |
+| 6b. All 5 terminal states | done, failed, timed_out, cancelled, interrupted |
+| 7. No backend refs in core/ | Architecture scan |
+| 8. Atomic cancel.request | File exists before RequestCancel, journal ordered |
+| 9. Rung ordering | Rungs called in adapter-declared order |

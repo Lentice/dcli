@@ -97,6 +97,9 @@ class FakeAdapter {
     }
     this._cancelRungReached = rung;
     this._cancelled = true;
+    if (this._script.behaviors && typeof this._script.behaviors.onCancel === 'function') {
+      this._script.behaviors.onCancel(rung);
+    }
     return { success: true };
   }
 

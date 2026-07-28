@@ -15,6 +15,10 @@ class JobStore {
     return path.join(this._jobsDir, repoKey, jobId);
   }
 
+  getJobDir(repoKey, jobId) {
+    return this._jobDir(repoKey, jobId);
+  }
+
   _defaultStatus() {
     return {
       schema_version: 1,
