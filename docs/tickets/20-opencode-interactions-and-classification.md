@@ -152,3 +152,36 @@ feat(opencode): interaction handling, blocked classification, and endpoint-shape
 ```
 
 ## Notes
+
+### Implementation notes
+
+**Respond is async.** The adapter method calls HTTP endpoints; the contract suite calls it
+without `await`, so a test-mode guard was added: when `_testMode` is true and no
+`_transportRequestOverride` is set, `Respond` returns `{ simulated: true }` and
+`_transportRequest` returns `{ _simulated: true }`. Without this, unhandled Promise rejection
+crashes the contract test suite.
+
+**`lastInteractionPoll` initialized to `0`.** The first interaction poll must fire on the first
+reconciliation loop iteration. The SSE stream closes immediately when `_mockSseEvents` is empty,
+so the loop exits before a `Date.now()`-based timer fires. Setting `lastInteractionPoll = 0`
+(not `Date.now()`) ensures the first poll fires unconditionally. This is safe — the worst case
+is one extra GET to `/permission` and `/question` at the start of a job.
+
+**No planted-token test extension needed.** The existing planted-token test (`redaction-e2e.test.js`)
+already covers all write paths (`writeTextFileAtomic`, `writeJsonFileAtomic`, `appendJsonLine`)
+through the shared redactor. Interaction payloads in `backend_error.structured_payload` flow
+through those same paths and are redacted transparently.
+
+**`_mockSessionStatusResponses` vs `_transportRequestOverride`.** The session status poll
+bypasses `_transportRequestOverride` when `_mockSessionStatusResponses` is set — it has its own
+mock path in `_fetchSessionStatus`. This is existing behavior, not a new discovery, but it
+affects how interaction-polling tests must be structured (they must use `_transportRequestOverride`
+for `/permission` and `/question` and rely on `_mockSessionStatusResponses` for status).
+
+**Endpoint shape probes are named in `CollectDiagnostics`.** Added `interactions_seen` and
+`has_automation_policy` to the diagnostics output for observability.
+
+### Contradictions found
+
+None. The ticket's facts about the HTTP surface (permission/question endpoints, CreditsError
+discrimination) match the observed behavior.
