@@ -118,6 +118,14 @@ startup stdout: `opencode server listening on http://127.0.0.1:<port>`. Parsing 
 not a contract. The adapter confirms the port with `GET /global/health`, but the initial
 discovery is fragile. This is the expected home for ticket 17 (server hardening).
 
+### Discovery: HTTP client missing Basic auth (fixed in same commit)
+The adapter's `httpRequest()` helper (and therefore `httpGet`/`httpPost`) never sent any
+`Authorization` header, even though `Start()` sets `OPENCODE_SERVER_PASSWORD` in the server's
+environment. When the env var is present, opencode requires Basic auth on every endpoint
+(confirmed: `GET /global/health` returned 401 without credentials). Fixed by passing the
+generated password through the `opts` parameter to every HTTP call site. Confirms
+study §11.3 open question.
+
 ### Behaviors deferred to later tickets
 - Permission handling and `Respond` → tickets 18, 20.
 - `POST /session/{id}/message` is synchronous and blocks for the whole model turn → ticket 19

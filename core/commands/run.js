@@ -85,8 +85,8 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
 
   const attempt = {};
   try {
-    adapter.Start(attempt);
-    adapter.SendPrompt(attempt, prompt);
+    await adapter.Start(attempt);
+    await adapter.SendPrompt(attempt, prompt);
   } catch (err) {
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;

@@ -7,15 +7,19 @@ const SESSION_TIMEOUT_MS = 10000;
 const MESSAGE_TIMEOUT_MS = 600000;
 const DISPOSE_TIMEOUT_MS = 5000;
 
-function httpRequest(method, url, body, timeoutMs) {
+function httpRequest(method, url, body, timeoutMs, password) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
+    const headers = body ? { 'Content-Type': 'application/json' } : {};
+    if (password) {
+      headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + password).toString('base64');
+    }
     const options = {
       hostname: u.hostname,
       port: u.port,
       path: u.pathname + u.search,
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
+      headers,
       timeout: timeoutMs || 10000,
     };
 
@@ -50,11 +54,11 @@ function httpRequest(method, url, body, timeoutMs) {
 }
 
 function httpGet(url, opts = {}) {
-  return httpRequest('GET', url, null, opts.responseTimeout);
+  return httpRequest('GET', url, null, opts.responseTimeout, opts.password);
 }
 
 function httpPost(url, body, opts = {}) {
-  return httpRequest('POST', url, body, opts.responseTimeout);
+  return httpRequest('POST', url, body, opts.responseTimeout, opts.password);
 }
 
 function generatePassword() {
@@ -261,7 +265,7 @@ class OpencodeAdapter {
     this._serverPort = port;
     this._serverBaseUrl = `http://127.0.0.1:${port}`;
 
-    const health = await httpGet(`${this._serverBaseUrl}/global/health`, { responseTimeout: HEALTH_TIMEOUT_MS });
+    const health = await httpGet(`${this._serverBaseUrl}/global/health`, { responseTimeout: HEALTH_TIMEOUT_MS, password: this._password });
     if (!health || !health.healthy) {
       throw new Error(`Server health check failed: version=${health ? health.version : 'unknown'}`);
     }
@@ -281,7 +285,7 @@ class OpencodeAdapter {
       permission: [{ permission: '*', pattern: '*', action: 'allow' }],
     };
 
-    const session = await httpPost(`${this._serverBaseUrl}/session`, sessionBody, { responseTimeout: SESSION_TIMEOUT_MS });
+    const session = await httpPost(`${this._serverBaseUrl}/session`, sessionBody, { responseTimeout: SESSION_TIMEOUT_MS, password: this._password });
     this._sessionId = session.id;
     this._backendSessionId = session.id;
 
@@ -292,7 +296,7 @@ class OpencodeAdapter {
     const response = await httpPost(
       `${this._serverBaseUrl}/session/${session.id}/message`,
       messageBody,
-      { responseTimeout: MESSAGE_TIMEOUT_MS }
+      { responseTimeout: MESSAGE_TIMEOUT_MS, password: this._password }
     );
 
     this._facts = [];
@@ -355,7 +359,7 @@ class OpencodeAdapter {
       case 'session_abort':
         if (this._sessionId && this._serverBaseUrl) {
           try {
-            httpPost(`${this._serverBaseUrl}/session/${this._sessionId}/abort`, {}, { responseTimeout: 5000 });
+            httpPost(`${this._serverBaseUrl}/session/${this._sessionId}/abort`, {}, { responseTimeout: 5000, password: this._password });
           } catch {}
         }
         this._cancelRungReached = 'session_abort';
@@ -365,7 +369,7 @@ class OpencodeAdapter {
       case 'server_dispose':
         if (this._serverBaseUrl) {
           try {
-            httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS });
+            httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password });
           } catch {}
         }
         if (this._serverProcess) {
@@ -425,7 +429,7 @@ class OpencodeAdapter {
 
     if (!this._testMode) {
       if (this._serverBaseUrl) {
-        try { httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS }).catch(() => {}); } catch {}
+        try { httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password }).catch(() => {}); } catch {}
       }
       if (this._serverProcess) {
         try { this._serverProcess.kill(); } catch {}
