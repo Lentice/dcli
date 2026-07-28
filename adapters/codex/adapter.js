@@ -10,8 +10,67 @@ const POST_EXIT_DRAIN_MS = 3000;
 const LIVE_SMOKE_TIMEOUT_MS = 30000;
 
 /**
+ * Given a resolved npm-global JS wrapper path for the `codex` package
+ * (typically an extensionless shebang script Node.js cannot spawn without
+ * a shell), attempt to locate the real per-platform vendor binary shipped
+ * as a sibling `@openai/codex-<platform>-<arch>` optional dependency.
+ *
+ * @param {string} wrapperPath
+ * @returns {string|null}
+ */
+function resolveVendorBinaryNear(wrapperPath) {
+  try {
+    // npm global layout: <root>/node_modules/@openai/codex/...
+    // The platform-specific vendor package is installed as an optional
+    // dependency NESTED inside the `codex` package's own node_modules
+    // (<root>/node_modules/@openai/codex/node_modules/@openai/codex-<platform>-<arch>/),
+    // not as a sibling at the top-level @openai scope. Search both shapes.
+    let dir = path.dirname(wrapperPath);
+    const searchRoots = [];
+    for (let i = 0; i < 6; i++) {
+      const scopeDir = path.join(dir, 'node_modules', '@openai');
+      if (fs.existsSync(scopeDir)) searchRoots.push(scopeDir);
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+
+    for (const scopeDir of searchRoots) {
+      // Skip hidden/temp entries (e.g. npm's atomic-install staging dirs
+      // like `.codex-<random>`, left behind by an interrupted install) —
+      // only the canonical, non-dot-prefixed package name is trustworthy.
+      const scopeEntries = fs.readdirSync(scopeDir).filter(e => !e.startsWith('.'));
+      // Check nested node_modules under each @openai/<pkg> first (the real
+      // shape on this machine), then the scope directory itself (in case
+      // a future install places vendor packages as top-level siblings).
+      const candidateScopes = [
+        ...scopeEntries.map(e => path.join(scopeDir, e, 'node_modules', '@openai')).filter(fs.existsSync),
+        scopeDir,
+      ];
+
+      for (const candidateScope of candidateScopes) {
+        const entries = fs.readdirSync(candidateScope).filter(e => e.startsWith('codex-'));
+        for (const entry of entries) {
+          const vendorDir = path.join(candidateScope, entry, 'vendor');
+          if (!fs.existsSync(vendorDir)) continue;
+          for (const target of fs.readdirSync(vendorDir)) {
+            const bin = path.join(vendorDir, target, 'bin', 'codex.exe');
+            if (fs.existsSync(bin)) return bin;
+            const binNoExt = path.join(vendorDir, target, 'bin', 'codex');
+            if (fs.existsSync(binNoExt)) return binNoExt;
+          }
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
  * Resolve the codex executable path, filtering out .ps1 shims that
- * Node.js cannot spawn.
+ * Node.js cannot spawn, preferring the real vendor binary over an
+ * extensionless JS wrapper, and preferring .cmd over a bare wrapper
+ * when the vendor binary cannot be located.
  *
  * @returns {string}
  */
@@ -36,6 +95,19 @@ function resolveCodexPath() {
     const candidates = lines.filter(l => !l.toLowerCase().endsWith('.ps1'));
 
     if (candidates.length > 0) {
+      // Prefer a real vendor binary reachable from any candidate — this
+      // sidesteps the extensionless-wrapper spawn problem entirely.
+      for (const candidate of candidates) {
+        const vendor = resolveVendorBinaryNear(candidate);
+        if (vendor) return vendor;
+      }
+
+      // No vendor binary found: prefer .cmd/.bat (spawnable via the
+      // documented two-layer cmd.exe quoting) over a bare extensionless
+      // file, which Node's spawn() cannot execute without a shell.
+      const cmdShim = candidates.find(c => /\.(cmd|bat)$/i.test(c));
+      if (cmdShim) return cmdShim;
+
       return candidates[0];
     }
   } catch {}
@@ -67,11 +139,10 @@ function buildArgv(opts) {
   argv.push('--ignore-user-config');
   argv.push('--ignore-rules');
 
-  // Sandbox — always read-only for wrapper jobs
+  // Sandbox — always read-only for wrapper jobs. `codex exec` is already
+  // non-interactive by design (no approval-prompt flag exists in this CLI
+  // surface); the sandbox mode alone governs what generated commands may do.
   argv.push('-s', opts.sandbox || 'read-only');
-
-  // No approval prompts
-  argv.push('-a', 'never');
 
   // Working directory
   argv.push('-C', opts.workDir);
@@ -277,11 +348,13 @@ class CodexAdapter {
 
       this._facts.push({ type: 'process_exited', code: code !== null ? code : -1 });
       this._observedExited = true;
+      if (this._exitResolve) this._exitResolve();
     });
 
     child.on('error', (err) => {
       this._facts.push({ type: 'backend_error', class_hint: 'execution_error', structured_payload: { error: err.message } });
       this._observedExited = true;
+      if (this._exitResolve) this._exitResolve();
     });
 
     return { handle: 'codex-process', pid: child.pid, resultFile: this._resultFilePath };
@@ -310,13 +383,21 @@ class CodexAdapter {
       return;
     }
 
-    // Yield accumulated facts including process_exited
+    // The real child runs asynchronously — wait for it to actually exit
+    // (or error out) before parsing its output. Without this, the
+    // generator would return immediately after Start()/SendPrompt(),
+    // long before the process has produced any output, since exit is
+    // signalled by the 'exit'/'error' event handlers registered in
+    // Start(), not by anything synchronous in this function.
+    await this._waitForExit();
+
+    // Yield accumulated facts including process_exited/backend_error
     for (const fact of this._facts) {
       yield { ...fact };
     }
 
-    // Parse JSONL events from stdout if not yet consumed
-    if (this._stdoutContent && !this._observedExited) {
+    // Parse JSONL events from stdout
+    if (this._stdoutContent) {
       const lines = this._stdoutContent.split('\n').filter(Boolean);
       for (const line of lines) {
         const yielded = this._parseJsonlEvent(line);
@@ -327,6 +408,27 @@ class CodexAdapter {
         }
       }
     }
+  }
+
+  /**
+   * Resolve once the child process has exited or errored (per the
+   * 'exit'/'error' handlers registered in Start(), which set
+   * `_observedExited` and call `_exitResolve`). Resolves immediately if
+   * that has already happened. Deliberately a REFED (not unref'd) wait —
+   * this genuinely needs to keep the event loop alive while real
+   * out-of-process work is in flight; an unref'd wait here would let
+   * Node exit the whole process before the child's result is ever
+   * observed. Has no internal timeout of its own — the caller
+   * (executeRun) is responsible for the hard-timeout bound via
+   * RequestCancel, which triggers a real process exit and unblocks this.
+   *
+   * @returns {Promise<void>}
+   */
+  _waitForExit() {
+    if (this._observedExited) return Promise.resolve();
+    return new Promise((resolve) => {
+      this._exitResolve = resolve;
+    });
   }
 
   Resume(attempt, kind, prompt) {

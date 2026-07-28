@@ -321,9 +321,10 @@ async function main() {
   const sIdx = argv.indexOf('-s');
   assert.ok(sIdx >= 0);
   assert.strictEqual(argv[sIdx + 1], 'read-only');
-  // -a never
-  assert.ok(argv.includes('-a'));
-  assert.ok(argv.includes('never'));
+  // No approval-prompt flag: verified against the real installed codex-cli
+  // 0.145.0 `exec --help` that no such flag exists — `exec` is already
+  // non-interactive by design, governed solely by the sandbox mode.
+  assert.ok(!argv.includes('-a'), 'argv must not contain a nonexistent -a flag');
   // -C workDir
   assert.ok(argv.includes('-C'));
   // -o result file

@@ -113,7 +113,13 @@ async function main() {
   switch (parsed.command) {
     case 'run': {
       const { executeRun } = require('../core/commands/run');
-      const stdinPipeActive = !process.stdin.isTTY;
+      // isTTY is undefined/false in many legitimate non-interactive contexts
+      // that never actually pipe data (this project's primary caller, Claude
+      // Code's own tool-invoked shell, is one) -- so !isTTY alone is not a
+      // reliable "stdin is piped" signal. An explicit positional prompt or
+      // --prompt-file is unambiguous and must never be silently overridden
+      // by an indefinite/empty stdin read in that case.
+      const stdinPipeActive = !process.stdin.isTTY && parsed.positionals.length === 0 && !parsed.promptFile;
       const prompt = await resolvePrompt({
         promptFile: parsed.promptFile,
         stdinPipeActive,
@@ -136,12 +142,18 @@ async function main() {
       } else {
         console.log(output.text);
       }
-      process.exit(0);
+      process.exit(output.exitCode || 0);
     }
 
     case 'submit': {
       const { executeSubmit } = require('../core/commands/submit');
-      const stdinPipeActive = !process.stdin.isTTY;
+      // isTTY is undefined/false in many legitimate non-interactive contexts
+      // that never actually pipe data (this project's primary caller, Claude
+      // Code's own tool-invoked shell, is one) -- so !isTTY alone is not a
+      // reliable "stdin is piped" signal. An explicit positional prompt or
+      // --prompt-file is unambiguous and must never be silently overridden
+      // by an indefinite/empty stdin read in that case.
+      const stdinPipeActive = !process.stdin.isTTY && parsed.positionals.length === 0 && !parsed.promptFile;
       const prompt = await resolvePrompt({
         promptFile: parsed.promptFile,
         stdinPipeActive,

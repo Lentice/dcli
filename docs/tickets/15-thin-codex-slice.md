@@ -139,5 +139,57 @@ feat(codex): thin adapter slice proving the contract against a single-shot CLI b
 ### Findings from implementation
 
 - `PrepareInvocation()` is not called by `executeRun()` or `executeSubmit()` — the engine does not yet invoke it, so the adapter stores the request during `ValidateRequest()` instead.
-- The codex live-smoke test succeeded on this machine because codex-cli 0.145.0 is installed via npm. This verified the version-detection and executable-resolution paths work end-to-end.
 - Full suite times out because opencode adapter tests attempt to spawn real opencode server processes; this is pre-existing and not introduced by this ticket.
+
+### Correction: the live path did NOT work end-to-end as first claimed — four real bugs found and fixed
+
+The original commit's claim that the live-smoke test "verified the version-detection and
+executable-resolution paths work end-to-end" was **not actually true**. Manually running the
+ticket's own verification command —
+`node cli/dcli-codex.js run --hard-timeout-sec 60 "Reply with exactly: PONG"` — produced
+**exit 0 with completely empty stdout/stderr**, exactly like ticket 14's original bug but with a
+different root cause. All four of the following were confirmed and fixed on this machine:
+
+1. **`resolveCodexPath()` picked the unusable bare wrapper.** `where codex` on this npm-global
+   install returns the extensionless JS shebang script first, then `codex.cmd`. The function only
+   filtered out `.ps1`, so it returned the bare file — which Node's `spawn()` cannot execute
+   without a shell (no interpreter line handling on Windows `CreateProcess`). Fixed by resolving
+   past the wrapper to the real per-platform vendor binary
+   (`@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe`, nested inside the
+   `codex` package's own `node_modules`, not a top-level sibling — the search had to walk into
+   that nested shape specifically), falling back to preferring `.cmd` over the bare file if no
+   vendor binary is found. Also had to explicitly skip a stale npm atomic-install temp directory
+   (`.codex-<random>`, dot-prefixed, holding an older 0.144.6 build) that the search initially
+   matched by accident.
+2. **`buildArgv()` passed `-a never`, a flag that does not exist.** Verified against the real
+   installed codex-cli 0.145.0's `codex exec --help`: there is no approval-prompt flag at all —
+   `exec` is already non-interactive by design, governed solely by `-s <sandbox mode>`. Every real
+   invocation failed with `error: unexpected argument '-a' found`, silently swallowed by the
+   `child.on('error', ...)` handler as an unsurfaced fact. Removed the flag; updated
+   `tests/adapters/codex/adapter.test.js`'s argv-shape test, which had asserted the flag's
+   presence (i.e. it was testing the bug, not the contract).
+3. **`Observe()` never actually waited for the real child to exit.** It was a single synchronous
+   pass over whatever `_facts`/`_stdoutContent` happened to exist at the instant it was called —
+   essentially immediately after `SendPrompt()` returns, long before the real process (which takes
+   real wall-clock seconds) produces anything. Fixed with a genuine event-driven wait
+   (`_waitForExit()`) resolved from the same `exit`/`error` handlers already registered in
+   `Start()`. First attempt at this fix used a `setInterval(...).unref()` poll — also wrong: an
+   unref'd timer doesn't keep Node's event loop alive, so the whole process exited silently before
+   the promise ever resolved once nothing else was pending. Fixed to resolve directly from the
+   exit event instead of polling.
+4. **`cli/dcli.js`'s stdin-piped detection (shared code, not codex-specific) silently discarded a
+   valid positional prompt.** `stdinPipeActive = !process.stdin.isTTY` treats *any* non-TTY stdin
+   as "piped" — but `process.stdin.isTTY` is `undefined` in many legitimate non-interactive
+   contexts that never pipe anything, including Claude Code's own tool-invoked shell (this
+   project's primary real-world caller). The CLI would silently wait out the 5s bounded stdin
+   read, get nothing, and use an empty prompt instead of the explicit positional argument. Fixed
+   by only treating stdin as active when no positional or `--prompt-file` was also given — an
+   explicit source should never be silently overridden by an ambiguous one. Note:
+   `fs.fstatSync(0).isFIFO()` was tried as a more principled detection method first, but does not
+   reliably report `true` even for a genuine `echo x | node ...` pipe under Git Bash on Windows —
+   not usable on this platform.
+
+All four confirmed fixed by re-running the manual verification command directly (not just via the
+test suite, since every one of these bugs was invisible to `_testMode`-mocked tests): real
+`PONG` now returns end-to-end, no orphaned `codex.exe` process survives, and the opt-in live-smoke
+test (`tests/adapters/codex/live-smoke.test.js`) genuinely passes.
