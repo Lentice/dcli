@@ -64,6 +64,18 @@ verification" — each addition ten lines and independently reasonable, and afte
 real native addon with its own multi-platform build pipeline and two implementations to debug. Any
 expansion is a design-review item.
 
+### Windowless creation — the helper''s responsibility
+
+Node''s `windowsHide` does not apply to processes the helper creates itself. The helper must pass
+**`CREATE_NO_WINDOW`** and must **never** pass `CREATE_NEW_CONSOLE`. This is the exact path where the
+predecessor''s "console window flashes on every background job" bug lived, because its production detach used
+`Win32_Process.Create`, which gives a console app a new console by default.
+
+Do **not** assert "no `conhost.exe` descendant" — measured on this host, the *correctly hidden* child allocated
+a conhost and the unhidden one did not, because `CREATE_NO_WINDOW` allocates a console without a window. Assert
+**window visibility** instead: enumerate top-level windows, map each to its owning pid via
+`GetWindowThreadProcessId`, filter by `IsWindowVisible`, and assert no descendant pid appears. Prove the
+detector works in the same test by asserting it finds the desktop''s other windows.
 ### Fail-closed
 
 If containment is requested and the helper is missing or version-incompatible, **the job does not start**.
@@ -87,7 +99,10 @@ Start the backend in a new process group; `SIGTERM` → grace → `SIGKILL` to t
 - [ ] Grandchild-kill test: a child-of-a-child is dead after `terminate`.
 - [ ] **Controller-death test:** the controlling process is killed with no cleanup opportunity; the tree
       dies and the attempt becomes `interrupted`.
-- [ ] Unix process-group test: `SIGTERM` then `SIGKILL` reaches the whole group.
+- [ ] The helper passes `CREATE_NO_WINDOW` and never `CREATE_NEW_CONSOLE`.
+- [ ] **Visible-window test:** no descendant pid of a job owns a visible top-level window, and the detector is
+      proven working by finding the desktop''s other windows in the same test.
+- [ ] The visible-window test runs for both a console-parent and a console-less-parent launch.- [ ] Unix process-group test: `SIGTERM` then `SIGKILL` reaches the whole group.
 - [ ] Detached workers do not flash a console window on Windows.
 - [ ] The process-creation call itself is inside the launch deadline — a wedged creation provider must not
       hang before the anti-hang window begins.

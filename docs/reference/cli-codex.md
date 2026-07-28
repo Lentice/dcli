@@ -206,7 +206,10 @@ runtime permission reply, while opencode has both. A shared `--approval ask` or 
 - **Windows shim resolution.** npm installs both `codex.cmd` and `codex.ps1`. PowerShell ranks the
   ExternalScript above the Application, so a bare lookup returns the `.ps1`, which `Process.Start`
   cannot execute. Resolve deliberately to the executable (development guide §1.9).
-- **cmd.exe shim quoting is two-layered.** When the resolved binary is a `.cmd`/`.bat`, the
+- **Node cannot spawn `.cmd` directly.** Since the Node 18.20 / 20.12 security fix, `spawn("codex.cmd", …)`
+  fails with **`EINVAL`** — verified on Node v24.18.0 on this host. The only correct form is to spawn
+  `%ComSpec%` explicitly with `/d /s /c` and a pre-quoted inner line (`shell: true` would also work and is
+  banned). Since npm installs `codex.cmd` on Windows, this is on the main path.- **cmd.exe shim quoting is two-layered.** When the resolved binary is a `.cmd`/`.bat`, the
   invocation is wrapped `cmd /d /s /c "<inner line>"`; the inner line needs Win32 quoting **plus**
   force-quoting of cmd metacharacters (`& | < > ( ) ^ %`), assigned as one pre-quoted string so the
   runtime does not re-escape it. Do not fork a second quoting implementation for the detach path.

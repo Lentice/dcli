@@ -177,6 +177,50 @@ tool's marker file.
 - **Watch startup cost.** The predecessor eagerly loaded every module on every invocation, ~380 ms on
   every command including `--help`. Dispatch help before heavyweight imports; measure before and after.
 
+## No console window, ever — and two facts that make it non-obvious
+
+**Requirement:** no process this tool creates may ever put a window on the user''s desktop. Not a flash, not
+for a moment, not for a detached background worker, not for a `.cmd` shim, not for the per-job backend server.
+The predecessor needed a dedicated fix for exactly this ("hide console windows for detached workers and codex
+children"), and a background tool that blinks windows is unusable.
+
+Rules:
+
+1. **Every** `spawn` passes `windowsHide: true` explicitly. Never rely on console inheritance — the wrapper is
+   invoked from terminals, from an IDE, from a GUI-launched agent, and from its own detached workers, and the
+   inherited-console situation differs in each.
+2. The **native containment helper creates processes itself**, so `windowsHide` does not apply to it. It must
+   pass `CREATE_NO_WINDOW` and must **never** pass `CREATE_NEW_CONSOLE`. This is the one path Node does not
+   control, and it is where the predecessor''s bug actually lived (its production detach used
+   `Win32_Process.Create`, which creates a new console for a console app by default).
+3. Never use `shell: true`. It is already banned for quoting reasons; it also changes window semantics.
+
+### Fact 1 — `conhost.exe` is not the signal
+
+Measured on this host: a child spawned **with** `windowsHide: true` allocated its own `conhost.exe`, while the
+same child **without** it allocated none. That is not a regression — `CREATE_NO_WINDOW` allocates a console
+*without a window*. Asserting "no conhost descendant" would fail on the correct configuration and pass on the
+wrong one.
+
+**Test window visibility, not conhost.** Enumerate top-level windows, map each to its owning pid
+(`EnumWindows` + `GetWindowThreadProcessId` + `IsWindowVisible`), and assert no pid in the job''s descendant set
+owns a visible window. Verify the detector itself works by asserting it finds the desktop''s other windows.
+
+### Fact 2 — Node cannot spawn `.cmd` / `.bat` at all
+
+Since the Node 18.20 / 20.12 security fix, `spawn("foo.cmd", …)` fails with **`EINVAL`**. Verified on Node
+v24.18.0 here. Both `codex` and `claude` are npm-installed and expose `.cmd` shims on Windows, so this is on the
+main path, not an edge case.
+
+The only correct form is to spawn the interpreter explicitly:
+
+```js
+spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", innerCommandLine], { windowsHide: true })
+```
+
+`shell: true` would also work and is **banned**. This is why the two-layered quoting rule exists: the inner
+command line needs Win32 quoting *plus* force-quoting of cmd metacharacters, and it must be handed over as one
+pre-quoted string so the runtime does not re-escape it.
 ## Names are contracts (ADR-009)
 
 The family is **`dcli`**: umbrella `dcli`, shims `dcli-codex` / `dcli-opencode` / `dcli-claude`, state root

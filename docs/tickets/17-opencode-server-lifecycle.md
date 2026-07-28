@@ -90,7 +90,7 @@ fan-out and record the numbers — the defaults must come from measurement.
 - [ ] The password is registered with the redactor and appears nowhere on disk (extend the planted-token test).
 - [ ] Every request, including health checks, carries authentication.
 - [ ] `--mdns` is never set and `--hostname` is always loopback; a test asserts the argv.
-- [ ] `<state-root>/servers/<job-id>.json` records pid, creation time, image, token, port, started-at.
+- [ ] The server is spawned windowless; a live run adds no visible window to the desktop.- [ ] `<state-root>/servers/<job-id>.json` records pid, creation time, image, token, port, started-at.
 - [ ] Server stdout/stderr is captured, size-capped, rotated, and drained for the whole lifetime; a
       verbose-server fixture proves no wedge.
 - [ ] Health-ready is bounded (30 s default); a wedged listener fails cleanly rather than hanging.

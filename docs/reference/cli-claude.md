@@ -208,6 +208,11 @@ adapter for this backend, not delegated as it can be for Codex.
 
 ---
 
+## Host quirk: Node cannot spawn `.cmd` directly
+
+`claude` is npm-installed and exposes `claude.cmd` on Windows. Since the Node 18.20 / 20.12 security fix,
+`spawn("claude.cmd", …)` fails with **`EINVAL`** (verified on Node v24.18.0 here). Spawn `%ComSpec%` explicitly
+with `/d /s /c` and a pre-quoted inner line, windowless (`windowsHide: true`). `shell: true` is banned.
 ## Open verification items specific to this backend
 
 1. Can `claude -p` block indefinitely on a permission decision, like opencode's CLI (study §5)?

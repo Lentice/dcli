@@ -110,7 +110,9 @@ from output, which removes a whole class of lineage bug.
 - [ ] Doctor builds its own envelope including the `--bare` auth probe; `--json` works even on failure.
 - [ ] Native worktree, `--bg`, `--from-pr`, `ultrareview`, and `--json-schema` are declared as unused extensions
       with reasons.
-- [ ] Executable resolution uses the executable form; npm-shaped PATH test.
+- [ ] `.cmd` shim invocation goes through `%ComSpec% /d /s /c`; a direct `spawn("claude.cmd")` would fail
+      `EINVAL` on modern Node and must never be attempted.
+- [ ] Every spawn passes `windowsHide: true`; no descendant owns a visible window.- [ ] Executable resolution uses the executable form; npm-shaped PATH test.
 - [ ] `--dangerously-skip-permissions` is unreachable from any wrapper access mode — asserted.
 - [ ] The contract suite and the parity gate still pass.
 

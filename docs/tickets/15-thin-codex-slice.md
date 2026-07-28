@@ -78,7 +78,9 @@ adapter, stop. The contract is wrong — fix the contract, not this adapter.**
 - [ ] `dcli-codex` shim selects the backend before argument parsing.
 - [ ] Adapter runs `codex exec --json` with the prompt on **stdin** and `-o` for the result.
 - [ ] argv is built as an **array** and golden-tested, with exec-level options before any subcommand token.
-- [ ] The executable resolves to the executable form; a test uses an **npm-shaped PATH** with both shims present.
+- [ ] `.cmd` shims are spawned as `%ComSpec% /d /s /c <pre-quoted line>`; a test asserts a direct
+      `spawn("*.cmd")` is never attempted, because Node rejects it with **`EINVAL`** (verified on Node v24.18.0).
+- [ ] Every spawn passes `windowsHide: true`; no descendant owns a visible window.- [ ] The executable resolves to the executable form; a test uses an **npm-shaped PATH** with both shims present.
 - [ ] If the resolved binary is a `.cmd`, the two-layered quoting rule is applied and **shared** with the
       detach path; a test asserts one implementation.
 - [ ] Output readers are armed before the stdin write; a ~100 KB prompt does not deadlock.

@@ -100,7 +100,8 @@ Session identity arrives as a `thread.started` event carrying a `thread_id`.
 - [ ] Classification reuses shared precedence; **no bare-token signatures**; unmatched signatures leave
       `failure_reason` null — test.
 - [ ] `DeclareCancelRungs()` remains `['hard_kill']`; `Respond` and `backend_status` remain absent.
-- [ ] The deep lingering tree is contained; a live test proves no `pwsh` command-safety helper survives.
+- [ ] All child creation is windowless (`windowsHide: true`, and `CREATE_NO_WINDOW` in the helper); the
+      visible-window assertion passes for a full implement run.- [ ] The deep lingering tree is contained; a live test proves no `pwsh` command-safety helper survives.
 - [ ] The contract suite and the parity gate (ticket 16) still pass.
 - [ ] Behavioral parity with the production predecessor is checked feature by feature; every intentional
       difference is written down in Notes.

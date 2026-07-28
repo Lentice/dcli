@@ -791,6 +791,34 @@ repositories. Do not rely on WMI as a primary backend for process inspection.
 
 ---
 
+## 18a. Windowless execution (Windows)
+
+**Hard requirement:** no process the tool creates may ever put a window on the user''s desktop — not a flash,
+not for a detached worker, not for a `.cmd` shim, not for the per-job backend server. A background delegation
+tool that blinks console windows is unusable.
+
+| Path | Mechanism |
+|---|---|
+| every `spawn` from Node | `windowsHide: true`, **explicitly, always** — never rely on console inheritance |
+| the native containment helper | `CREATE_NO_WINDOW`; **never** `CREATE_NEW_CONSOLE`. Node''s option does not apply here — the helper creates the process itself, and this is the path where the predecessor''s bug lived |
+| `.cmd` / `.bat` shims (codex, claude) | spawn `%ComSpec%` with `/d /s /c` and the pre-quoted inner line, itself windowless |
+| anything | `shell: true` is banned (quoting **and** window semantics) |
+
+**Do not assert on `conhost.exe`.** Measured on the study host: a child spawned *with* `windowsHide: true`
+allocated its own `conhost.exe`, while the same child *without* it allocated none — because `CREATE_NO_WINDOW`
+allocates a console *without a window*. A "no conhost descendant" assertion fails on the correct configuration
+and passes on the wrong one.
+
+**The verifiable property is window visibility.** Enumerate top-level windows, map each to its owning pid, keep
+only visible ones, and assert that no pid in the job''s descendant set appears. The test must also prove the
+detector works, by asserting it finds the desktop''s other windows.
+
+Measured baseline on the study host (Node v24.18.0, parent both with and without an inherited console): no
+tested combination of `windowsHide` and `detached` produced a visible window. That is the current state, not a
+guarantee — the assertion above is what keeps it true.
+
+Note this is about **window suppression**, not execution mode: `run` remains synchronous and `submit` remains
+the detached form. Both spawn windowless children.
 ## 19. Secrets and redaction
 
 Added after review (finding 10) — this was simply missing, and it is adjacent to a subsystem that
