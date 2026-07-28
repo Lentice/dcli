@@ -128,3 +128,31 @@ feat(opencode): async prompting with event-stream progress and state-based recon
 ```
 
 ## Notes
+
+### Implementation findings
+
+- The SSE event format from `GET /event` mirrors the CLI NDJSON (`--format json`) structure:
+  events with `type`, `timestamp`, `sessionID`, and `part` fields. Top-level types use underscores
+  (`step_start`, `step_finish`, `tool_use`); `part.type` uses hyphens (`step-start`, `step-finish`, `tool`).
+- Both underscore and hyphen forms are handled in `_processSseEvents` and `_selectFinalMessage`.
+- Flat `{parts}` format (from CLI NDJSON) vs structured `[{info, parts}]` format (from
+  `GET /session/{id}/message`) both work in `_selectFinalMessage`. The structured format uses
+  `msg.info.id` for message identity; the flat format uses `part.messageID`.
+- Test-mode mock transport via `_transportRequestOverride` function injection avoids the need
+  for a server. Threaded through `_transportRequest()` which checks for the override first.
+- Mock SSE events must be consumed only once. `_sseReadEvents` drains `_mockSseEvents` to `[]`
+  after yielding to prevent replay on reconnection.
+- Idle timeout and poll interval are configurable via `_mockIdleTimeoutMs` / `_mockPollIntervalMs`
+  for tests. Default idle timeout is 120s.
+- `_processSseEvents` emits `assistant_text` from SSE text events (live progress), not just from
+  the final message fetch. The final `_selectFinalMessage` in the Observe loop is authoritative.
+- `usage_reported` is emitted both from SSE `step-finish` events with `reason: "stop"`
+  (in `_processSseEvents`) and from `_selectFinalMessage`. The engine handles duplicates by
+  taking the last value (through `CollectResult`).
+- `step-finish` with `reason: "tool-calls"` is explicitly NOT treated as completion.
+  Only `reason: "stop"` on the final assistant message counts.
+- The `SendPrompt` method now creates a session and calls `POST /session/{id}/prompt_async`.
+  The synchronous `POST /session/{id}/message` is no longer used.
+- `Observe` is now a proper async generator that runs the reconciliation loop:
+  SSE events → facts, status polling → backend_status, stream reconnection with message
+  re-read, and final message selection on idle.

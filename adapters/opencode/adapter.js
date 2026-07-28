@@ -16,6 +16,13 @@ const MESSAGE_TIMEOUT_MS = 600000;
 const DISPOSE_TIMEOUT_MS = 5000;
 const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
 const MAX_STDERR_BYTES = 10 * 1024 * 1024;
+const POLL_INTERVAL_MS = 5000;
+const IDLE_TIMEOUT_MS = 120000;
+const SSE_READ_TIMEOUT_MS = 3000;
+const PROMPT_ASYNC_TIMEOUT_MS = 15000;
+const MESSAGES_TIMEOUT_MS = 30000;
+const SESSION_STATUS_TIMEOUT_MS = 10000;
+const MAX_SSE_RECONNECTS = 5;
 
 function httpRequest(method, url, body, timeoutMs, password) {
   return new Promise((resolve, reject) => {
@@ -161,8 +168,14 @@ class OpencodeAdapter {
   constructor(options = {}) {
     this._testMode = options._testMode || false;
     this._mockVersion = options._mockVersion || null;
-    this._mockFacts = options._mockFacts || [];
+    this._mockFacts = options._mockFacts !== undefined ? options._mockFacts : null;
     this._mockExitCode = options._mockExitCode !== undefined ? options._mockExitCode : null;
+    this._mockSseEvents = options._mockSseEvents || null;
+    this._mockSessionStatusResponses = options._mockSessionStatusResponses || null;
+    this._mockMessagesResponse = options._mockMessagesResponse || null;
+    this._mockPromptAsyncStatusCode = options._mockPromptAsyncStatusCode !== undefined ? options._mockPromptAsyncStatusCode : 204;
+    this._mockSessionId = options._mockSessionId || null;
+    this._mockIdleTimeoutMs = options._mockIdleTimeoutMs || null;
     this._stateRoot = options.stateRoot || null;
     this._jobId = options.jobId || null;
 
@@ -196,6 +209,13 @@ class OpencodeAdapter {
     this._healthTimeoutMs = HEALTH_TIMEOUT_MS;
     this._maxServerStdoutBytes = MAX_STDOUT_BYTES;
     this._maxServerStderrBytes = MAX_STDERR_BYTES;
+
+    this._idleTimeoutMs = options._mockIdleTimeoutMs !== undefined ? options._mockIdleTimeoutMs : IDLE_TIMEOUT_MS;
+    this._pollIntervalMs = options._mockPollIntervalMs !== undefined ? options._mockPollIntervalMs : POLL_INTERVAL_MS;
+    this._asyncResultText = '';
+    this._asyncResultUsage = { input: 0, output: 0, total: 0 };
+    this._asyncResultCost = null;
+    this._asyncBackendSessionId = null;
 
     this._serversDir = this._stateRoot ? path.join(this._stateRoot, 'servers') : null;
   }
@@ -395,6 +415,14 @@ class OpencodeAdapter {
     return url.toString();
   }
 
+  _transportRequest(method, endpoint, body, timeoutMs) {
+    if (this._testMode && typeof this._transportRequestOverride === 'function') {
+      return this._transportRequestOverride(method, endpoint, body, timeoutMs);
+    }
+    const url = this._buildUrl(endpoint);
+    return httpRequest(method, url, body, timeoutMs, this._password);
+  }
+
   _buildSessionBody(prompt) {
     const model = this._modelObj || { providerID: 'opencode-go', id: 'deepseek-v4-flash' };
     const body = {
@@ -438,6 +466,181 @@ class OpencodeAdapter {
         'Refusing to send prompt to the wrong repository.'
       );
     }
+  }
+
+  _processSseEvents(events) {
+    const facts = [];
+    for (const event of events) {
+      const part = event.part || {};
+      const eventType = event.type || '';
+      const partType = part.type || '';
+
+      switch (eventType) {
+        case 'text': {
+          if (partType === 'text' && typeof part.text === 'string') {
+            facts.push({ type: 'assistant_text', message_id: part.messageID || 'msg_unknown', text: part.text });
+          } else if (partType === 'reasoning') {
+            facts.push({ type: 'reasoning', message_id: part.messageID || 'msg_unknown' });
+          }
+          break;
+        }
+
+        case 'tool_use': {
+          if (partType === 'tool' && part.tool) {
+            const callId = part.callID || 'call_unknown';
+            const isRunning = part.state && (part.state.status === 'running' || part.state.status === 'pending');
+            if (isRunning) {
+              const inputSummary = part.state && part.state.input
+                ? (part.state.input.command || part.state.input.file || JSON.stringify(part.state.input).slice(0, 100))
+                : part.tool;
+              facts.push({ type: 'tool_invoked', call_id: callId, tool: part.tool, summary: inputSummary });
+            } else {
+              const ok = part.state && part.state.metadata ? part.state.metadata.exit === 0 : true;
+              const outputSummary = part.state && part.state.output
+                ? String(part.state.output).slice(0, 200)
+                : (part.tool || '');
+              facts.push({ type: 'tool_result', call_id: callId, ok, summary: outputSummary });
+            }
+          }
+          break;
+        }
+
+        case 'step_finish':
+        case 'step-finish': {
+          if (part.reason === 'stop' && part.tokens) {
+            facts.push({
+              type: 'usage_reported',
+              tokens: {
+                total: part.tokens.total || 0,
+                input: part.tokens.input || 0,
+                output: part.tokens.output || 0,
+              },
+              cost: part.cost !== undefined ? part.cost : null,
+            });
+          }
+          break;
+        }
+
+        case 'error': {
+          const payload = event.error || event;
+          facts.push({
+            type: 'backend_error',
+            class_hint: 'provider_error',
+            structured_payload: typeof payload === 'object' ? payload : { message: String(payload) },
+          });
+          break;
+        }
+
+        default:
+          break;
+      }
+    }
+    return facts;
+  }
+
+  _selectFinalMessage(messageResponse) {
+    let messages = [];
+    if (Array.isArray(messageResponse)) {
+      messages = messageResponse;
+    } else if (messageResponse && Array.isArray(messageResponse.messages)) {
+      messages = messageResponse.messages;
+    } else if (messageResponse && Array.isArray(messageResponse.parts)) {
+      messages = [{ parts: messageResponse.parts }];
+    }
+
+    let lastCompletedMid = null;
+    let hasInfoIds = false;
+    let finalFlatMid = null;
+
+    for (const msg of messages) {
+      const parts = msg.parts || [];
+      const hasStop = parts.some(p => (p.type === 'step-finish' || p.type === 'step_finish') && p.reason === 'stop');
+      if (hasStop) {
+        if (msg.info && msg.info.id) {
+          lastCompletedMid = msg.info.id;
+          hasInfoIds = true;
+        } else {
+          lastCompletedMid = null;
+          const stopPart = parts.find(p => (p.type === 'step-finish' || p.type === 'step_finish') && p.reason === 'stop');
+          finalFlatMid = stopPart ? stopPart.messageID || null : null;
+        }
+      }
+    }
+
+    let text = '';
+    let usage = { input: 0, output: 0, total: 0 };
+    let cost = null;
+
+    if (hasInfoIds) {
+      for (const msg of messages) {
+        if (msg.info && msg.info.id !== lastCompletedMid) continue;
+        const parts = msg.parts || [];
+        for (const p of parts) {
+          if (p.type === 'text') text += p.text || '';
+          if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
+            usage = {
+              total: p.tokens.total || 0,
+              input: p.tokens.input || 0,
+              output: p.tokens.output || 0,
+              reasoning: p.tokens.reasoning || null,
+              cache_read: (p.tokens.cache && p.tokens.cache.read) || null,
+              cache_write: (p.tokens.cache && p.tokens.cache.write) || null,
+            };
+            if (p.cost !== undefined) cost = p.cost;
+          }
+        }
+      }
+      return { text, usage, cost, message_id: lastCompletedMid };
+    }
+
+    if (finalFlatMid) {
+      const parts = messages.length > 0 ? messages[0].parts || [] : [];
+      for (const p of parts) {
+        if (p.messageID !== finalFlatMid) continue;
+        if (p.type === 'text') text += p.text || '';
+        if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
+          usage = {
+            total: p.tokens.total || 0,
+            input: p.tokens.input || 0,
+            output: p.tokens.output || 0,
+            reasoning: p.tokens.reasoning || null,
+            cache_read: (p.tokens.cache && p.tokens.cache.read) || null,
+            cache_write: (p.tokens.cache && p.tokens.cache.write) || null,
+          };
+          if (p.cost !== undefined) cost = p.cost;
+        }
+      }
+      return { text, usage, cost, message_id: finalFlatMid };
+    }
+
+    const parts = messages.length > 0 ? messages[0].parts || [] : [];
+    for (const p of parts) {
+      if (p.type === 'text') text += p.text || '';
+      if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
+        usage = {
+          total: p.tokens.total || 0,
+          input: p.tokens.input || 0,
+          output: p.tokens.output || 0,
+          reasoning: p.tokens.reasoning || null,
+          cache_read: (p.tokens.cache && p.tokens.cache.read) || null,
+          cache_write: (p.tokens.cache && p.tokens.cache.write) || null,
+        };
+        if (p.cost !== undefined) cost = p.cost;
+      }
+    }
+    return { text, usage, cost, message_id: null };
+  }
+
+  async _readSseWithTimeout(sseIterator, timeoutMs) {
+    const timeout = new Promise(resolve => {
+      const t = setTimeout(() => resolve(null), timeoutMs);
+      if (t.unref) t.unref();
+    });
+    const result = await Promise.race([
+      sseIterator.next().then(r => r, () => ({ done: true })),
+      timeout,
+    ]);
+    return result;
   }
 
   GetResourceCost() {
@@ -552,7 +755,11 @@ class OpencodeAdapter {
   async Start(attempt) {
     if (this._testMode) {
       this._backendPid = 42;
-      this._facts = [...this._mockFacts];
+      if (!this._mockSseEvents && this._mockFacts) {
+        this._facts = [...this._mockFacts];
+      } else {
+        this._facts = [];
+      }
       return { handle: 'opencode-test-handle' };
     }
 
@@ -655,7 +862,17 @@ class OpencodeAdapter {
   }
 
   async SendPrompt(attempt, prompt) {
-    if (this._testMode) return;
+    if (this._testMode && this._mockSseEvents) {
+      this._sessionId = this._mockSessionId || 'ses_mock';
+      this._backendSessionId = this._sessionId;
+      return;
+    }
+    if (this._testMode && this._mockFacts && this._mockFacts.length > 0) {
+      return;
+    }
+    if (this._testMode && typeof this._transportRequestOverride !== 'function') {
+      return;
+    }
 
     if (!this._canonicalDir) {
       throw new Error('Cannot send prompt: no canonical job directory set. Call PrepareInvocation first.');
@@ -669,62 +886,307 @@ class OpencodeAdapter {
 
     const sessionBody = this._buildSessionBody(prompt);
 
-    const sessionUrl = this._buildUrl('/session');
-    const session = await httpPost(sessionUrl, sessionBody, { responseTimeout: SESSION_TIMEOUT_MS, password: this._password });
+    const session = await this._transportRequest('POST', '/session', sessionBody, SESSION_TIMEOUT_MS);
     this._sessionId = session.id;
     this._backendSessionId = session.id;
 
-    const messageBody = {
+    const promptBody = {
       parts: [{ type: 'text', text: prompt }],
     };
 
-    const messageUrl = this._buildUrl(`/session/${session.id}/message`);
-    const response = await httpPost(
-      messageUrl,
-      messageBody,
-      { responseTimeout: MESSAGE_TIMEOUT_MS, password: this._password }
-    );
-
-    this._facts = [];
-    this._facts.push({ type: 'started', backend_pid: this._backendPid, backend_session_id: session.id });
-
-    if (response && response.parts) {
-      let fullText = '';
-      let usage = null;
-
-      for (const part of response.parts) {
-        if (part.type === 'text') {
-          fullText += part.text || '';
-        }
-        if (part.type === 'step-finish' && part.tokens) {
-          usage = part.tokens;
-        }
+    const response = await this._transportRequest('POST', `/session/${session.id}/prompt_async`, promptBody, PROMPT_ASYNC_TIMEOUT_MS);
+    if (typeof response === 'object' && response !== null && response.statusCode) {
+      if (response.statusCode !== 204) {
+        throw new Error(`prompt_async returned HTTP ${response.statusCode}, expected 204`);
       }
+    }
+  }
 
-      if (fullText) {
-        this._facts.push({ type: 'assistant_text', message_id: `msg_${session.id}`, text: fullText });
-      }
+  async *_runAsyncReconciliation(attempt) {
+    this._asyncResultText = '';
+    this._asyncResultUsage = { input: 0, output: 0, total: 0 };
+    this._asyncResultCost = null;
+    this._asyncBackendSessionId = this._sessionId;
 
-      if (usage) {
-        this._facts.push({
-          type: 'usage_reported',
-          tokens: {
-            input: usage.input || 0,
-            output: usage.output || 0,
-            total: usage.total || 0,
-          },
-          cost: response.cost || null,
-        });
+    yield { type: 'started', backend_pid: this._backendPid, backend_session_id: this._sessionId };
+
+    const POLL_MS = this._pollIntervalMs;
+    const IDLE_MS = this._idleTimeoutMs;
+    const SSE_TIMEOUT = SSE_READ_TIMEOUT_MS;
+
+    let sseLastId = null;
+    let idleSince = null;
+    let lastPoll = Date.now();
+    let reconnectCount = 0;
+    let statusCache = null;
+
+    async function pollNow(self) {
+      try {
+        statusCache = await self._fetchSessionStatus();
+        self._asyncBackendSessionId = self._asyncBackendSessionId || self._sessionId;
+        return statusCache;
+      } catch {
+        return null;
       }
     }
 
-    this._facts.push({ type: 'process_exited', code: 0 });
+    while (reconnectCount < MAX_SSE_RECONNECTS) {
+      if (this._cancelled) break;
+
+      const sseGen = this._sseReadEvents(sseLastId);
+      let sseDone = false;
+
+      while (!sseDone) {
+        if (this._cancelled) break;
+
+        if (Date.now() - lastPoll >= POLL_MS) {
+          lastPoll = Date.now();
+          const s = await pollNow(this);
+          if (s) yield { type: 'backend_status', state: s };
+        }
+
+        if (statusCache === 'idle') {
+          if (idleSince === null) {
+            idleSince = Date.now();
+          } else if (Date.now() - idleSince > IDLE_MS) {
+            sseDone = true;
+            break;
+          }
+        } else {
+          idleSince = null;
+        }
+
+        const nextResult = await this._readSseWithTimeout(sseGen, SSE_TIMEOUT);
+
+        if (nextResult === null) continue;
+
+        if (nextResult.done) {
+          yield { type: 'stream_closed', reason: 'sse_disconnect' };
+          sseDone = true;
+          break;
+        }
+
+        const event = nextResult.value;
+        const sseId = event._sseId || null;
+        if (sseId) sseLastId = sseId;
+
+        const events = Array.isArray(event) ? event : [event];
+        const facts = this._processSseEvents(events);
+        for (const f of facts) yield f;
+        idleSince = null;
+      }
+
+      if (this._cancelled) break;
+
+      reconnectCount++;
+
+      if (statusCache === null || statusCache === 'idle') {
+        break;
+      }
+
+      if (reconnectCount >= MAX_SSE_RECONNECTS) {
+        break;
+      }
+
+      try {
+        const gapMsgs = await this._readMessagesFromServer();
+        if (gapMsgs) {
+          const gf = this._processMessageFacts(gapMsgs);
+          for (const f of gf) yield f;
+        }
+      } catch {}
+    }
+
+    if (!this._cancelled) {
+      try {
+        const msgs = await this._readMessagesFromServer();
+        const final = this._selectFinalMessage(msgs);
+        this._asyncResultText = final.text;
+        this._asyncResultUsage = final.usage;
+        this._asyncResultCost = final.cost;
+        if (final.text) {
+          yield { type: 'assistant_text', message_id: final.message_id || this._sessionId || 'msg_final', text: final.text };
+        }
+        yield {
+          type: 'usage_reported',
+          tokens: final.usage,
+          cost: final.cost,
+        };
+      } catch (err) {
+        yield { type: 'stream_closed', reason: 'finalization_error' };
+      }
+    }
+
+    yield { type: 'process_exited', code: 0 };
+  }
+
+  _processMessageFacts(messagesResponse) {
+    let messages = [];
+    if (Array.isArray(messagesResponse)) {
+      messages = messagesResponse;
+    } else if (messagesResponse && Array.isArray(messagesResponse.messages)) {
+      messages = messagesResponse.messages;
+    } else if (messagesResponse && Array.isArray(messagesResponse.parts)) {
+      messages = [{ parts: messagesResponse.parts }];
+    }
+    const facts = [];
+    for (const msg of messages) {
+      const parts = msg.parts || [];
+      for (const p of parts) {
+        switch (p.type || '') {
+          case 'text':
+            facts.push({ type: 'assistant_text', message_id: p.messageID || 'msg_gap', text: p.text || '' });
+            break;
+          case 'reasoning':
+            facts.push({ type: 'reasoning', message_id: p.messageID || 'msg_gap' });
+            break;
+          default:
+            break;
+        }
+      }
+    }
+    return facts;
+  }
+
+  async _fetchSessionStatus() {
+    if (this._testMode && this._mockSessionStatusResponses) {
+      if (this._mockStatusIndex === undefined) this._mockStatusIndex = 0;
+      if (this._mockStatusIndex < this._mockSessionStatusResponses.length) {
+        const resp = this._mockSessionStatusResponses[this._mockStatusIndex++];
+        const sid = this._mockSessionId || this._sessionId;
+        if (resp && resp[sid] && resp[sid].type) {
+          const t = resp[sid].type;
+          return t === 'retry' ? 'retrying' : t;
+        }
+        return 'idle';
+      }
+      return 'idle';
+    }
+
+    const status = await this._transportRequest('GET', '/session/status', null, SESSION_STATUS_TIMEOUT_MS);
+    if (status && typeof status === 'object') {
+      const sid = this._sessionId;
+      if (sid && status[sid]) {
+        const t = status[sid].type || status[sid];
+        if (typeof t === 'string') {
+          return t === 'retry' ? 'retrying' : t;
+        }
+        if (t && typeof t === 'object' && t.type) {
+          return t.type === 'retry' ? 'retrying' : t.type;
+        }
+      }
+    }
+    return 'idle';
+  }
+
+  async _readMessagesFromServer() {
+    if (this._testMode && this._mockMessagesResponse) {
+      return this._mockMessagesResponse;
+    }
+
+    return this._transportRequest('GET', `/session/${this._sessionId}/message`, null, MESSAGES_TIMEOUT_MS);
+  }
+
+  async *_sseReadEvents(lastEventId) {
+    if (this._testMode && this._mockSseEvents) {
+      const events = this._mockSseEvents;
+      this._mockSseEvents = [];
+      for (const ev of events) {
+        if (this._cancelled) return;
+        yield ev;
+      }
+      return;
+    }
+
+    const url = this._buildUrl('/event');
+    const u = new URL(url);
+
+    const headers = {};
+    if (this._password) {
+      headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + this._password).toString('base64');
+    }
+    if (lastEventId) {
+      headers['Last-Event-ID'] = lastEventId;
+    }
+
+    const response = await new Promise((resolve, reject) => {
+      const req = http.get({
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        headers,
+        timeout: 60000,
+      }, (res) => { resolve(res); });
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('SSE connection timed out'));
+      });
+    });
+
+    let buffer = '';
+    let sseId = null;
+
+    try {
+      for await (const chunkRaw of response) {
+        buffer += chunkRaw.toString('utf8');
+
+        while (buffer.includes('\n\n')) {
+          const idx = buffer.indexOf('\n\n');
+          const block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+
+          const parsed = this._parseSseBlock(block);
+          if (!parsed) continue;
+
+          if (parsed.id) sseId = parsed.id;
+          if (!parsed.data || parsed.data.length === 0) continue;
+
+          try {
+            const data = JSON.parse(parsed.data);
+            if (sseId) data._sseId = sseId;
+            if (parsed.event) data._sseEvent = parsed.event;
+            yield data;
+          } catch {}
+        }
+      }
+    } catch (err) {
+      return;
+    }
+  }
+
+  _parseSseBlock(block) {
+    const lines = block.split('\n');
+    const event = { data: [] };
+    for (const line of lines) {
+      if (line.startsWith(':')) continue;
+      const colonIdx = line.indexOf(':');
+      if (colonIdx === -1) continue;
+      const field = line.slice(0, colonIdx);
+      let value = line.slice(colonIdx + 1);
+      if (value.startsWith(' ')) value = value.slice(1);
+      if (field === 'event') event.event = value;
+      else if (field === 'data') event.data.push(value);
+      else if (field === 'id') event.id = value;
+      else if (field === 'retry') event.retry = parseInt(value, 10);
+    }
+    if (event.data.length === 0) return null;
+    event.data = event.data.join('\n');
+    return event;
   }
 
   async *Observe(attempt) {
-    for (const fact of this._facts) {
-      yield { ...fact };
+    if (this._testMode && this._mockSseEvents) {
+      yield* this._runAsyncReconciliation(attempt);
+      return;
     }
+    if (this._testMode && this._mockFacts) {
+      for (const fact of this._mockFacts) {
+        yield { ...fact };
+      }
+      return;
+    }
+    yield* this._runAsyncReconciliation(attempt);
   }
 
   Resume(attempt, kind, prompt) {
@@ -790,11 +1252,17 @@ class OpencodeAdapter {
     let usage = { input: 0, output: 0, total: 0 };
     let backendSessionId = null;
 
-    const facts = this._testMode ? this._mockFacts : this._facts;
-    for (const f of facts) {
-      if (f.type === 'assistant_text') lastText = f.text;
-      if (f.type === 'usage_reported' && f.tokens) usage = { ...f.tokens };
-      if (f.type === 'started' && f.backend_session_id) backendSessionId = f.backend_session_id;
+    if (this._mockSseEvents || (!this._testMode && this._asyncResultText !== undefined)) {
+      lastText = this._asyncResultText || '';
+      usage = this._asyncResultUsage || { input: 0, output: 0, total: 0 };
+      backendSessionId = this._asyncBackendSessionId || this._sessionId || null;
+    } else {
+      const facts = this._testMode ? (this._mockFacts || []) : this._facts;
+      for (const f of facts) {
+        if (f.type === 'assistant_text') lastText = f.text;
+        if (f.type === 'usage_reported' && f.tokens) usage = { ...f.tokens };
+        if (f.type === 'started' && f.backend_session_id) backendSessionId = f.backend_session_id;
+      }
     }
 
     const result = { text: lastText, usage, backend_session_id: backendSessionId };
@@ -803,11 +1271,12 @@ class OpencodeAdapter {
   }
 
   CollectDiagnostics(attempt) {
+    const factCount = this._mockFacts ? this._mockFacts.length : (this._facts ? this._facts.length : 0);
     return {
       schema_version: 1,
       backend: 'opencode',
       version: this._detectedVersion || 'unknown',
-      facts_emitted: this._facts.length,
+      facts_emitted: factCount,
       exit_code: this._mockExitCode !== null ? this._mockExitCode : 0,
     };
   }
