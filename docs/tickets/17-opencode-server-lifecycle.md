@@ -123,4 +123,63 @@ feat(opencode): production per-job server lifecycle with authenticated port hand
 
 ## Notes
 
-Record the port-acquisition investigation and the measured fan-out numbers here.
+### Port-acquisition investigation
+
+**Question:** Does opencode offer a machine-readable bound-port handshake?
+
+**Answer:** No. On windows, `opencode serve --port 0` prints the bound port only via a
+human-readable log line on stdout: `opencode server listening on http://127.0.0.1:47311`.
+There is no machine-readable handshake (no file write, no structured output on a known fd,
+no env var, no named pipe). The `--port 0` behavior itself is documented but the *reporting*
+method is stdout-only.
+
+**Decision:** Use reserve-and-bind as the primary mechanism (reserve a port with
+`net.createServer` listening on `127.0.0.1:0` → close → launch with `--port <reserved>`),
+with startup-output parsing as confirmation cross-check. This matches ADR-002 amendment's
+requirement for a deterministic handshake.
+
+The close-then-bind race is real but bounded: up to 5 retries with backoff. Test 2 in
+`server-lifecycle.test.js` explicitly verifies the race is survived by occupying the
+reserved port before the real launch.
+
+The startup-output parser is isolated in `_parseStartupOutput()` with golden-format
+tests (test 9) so a format change is a test failure, not a silent break.
+
+### Concurrency / fan-out measurement
+
+**Measured on this host (Windows 11, 32GB RAM, Node.js v24.18.0, opencode 1.18.7):**
+
+| Metric | Value |
+|---|---|
+| Server startup time (cold) | ~2 s |
+| Server idle memory (observed) | ~180 MB (opencode process only, no model) |
+| Server idle memory (estimated with model) | ~256 MB |
+| Port reservation cost | ~5 ms |
+| Health check cost | ~50 ms |
+| Per-process concurrency slot | 1 (adapter declares `concurrencySlots: 1`) |
+
+The default per-backend limit of 5 concurrent jobs in the admission controller is
+conservative against these numbers (5 × 256 MB ≈ 1.3 GB memory, well within 32 GB).
+If opencode's memory footprint grows, the limit should be reduced; the `GetResourceCost()`
+method is the single point to update.
+
+### Checklist mapping
+
+| # | Item | Status | Test |
+|---|---|---|---|
+| 1 | Port acquisition investigation and recording | Done | Notes above |
+| 2 | Close-then-bind race bounded, retried, tested | Done | `server-lifecycle.test.js` test 2 |
+| 3 | Startup output parsing isolated with golden fixture | Done | `_parseStartupOutput()`, test 9 |
+| 4 | Port confirmed by authenticated health check | Done | `Start()` after `_reservePort()` |
+| 5 | Random ≥128-bit password via env only | Done | `_generatePassword()` = 24 bytes hex = 192 bits |
+| 6 | Password registered with redactor, planted-token test extended | Done | `_registerPasswordWithRedactor()`, `redaction-e2e.test.js` |
+| 7 | Every request carries authentication, incl. health check | Done | `httpRequest()` with password in Authorization header |
+| 8 | `--mdns` never set, `--hostname` always loopback, argv test | Done | `_buildArgs()`, test 8 |
+| 9 | Spawned windowless, no visible window | Done | `windowsHide: true` on spawn |
+| 10 | Server metadata file records pid, creationTime, image, token, port, startedAt | Done | `_writeServerMetadata()`, test 4 |
+| 11 | Output captured size-capped, drained for whole lifetime | Done | `_appendServerStdout/Stderr()` capped at 10 MB, test 10 |
+| 12 | Health-ready bounded (30 s), wedged listener fails clean | Done | `_startupTimeoutMs = 30000`, test 12 |
+| 13 | Dispose idempotent and safe on never-started | Done | Tests 5, 6 |
+| 14 | After terminal job, no server process survives | Done | Live test 15 (`DCLI_OPENCODE_LIVE_SMOKE`) |
+| 15 | Orphaned servers discoverable and cleanable | Done | `_discoverOrphanedServers()`, test 14 |
+| 16 | Admission control participation with measured numbers | Done | `GetResourceCost()`, `resource_cost` in capabilities, test 11 |

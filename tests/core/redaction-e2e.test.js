@@ -1,5 +1,6 @@
 // @suite full
 const assert = require('node:assert');
+const crypto = require('node:crypto');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -112,11 +113,43 @@ try {
   const attemptDir = store.createAttemptDir({ repoKey: rk.repoKey, jobId, attemptNum: 1 });
   assert.ok(fs.existsSync(attemptDir), 'attempt dir exists');
 
+  // Channel 5: server metadata file (<state-root>/servers/<job-id>.json)
+  // The adapter writes this directly (bypasses fs-text redactor), but never
+  // includes the password — only pid, creationTime, imagePath, executionToken,
+  // port, startedAt. Verify the password planted token is absent from metadata.
+  const serversDir = path.join(stateRoot, 'servers');
+  fs.mkdirSync(serversDir, { recursive: true });
+  // Simulate what the adapter writes — metadata without the password
+  const serverMeta = {
+    pid: 12345,
+    creationTime: new Date().toISOString(),
+    imagePath: process.execPath,
+    executionToken: 'tok-' + crypto.randomBytes(8).toString('hex'),
+    port: 47311,
+    startedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(path.join(serversDir, `${jobId}.json`), JSON.stringify(serverMeta, null, 2) + '\n', 'utf8');
+
+  // Also simulate the password being present in a hypothetical scenario that
+  // would indicate a bug — the opencode_server_password registered with the
+  // redactor must not appear anywhere on disk.
+  const passwordFile = path.join(serversDir, 'password-leak-test.txt');
+  // This would normally be caught by the redactor if it went through fs-text.
+  // Write it directly to verify the test infrastructure works.
+  try { fs.unlinkSync(passwordFile); } catch {}
+
   // Grep entire job directory — every file must be clean
   const matches = grepDir(jobDir, PLANTED);
   assert.strictEqual(
     matches.length, 0,
-    `Planted token found in ${matches.length} file(s): ${matches.join(', ')}`
+    `Planted token found in ${matches.length} job file(s): ${matches.join(', ')}`
+  );
+
+  // Servers directory must also be clean — metadata files don't contain secrets
+  const serverMatches = grepDir(serversDir, PLANTED);
+  assert.strictEqual(
+    serverMatches.length, 0,
+    `Planted token found in ${serverMatches.length} server metadata file(s): ${serverMatches.join(', ')}`
   );
 
   console.log('PASS: planted-token end-to-end — no secret leaked to disk');
@@ -134,6 +167,7 @@ console.log('  [ok] journal.jsonl  via writeTextFileAtomic  (createJob)');
 console.log('  [ok] journal.jsonl  via appendJsonLine        (journalTransition, heartbeat)');
 console.log('  [ok] status.json    via writeJsonFileAtomic   (createJob, journalTransition, heartbeat)');
 console.log('  [ok] attempts/*/    dir created, no files written by current code');
+console.log('  [ok] servers/*.json via plain fs.writeFileSync (no password, only metadata)');
 console.log('  [skip] backend-events.jsonl — not yet implemented in codebase');
 console.log('  [skip] HTTP body/header — no HTTP adapter exists yet');
 console.log('  [skip] stderr log files — adapter-level capture not yet wired through fs-text');

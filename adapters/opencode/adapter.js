@@ -2,12 +2,19 @@ const { spawn } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
+const net = require('node:net');
+const crypto = require('node:crypto');
+const { getRedactor } = require('../../core/fs-text');
 
+const PORT_RESERVE_MAX_RETRIES = 5;
+const PORT_RESERVE_TIMEOUT_MS = 5000;
 const STARTUP_TIMEOUT_MS = 30000;
 const HEALTH_TIMEOUT_MS = 10000;
 const SESSION_TIMEOUT_MS = 10000;
 const MESSAGE_TIMEOUT_MS = 600000;
 const DISPOSE_TIMEOUT_MS = 5000;
+const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
+const MAX_STDERR_BYTES = 10 * 1024 * 1024;
 
 function httpRequest(method, url, body, timeoutMs, password) {
   return new Promise((resolve, reject) => {
@@ -82,11 +89,6 @@ function httpPost(url, body, opts = {}) {
   return httpRequest('POST', url, body, opts.responseTimeout, opts.password);
 }
 
-function generatePassword() {
-  const crypto = require('node:crypto');
-  return 'dcli_' + crypto.randomBytes(24).toString('hex');
-}
-
 function resolvePastBunShim(shimPath) {
   function checkBunPrefix(prefix) {
     try {
@@ -96,13 +98,11 @@ function resolvePastBunShim(shimPath) {
     return null;
   }
 
-  // Strategy 1: BUN_INSTALL env var
   if (process.env.BUN_INSTALL) {
     const fromEnv = checkBunPrefix(process.env.BUN_INSTALL);
     if (fromEnv) return fromEnv;
   }
 
-  // Strategy 2: bun pm bin -g command
   try {
     const result = require('node:child_process').execSync('bun pm bin -g', {
       encoding: 'utf8', timeout: 5000, windowsHide: true,
@@ -115,7 +115,6 @@ function resolvePastBunShim(shimPath) {
     }
   } catch {}
 
-  // Strategy 3: Derive from shim path containing .bun\bin\opencode.exe
   const normalized = shimPath.replace(/\\/g, '/').toLowerCase();
   const marker = '.bun/bin/opencode.exe';
   const idx = normalized.indexOf(marker);
@@ -157,6 +156,8 @@ class OpencodeAdapter {
     this._mockVersion = options._mockVersion || null;
     this._mockFacts = options._mockFacts || [];
     this._mockExitCode = options._mockExitCode !== undefined ? options._mockExitCode : null;
+    this._stateRoot = options.stateRoot || null;
+    this._jobId = options.jobId || null;
 
     this._password = null;
     this._serverProcess = null;
@@ -171,14 +172,164 @@ class OpencodeAdapter {
     this._disposed = false;
     this._cancelled = false;
     this._cancelRungReached = null;
-    this._stdoutContent = '';
-    this._stderrContent = '';
+    this._serverStdout = '';
+    this._serverStderr = '';
     this._serverHandle = null;
+    this._creationTime = null;
+    this._imagePath = null;
+    this._executionToken = null;
+
+    this._startupTimeoutMs = STARTUP_TIMEOUT_MS;
+    this._healthTimeoutMs = HEALTH_TIMEOUT_MS;
+    this._maxServerStdoutBytes = MAX_STDOUT_BYTES;
+    this._maxServerStderrBytes = MAX_STDERR_BYTES;
+
+    this._serversDir = this._stateRoot ? path.join(this._stateRoot, 'servers') : null;
   }
 
   get disposed() { return this._disposed; }
   get cancelled() { return this._cancelled; }
   get cancelRungReached() { return this._cancelRungReached; }
+  /** @returns {string} */
+  get serverStdout() { return this._serverStdout; }
+  /** @returns {string} */
+  get serverStderr() { return this._serverStderr; }
+
+  _buildArgs(port) {
+    return ['serve', '--port', String(port), '--hostname', '127.0.0.1'];
+  }
+
+  _parseStartupOutput(text) {
+    const match = text.match(/opencode server listening on http:\/\/[^:]+:(\d+)/);
+    if (match) return parseInt(match[1], 10);
+    return null;
+  }
+
+  async _reservePort(maxRetries) {
+    const maxAttempts = maxRetries || PORT_RESERVE_MAX_RETRIES;
+    const errors = [];
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const port = await new Promise((resolve, reject) => {
+          const server = net.createServer();
+          let settled = false;
+          const timer = setTimeout(() => {
+            settled = true;
+            server.close();
+            reject(new Error('Port reservation timed out'));
+          }, PORT_RESERVE_TIMEOUT_MS);
+          if (timer.unref) timer.unref();
+
+          server.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            server.close(() => reject(err));
+          });
+
+          server.listen(0, '127.0.0.1', () => {
+            if (settled) return;
+            const boundPort = server.address().port;
+            clearTimeout(timer);
+            server.close(() => {
+              resolve(boundPort);
+            });
+          });
+        });
+        return port;
+      } catch (err) {
+        errors.push(err.message);
+        if (attempt < maxAttempts - 1) {
+          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+        }
+      }
+    }
+
+    throw new Error(`Port reservation failed after ${maxAttempts} attempts: ${errors.join('; ')}`);
+  }
+
+  _generatePassword() {
+    return 'dcli_' + crypto.randomBytes(24).toString('hex');
+  }
+
+  _registerPasswordWithRedactor() {
+    const redactor = getRedactor();
+    if (redactor && this._password) {
+      redactor.registerSecret('opencode_server_password', this._password);
+    }
+  }
+
+  _writeServerMetadata(port, executionToken) {
+    if (!this._serversDir || !this._jobId) return;
+    const meta = {
+      pid: this._backendPid,
+      creationTime: this._creationTime || new Date().toISOString(),
+      imagePath: this._imagePath || '',
+      executionToken: executionToken || '',
+      port,
+      startedAt: new Date().toISOString(),
+    };
+    try {
+      fs.mkdirSync(this._serversDir, { recursive: true });
+      const filePath = path.join(this._serversDir, `${this._jobId}.json`);
+      fs.writeFileSync(filePath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+    } catch {}
+  }
+
+  _deleteServerMetadata() {
+    if (!this._serversDir || !this._jobId) return;
+    const filePath = path.join(this._serversDir, `${this._jobId}.json`);
+    try {
+      fs.unlinkSync(filePath);
+    } catch {}
+  }
+
+  _discoverOrphanedServers() {
+    if (!this._serversDir || !fs.existsSync(this._serversDir)) return [];
+    const results = [];
+    try {
+      const entries = fs.readdirSync(this._serversDir);
+      for (const entry of entries) {
+        if (!entry.endsWith('.json')) continue;
+        try {
+          const content = fs.readFileSync(path.join(this._serversDir, entry), 'utf8');
+          const meta = JSON.parse(content);
+          results.push({ jobId: entry.replace('.json', ''), ...meta });
+        } catch {}
+      }
+    } catch {}
+    return results;
+  }
+
+  _appendServerStdout(chunk) {
+    if (typeof chunk === 'string') {
+      if (this._serverStdout.length < this._maxServerStdoutBytes) {
+        this._serverStdout += chunk;
+        if (this._serverStdout.length > this._maxServerStdoutBytes) {
+          this._serverStdout = this._serverStdout.slice(0, this._maxServerStdoutBytes);
+        }
+      }
+    }
+  }
+
+  _appendServerStderr(chunk) {
+    if (typeof chunk === 'string') {
+      if (this._serverStderr.length < this._maxServerStderrBytes) {
+        this._serverStderr += chunk;
+        if (this._serverStderr.length > this._maxServerStderrBytes) {
+          this._serverStderr = this._serverStderr.slice(0, this._maxServerStderrBytes);
+        }
+      }
+    }
+  }
+
+  GetResourceCost() {
+    return {
+      concurrencySlots: 1,
+      memoryEstimateMb: 256,
+    };
+  }
 
   GetIdentity() {
     return {
@@ -220,6 +371,7 @@ class OpencodeAdapter {
         schema_constrained_output: { supported: false, reason: 'known broken in 1.18.7' },
       },
       supported_version_range: { min: '1.18.0', max: '1.19.0' },
+      resource_cost: this.GetResourceCost(),
     };
   }
 
@@ -268,10 +420,15 @@ class OpencodeAdapter {
       return { handle: 'opencode-test-handle' };
     }
 
-    this._password = generatePassword();
+    this._password = this._generatePassword();
+    this._registerPasswordWithRedactor();
+
     const opencodePath = resolveOpencodePath();
 
-    const server = spawn(opencodePath, ['serve', '--port', '0', '--hostname', '127.0.0.1'], {
+    const port = await this._reservePort();
+    const args = this._buildArgs(port);
+
+    const server = spawn(opencodePath, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, OPENCODE_SERVER_PASSWORD: this._password },
       windowsHide: true,
@@ -279,6 +436,9 @@ class OpencodeAdapter {
 
     this._serverProcess = server;
     this._backendPid = server.pid;
+    this._creationTime = new Date().toISOString();
+    this._imagePath = opencodePath;
+    this._executionToken = crypto.randomBytes(16).toString('hex');
 
     let startupResolve;
     let startupReject;
@@ -289,22 +449,22 @@ class OpencodeAdapter {
 
     const startupTimer = setTimeout(() => {
       startupReject(new Error('Server startup timed out'));
-    }, STARTUP_TIMEOUT_MS);
+    }, this._startupTimeoutMs);
 
     server.stdout.setEncoding('utf8');
     server.stderr.setEncoding('utf8');
 
     server.stdout.on('data', (chunk) => {
-      this._stdoutContent += chunk;
-      const match = this._stdoutContent.match(/opencode server listening on http:\/\/127\.0\.0\.1:(\d+)/);
-      if (match) {
+      this._appendServerStdout(chunk);
+      const port = this._parseStartupOutput(this._serverStdout);
+      if (port !== null) {
         clearTimeout(startupTimer);
-        startupResolve(parseInt(match[1], 10));
+        startupResolve(port);
       }
     });
 
     server.stderr.on('data', (chunk) => {
-      this._stderrContent += chunk;
+      this._appendServerStderr(chunk);
     });
 
     server.on('exit', (code, signal) => {
@@ -319,16 +479,43 @@ class OpencodeAdapter {
       startupReject(err);
     });
 
-    const port = await startupPromise;
-    this._serverPort = port;
-    this._serverBaseUrl = `http://127.0.0.1:${port}`;
-
-    const health = await httpGet(`${this._serverBaseUrl}/global/health`, { responseTimeout: HEALTH_TIMEOUT_MS, password: this._password });
-    if (!health || !health.healthy) {
-      throw new Error(`Server health check failed: version=${health ? health.version : 'unknown'}`);
+    let resolvedPort;
+    try {
+      resolvedPort = await startupPromise;
+    } catch (err) {
+      this._killServer();
+      throw err;
     }
 
-    return { handle: 'opencode-server', serverPid: server.pid, port, version: health.version };
+    if (resolvedPort !== port) {
+      this._killServer();
+      throw new Error(`Server bound on port ${resolvedPort} but was launched on port ${port}`);
+    }
+
+    this._serverPort = resolvedPort;
+    this._serverBaseUrl = `http://127.0.0.1:${resolvedPort}`;
+
+    try {
+      const health = await httpGet(`${this._serverBaseUrl}/global/health`, {
+        responseTimeout: this._healthTimeoutMs,
+        password: this._password,
+      });
+      if (!health || !health.healthy) {
+        throw new Error(`Server health check failed: version=${health ? health.version : 'unknown'}`);
+      }
+    } catch (err) {
+      this._killServer();
+      throw err;
+    }
+
+    this._writeServerMetadata(resolvedPort, this._executionToken);
+
+    return {
+      handle: 'opencode-server',
+      serverPid: server.pid,
+      port: resolvedPort,
+      version: this._detectedVersion || 'unknown',
+    };
   }
 
   async SendPrompt(attempt, prompt) {
@@ -430,25 +617,27 @@ class OpencodeAdapter {
             httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password });
           } catch {}
         }
-        if (this._serverProcess) {
-          try { this._serverProcess.kill(); } catch {}
-        }
+        this._killServer();
         this._cancelRungReached = 'server_dispose';
         this._cancelled = true;
         return { success: true };
 
       case 'hard_kill':
-        if (this._serverProcess) {
-          try { this._serverProcess.kill('SIGKILL'); } catch {
-            try { this._serverProcess.kill(); } catch {}
-          }
-        }
+        this._killServer();
         this._cancelRungReached = 'hard_kill';
         this._cancelled = true;
         return { success: true };
 
       default:
         return { success: false, error: `Unknown rung: ${rung}` };
+    }
+  }
+
+  _killServer() {
+    if (this._serverProcess) {
+      try { this._serverProcess.kill('SIGKILL'); } catch {
+        try { this._serverProcess.kill(); } catch {}
+      }
     }
   }
 
@@ -489,10 +678,10 @@ class OpencodeAdapter {
       if (this._serverBaseUrl) {
         try { httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password }).catch(() => {}); } catch {}
       }
-      if (this._serverProcess) {
-        try { this._serverProcess.kill(); } catch {}
-      }
+      this._killServer();
     }
+
+    this._deleteServerMetadata();
 
     this._serverProcess = null;
     this._serverBaseUrl = null;
