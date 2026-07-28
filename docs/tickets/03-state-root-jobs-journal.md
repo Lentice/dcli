@@ -139,3 +139,22 @@ feat: job/attempt state layout with append-only journal and atomic status projec
 ```
 
 ## Notes
+
+### Discovery: fsync on a read-only handle leaks fd and breaks atomic rename on Windows
+
+The `writeTextFileAtomic` function in `core/fs-text.js` opened the temp file for *reading*
+(`fs.openSync(tmp, 'r')`) to call `fs.fsyncSync(fd)`. On Windows, `fsync` on a read-only handle
+fails with `EPERM: operation not permitted, fsync`. The exception was swallowed by an empty
+`catch {}`, but `closeSync(fd)` was never reached — the file descriptor leaked. With an open
+read handle still held on the temp file, the subsequent `fs.renameSync` also failed with EPERM.
+
+This caused every `journalTransition` (which rewrites `status.json`) to fail persistently on
+Windows after the first write succeeded.
+
+Fixed by:
+1. Opening the temp file with `'r+'` (read-write) instead of `'r'`, so `fsync` succeeds.
+2. Wrapping `closeSync` in a `finally` block so the fd is always released, even if `fsync`
+   throws — preventing future leaks regardless of platform.
+
+The fix is in `core/fs-text.js` (ticket 01's file), but is a necessary cross-ticket Windows
+compatibility fix.

@@ -50,9 +50,12 @@ function writeTextFileAtomic(filePath, content) {
   const buf = Buffer.from(content, ENCODING);
   fs.writeFileSync(tmp, buf);
   try {
-    const fd = fs.openSync(tmp, 'r');
-    fs.fsyncSync(fd);
-    fs.closeSync(fd);
+    const fd = fs.openSync(tmp, 'r+');
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
   }
   fs.renameSync(tmp, filePath);

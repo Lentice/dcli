@@ -1,0 +1,300 @@
+const fs = require('fs');
+const path = require('path');
+const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./fs-text');
+
+const ATOMIC_WRITE_MAX_RETRIES = 10;
+const ATOMIC_WRITE_DELAY_MS = 20;
+
+class JobStore {
+  constructor({ stateRoot }) {
+    this._stateRoot = stateRoot;
+    this._jobsDir = path.join(stateRoot, 'jobs');
+  }
+
+  _jobDir(repoKey, jobId) {
+    return path.join(this._jobsDir, repoKey, jobId);
+  }
+
+  _defaultStatus() {
+    return {
+      schema_version: 1,
+      job_id: null,
+      backend: null,
+      backend_version: null,
+      adapter_version: null,
+      repo_key: null,
+      repo_root: null,
+      execution_root: null,
+      mode: null,
+      access: null,
+      state: 'created',
+      phase: null,
+      created_at: null,
+      started_at: null,
+      updated_at: null,
+      finished_at: null,
+      heartbeat_at: null,
+      worker_pid: null,
+      worker_identity: null,
+      containment: null,
+      backend_pid: null,
+      backend_session_id: null,
+      backend_state: { schema_version: 1 },
+      capabilities_snapshot: {},
+      execution_owner: 'wrapper',
+      model: null,
+      agent: null,
+      parent_job_id: null,
+      root_job_id: null,
+      session_strategy: null,
+      group: null,
+      label: null,
+      hard_timeout_sec: null,
+      cancel_requested_at: null,
+      command_exit_code: null,
+      backend_exit_code: null,
+      result_bytes: 0,
+      tokens: { input: null, output: null, reasoning: null, cache_read: null, cache_write: null, total: null },
+      cost: null,
+      failure_reason: null,
+      failure: null,
+      worktree: { path: null, base_commit: null, result_commit: null, changed_files: null },
+      attempt: null,
+      attempt_id: null,
+      attempt_state: null,
+      execution_token: null,
+      findings_status: null,
+    };
+  }
+
+  _applyJournalEntry(status, entry) {
+    const updated = JSON.parse(JSON.stringify(status));
+    updated.updated_at = entry.at;
+
+    switch (entry.kind) {
+      case 'job_created': {
+        const d = entry.detail || {};
+        updated.job_id = d.job_id || null;
+        updated.backend = d.backend || null;
+        updated.backend_version = d.backend_version || null;
+        updated.adapter_version = d.adapter_version || null;
+        updated.repo_key = d.repo_key || null;
+        updated.repo_root = d.repo_root || null;
+        updated.mode = d.mode || null;
+        updated.access = d.access || null;
+        updated.state = 'created';
+        updated.created_at = entry.at;
+        updated.capabilities_snapshot = d.capabilities_snapshot || {};
+        updated.execution_owner = d.execution_owner || 'wrapper';
+        updated.model = d.model !== undefined ? d.model : null;
+        updated.agent = d.agent !== undefined ? d.agent : null;
+        updated.parent_job_id = d.parent_job_id !== undefined ? d.parent_job_id : null;
+        updated.root_job_id = d.root_job_id || null;
+        updated.group = d.group !== undefined ? d.group : null;
+        updated.label = d.label !== undefined ? d.label : null;
+        updated.hard_timeout_sec = d.hard_timeout_sec !== undefined ? d.hard_timeout_sec : null;
+        break;
+      }
+      case 'attempt_created': {
+        updated.attempt = entry.attempt || null;
+        updated.attempt_state = 'created';
+        const d = entry.detail || {};
+        updated.attempt_id = d.attempt_id || null;
+        updated.execution_token = d.execution_token || null;
+        break;
+      }
+      case 'attempt_state_changed': {
+        if (entry.to !== undefined) {
+          updated.state = entry.to;
+          updated.attempt_state = entry.to;
+        }
+        const d = entry.detail || {};
+        if (d.started_at !== undefined) updated.started_at = d.started_at;
+        if (d.finished_at !== undefined) updated.finished_at = d.finished_at;
+        if (d.worker_pid !== undefined) updated.worker_pid = d.worker_pid;
+        if (d.worker_identity !== undefined) updated.worker_identity = d.worker_identity;
+        if (d.backend_pid !== undefined) updated.backend_pid = d.backend_pid;
+        if (d.backend_session_id !== undefined) updated.backend_session_id = d.backend_session_id;
+        if (d.command_exit_code !== undefined) updated.command_exit_code = d.command_exit_code;
+        if (d.backend_exit_code !== undefined) updated.backend_exit_code = d.backend_exit_code;
+        if (d.failure_reason !== undefined) updated.failure_reason = d.failure_reason;
+        if (d.failure !== undefined) updated.failure = d.failure;
+        if (d.result_bytes !== undefined) updated.result_bytes = d.result_bytes;
+        if (d.findings_status !== undefined) updated.findings_status = d.findings_status;
+        if (d.execution_root !== undefined) updated.execution_root = d.execution_root;
+        if (d.containment !== undefined) updated.containment = d.containment;
+        if (d.phase !== undefined) updated.phase = d.phase;
+        if (d.heartbeat_at !== undefined) updated.heartbeat_at = d.heartbeat_at;
+        if (d.cancel_requested_at !== undefined) updated.cancel_requested_at = d.cancel_requested_at;
+        if (d.backend_state !== undefined) updated.backend_state = d.backend_state;
+        if (d.tokens !== undefined) updated.tokens = d.tokens;
+        if (d.cost !== undefined) updated.cost = d.cost;
+        if (d.session_strategy !== undefined) updated.session_strategy = d.session_strategy;
+        break;
+      }
+    }
+
+    return updated;
+  }
+
+  _readRawJournal(jobDir) {
+    const journalPath = path.join(jobDir, 'journal.jsonl');
+    if (!fs.existsSync(journalPath)) return [];
+    const content = fs.readFileSync(journalPath, 'utf8');
+    return content.trim().split('\n').filter(l => l.length > 0).map(l => JSON.parse(l));
+  }
+
+  _regenerateStatusFromEntries(entries) {
+    let status = this._defaultStatus();
+    for (const entry of entries) {
+      status = this._applyJournalEntry(status, entry);
+    }
+    return status;
+  }
+
+  _regenerateStatus(jobDir) {
+    const entries = this._readRawJournal(jobDir);
+    return this._regenerateStatusFromEntries(entries);
+  }
+
+  _lastJournalSeq(jobDir) {
+    const entries = this._readRawJournal(jobDir);
+    if (entries.length === 0) return 0;
+    return entries[entries.length - 1].seq;
+  }
+
+  _atomicWriteJsonWithRetry(filePath, value) {
+    let lastErr = null;
+    for (let i = 0; i <= ATOMIC_WRITE_MAX_RETRIES; i++) {
+      try {
+        writeJsonFileAtomic(filePath, value);
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (i < ATOMIC_WRITE_MAX_RETRIES) {
+          const delay = ATOMIC_WRITE_DELAY_MS + Math.floor(Math.random() * 15);
+          const start = Date.now();
+          while (Date.now() - start < delay) {}
+        }
+      }
+    }
+    const lockErr = new Error(
+      `Failed to atomically write ${filePath} after ${ATOMIC_WRITE_MAX_RETRIES} retries: ${lastErr.message}`
+    );
+    lockErr.exitCode = 17;
+    throw lockErr;
+  }
+
+  createJob({
+    jobId, repoKey, repoRoot,
+    backend, backendVersion, adapterVersion,
+    mode, access,
+    capabilitiesSnapshot,
+    executionOwner,
+    model, agent,
+    parentJobId, rootJobId,
+    group, label,
+    hardTimeoutSec,
+  }) {
+    const jobDir = this._jobDir(repoKey, jobId);
+
+    if (fs.existsSync(jobDir)) {
+      throw new Error(`Job directory already exists: ${jobDir}`);
+    }
+
+    const now = new Date().toISOString();
+    const rootId = rootJobId || jobId;
+
+    fs.mkdirSync(jobDir, { recursive: true });
+
+    const journalEntry = {
+      seq: 1,
+      at: now,
+      kind: 'job_created',
+      attempt: null,
+      from: null,
+      to: 'created',
+      detail: {
+        job_id: jobId,
+        backend,
+        backend_version: backendVersion,
+        adapter_version: adapterVersion,
+        repo_key: repoKey,
+        repo_root: repoRoot,
+        mode,
+        access,
+        capabilities_snapshot: capabilitiesSnapshot || {},
+        execution_owner: executionOwner || 'wrapper',
+        model: model || null,
+        agent: agent || null,
+        parent_job_id: parentJobId || null,
+        root_job_id: rootId,
+        group: group || null,
+        label: label || null,
+        hard_timeout_sec: hardTimeoutSec || null,
+        schema_version: 1,
+      },
+    };
+
+    const status = this._regenerateStatusFromEntries([journalEntry]);
+    status.created_at = now;
+
+    const journalPath = path.join(jobDir, 'journal.jsonl');
+    writeTextFileAtomic(journalPath, JSON.stringify(journalEntry) + '\n');
+    this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
+
+    return path.resolve(jobDir);
+  }
+
+  journalTransition(jobId, repoKey, { kind, attempt, from, to, detail }) {
+    const jobDir = this._jobDir(repoKey, jobId);
+    const journalPath = path.join(jobDir, 'journal.jsonl');
+
+    const seq = this._lastJournalSeq(jobDir) + 1;
+
+    const entry = {
+      seq,
+      at: new Date().toISOString(),
+      kind,
+      attempt: attempt || null,
+      from: from || null,
+      to: to || null,
+      detail: detail || {},
+    };
+
+    appendJsonLine(journalPath, entry);
+    const status = this._regenerateStatus(jobDir);
+    this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
+
+    return entry;
+  }
+
+  createAttemptDir({ repoKey, jobId, attemptNum }) {
+    const jobDir = this._jobDir(repoKey, jobId);
+    const attemptDir = path.join(jobDir, 'attempts', String(attemptNum));
+
+    if (fs.existsSync(attemptDir)) {
+      throw new Error(`Attempt directory already exists: ${attemptDir}`);
+    }
+
+    fs.mkdirSync(attemptDir, { recursive: true });
+    return path.resolve(attemptDir);
+  }
+
+  readJournal({ repoKey, jobId }) {
+    const jobDir = this._jobDir(repoKey, jobId);
+    return this._readRawJournal(jobDir);
+  }
+
+  readStatus({ repoKey, jobId }) {
+    const statusPath = path.join(this._jobDir(repoKey, jobId), 'status.json');
+    return JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+  }
+
+  regenerateStatus({ repoKey, jobId }) {
+    const jobDir = this._jobDir(repoKey, jobId);
+    return this._regenerateStatus(jobDir);
+  }
+}
+
+module.exports = { JobStore };
