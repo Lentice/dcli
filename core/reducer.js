@@ -77,11 +77,12 @@ function reduce(state, facts, evidence) {
 
   const backendError = facts.find(f => f && f.type === 'backend_error');
   if (backendError) {
+    const classHint = backendError.class_hint || null;
     return {
       state: 'failed',
       phase: 'terminal',
-      failure: { reason: 'backend_error' },
-      failure_reason: state.failure_reason || null,
+      failure: { class: classHint, reason: 'backend_error' },
+      failure_reason: classHint || state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
     };
   }

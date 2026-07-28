@@ -224,15 +224,19 @@ runs opencode. Not used by the wrapper.
 | reasoning effort | `variant` — **surfaced as `dcli-opencode --variant`, never `--effort`** (ADR-004) |
 | agent | `POST /session` `agent` |
 | access / isolation | per-session `permission: PermissionRuleset` — `read-only` denies mutation (edit, webfetch, external_directory) and allows read tools; `workspace` allows everything except `external_directory`; `full` is `* → allow` (explicit named opt-in, never default). See ticket 18. |
+| respond (permission) | `Respond(interactionId, decision)` → `POST /permission/{id}/reply` or `/question/{id}/reply`; 404 is benign (interaction already resolved); `reply: always` requires explicit `_automationPolicy` |
 | resume | `POST /session` `parentID`, or reuse the recorded session id |
 | fork | `POST /session/{id}/fork` |
 | working directory | canonical job dir: launch cwd **and** `directory` query param on every request |
 | cancel (graceful) | `POST /session/{id}/abort` → `POST /global/dispose` |
 | progress | `GET /event` SSE + `GET /session/status` |
-| permission prompt | `GET /permission` → `POST /permission/{id}/reply {reply: once\|always\|reject}` |
-| clarifying question | `GET /question` → `POST /question/{id}/reply {answers}` / `/reject` |
+| permission prompt | `GET /permission` → `POST /permission/{id}/reply {reply: once\|always\|reject}` — polled on an interval during reconciliation; unattended jobs reject with `rejected_unattended` |
+| clarifying question | `GET /question` → `POST /question/{id}/reply {answers}` / `/reject` — polled on same interval; unattended rejection with explanatory message |
 | auth remediation | `opencode providers login` |
 | version detection | `opencode --version`, confirmed by `GET /global/health.version` |
+| doctor endpoint shape | `_runEndpointShapeProbes` checks `/global/health` (healthy + version shape), `/permission` (array), `/question` (array), `/session/status` (reachable) |
+| failure classification | Structured error events parsed via `_classifyBackendError`: `CreditsError` → `quota_or_rate_limit`; unmatched → `null` (no guessing) |
+| interaction handling | `GET /permission` and `GET /question` polled every `INTERACTION_POLL_MS` (2 s) independently of SSE; unattended interactions rejected with `reply: reject` and explanatory message, emitted as `backend_error` with `class_hint: permission_or_sandbox` |
 | structured output | **unavailable** — broken in 1.18.7 (study §8, ADR-006) |
 | native worktree | `/experimental/worktree` — namespaced extension, diagnostics only |
 | native diff/apply | `/vcs/diff`, `/vcs/apply`, `/session/{id}/diff` — extension, diagnostics only |

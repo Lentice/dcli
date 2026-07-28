@@ -17,6 +17,7 @@ const DISPOSE_TIMEOUT_MS = 5000;
 const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
 const MAX_STDERR_BYTES = 10 * 1024 * 1024;
 const POLL_INTERVAL_MS = 5000;
+const INTERACTION_POLL_MS = 2000;
 const IDLE_TIMEOUT_MS = 120000;
 const SSE_READ_TIMEOUT_MS = 3000;
 // How long a REST-polled 'idle' status must be observed before it is treated
@@ -77,6 +78,12 @@ function httpRequest(method, url, body, timeoutMs, password) {
           const err = new Error(`HTTP ${res.statusCode} from ${method} ${url}: ${raw.slice(0, 500)}`);
           err.statusCode = res.statusCode;
           err.body = raw;
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.error && parsed.error.type === 'CreditsError') {
+              err.classHint = 'quota_or_rate_limit';
+            }
+          } catch {}
           settle(err);
         }
       });
@@ -224,6 +231,10 @@ class OpencodeAdapter {
 
     this._idleTimeoutMs = options._mockIdleTimeoutMs !== undefined ? options._mockIdleTimeoutMs : IDLE_TIMEOUT_MS;
     this._pollIntervalMs = options._mockPollIntervalMs !== undefined ? options._mockPollIntervalMs : POLL_INTERVAL_MS;
+    this._interactionPollMs = options._mockInteractionPollMs !== undefined ? options._mockInteractionPollMs : INTERACTION_POLL_MS;
+    this._automationPolicy = null;
+    this._hardDeadlineMs = null;
+    this._seenInteractionIds = new Set();
     this._asyncResultText = '';
     this._asyncResultUsage = { input: 0, output: 0, total: 0 };
     this._asyncResultCost = null;
@@ -431,6 +442,9 @@ class OpencodeAdapter {
     if (this._testMode && typeof this._transportRequestOverride === 'function') {
       return this._transportRequestOverride(method, endpoint, body, timeoutMs);
     }
+    if (this._testMode) {
+      return { _simulated: true, method, endpoint };
+    }
     const url = this._buildUrl(endpoint);
     return httpRequest(method, url, body, timeoutMs, this._password);
   }
@@ -535,9 +549,10 @@ class OpencodeAdapter {
 
         case 'error': {
           const payload = event.error || event;
+          const classHint = this._classifyBackendError(payload);
           facts.push({
             type: 'backend_error',
-            class_hint: 'provider_error',
+            class_hint: classHint || 'provider_error',
             structured_payload: typeof payload === 'object' ? payload : { message: String(payload) },
           });
           break;
@@ -696,8 +711,8 @@ class OpencodeAdapter {
       backend_version: this._detectedVersion || 'unknown',
       core: { run: true, submit: true, resume: false, cancel: true, wrapper_worktree: true },
       extensions: {
-        interactive_permissions: { supported: false, reason: 'not implemented in thin slice; see tickets 18/20' },
-        answerable_questions: { supported: false, reason: 'not implemented in thin slice; see tickets 18/20' },
+        interactive_permissions: { supported: true, transport: 'http' },
+        answerable_questions: { supported: true, transport: 'http' },
         graceful_session_abort: { supported: true },
         schema_constrained_output: { supported: false, reason: 'known broken in 1.18.7' },
       },
@@ -928,6 +943,7 @@ class OpencodeAdapter {
     let sseLastId = null;
     let idleSince = null;
     let lastPoll = Date.now();
+    let lastInteractionPoll = 0;
     let reconnectCount = 0;
     let statusCache = null;
 
@@ -954,6 +970,26 @@ class OpencodeAdapter {
           lastPoll = Date.now();
           const s = await pollNow(this);
           if (s) yield { type: 'backend_status', state: s };
+        }
+
+        if (Date.now() - lastInteractionPoll >= this._interactionPollMs) {
+          lastInteractionPoll = Date.now();
+          if (this._hardDeadlineMs === null || Date.now() < this._hardDeadlineMs) {
+            const interactions = await this._pollInteractions();
+            for (const interaction of interactions) {
+              yield { type: 'interaction_pending', interaction_id: interaction.interaction_id, kind: interaction.kind, detail: interaction.detail };
+              if (!this._automationPolicy) {
+                await this._rejectInteraction(interaction);
+                yield { type: 'interaction_resolved', interaction_id: interaction.interaction_id, outcome: 'rejected_unattended' };
+                const permPayload = interaction.raw ? { permission: interaction.raw.permission || null, patterns: interaction.raw.patterns || null } : {};
+                yield {
+                  type: 'backend_error',
+                  class_hint: 'permission_or_sandbox',
+                  structured_payload: { ...permPayload, message: 'Interaction rejected: no authorized responder available' },
+                };
+              }
+            }
+          }
         }
 
         if (statusCache === 'idle') {
@@ -1098,6 +1134,73 @@ class OpencodeAdapter {
     return this._transportRequest('GET', `/session/${this._sessionId}/message`, null, MESSAGES_TIMEOUT_MS);
   }
 
+  async _pollInteractions() {
+    const results = [];
+    try {
+      const perms = await this._transportRequest('GET', '/permission', null, 5000);
+      if (Array.isArray(perms)) {
+        for (const p of perms) {
+          if (p && p.id && !this._seenInteractionIds.has(p.id)) {
+            this._seenInteractionIds.add(p.id);
+            results.push({
+              interaction_id: p.id,
+              kind: 'permission',
+              detail: `${p.permission || 'unknown'}: ${(p.patterns || []).join(', ')}`,
+              raw: p,
+            });
+          }
+        }
+      }
+    } catch {
+    }
+    try {
+      const questions = await this._transportRequest('GET', '/question', null, 5000);
+      if (Array.isArray(questions)) {
+        for (const q of questions) {
+          if (q && q.id && !this._seenInteractionIds.has(q.id)) {
+            this._seenInteractionIds.add(q.id);
+            const topic = (q.questions || []).map(x => (typeof x === 'string' ? x : x.question || '')).join(', ');
+            results.push({
+              interaction_id: q.id,
+              kind: 'question',
+              detail: topic,
+              raw: q,
+            });
+          }
+        }
+      }
+    } catch {
+    }
+    return results;
+  }
+
+  async _rejectInteraction(interaction) {
+    try {
+      if (interaction.kind === 'question') {
+        await this._transportRequest('POST', `/question/${interaction.interaction_id}/reject`, {}, 5000);
+      } else {
+        await this._transportRequest('POST', `/permission/${interaction.interaction_id}/reply`, {
+          reply: 'reject',
+          message: 'Automatically rejected: no authorized responder is available to answer this permission request. Provide an automation policy or run interactively.',
+        }, 5000);
+      }
+    } catch (err) {
+      if (err && err.statusCode === 404) return;
+      throw err;
+    }
+  }
+
+  _classifyBackendError(structuredPayload) {
+    if (!structuredPayload || typeof structuredPayload !== 'object') return null;
+    const responseBody = structuredPayload.responseBody || structuredPayload.body || null;
+    if (responseBody && typeof responseBody === 'object') {
+      const errorType = responseBody.error && responseBody.error.type;
+      if (errorType === 'CreditsError') return 'quota_or_rate_limit';
+    }
+    if (structuredPayload.name === 'CreditsError') return 'quota_or_rate_limit';
+    return null;
+  }
+
   async *_sseReadEvents(lastEventId) {
     if (this._testMode && this._mockSseEvents) {
       const events = this._mockSseEvents;
@@ -1203,12 +1306,41 @@ class OpencodeAdapter {
   Resume(attempt, kind, prompt) {
   }
 
-  Respond(interactionId, decision) {
-    throw new Error(
-      'Respond is not supported by backend opencode. ' +
-      'Interactive permissions are not implemented in this version. ' +
-      'No job was created.'
-    );
+  async Respond(interactionId, decision) {
+    const kind = (typeof decision === 'object' && decision !== null) ? (decision.kind || 'permission') : 'permission';
+    const reply = (typeof decision === 'object' && decision !== null) ? (decision.reply || 'reject') : (decision === 'allow' ? 'once' : 'reject');
+    const message = (typeof decision === 'object' && decision !== null) ? decision.message : undefined;
+
+    if (reply === 'always' && !this._automationPolicy) {
+      const err = new Error(
+        'reply: always requires an explicitly supplied automation policy. ' +
+        'Pass --automation-policy to the job to enable persistent grants.'
+      );
+      err.code = 'VALIDATION_FAILED';
+      throw err;
+    }
+
+    const endpoint = kind === 'question'
+      ? `/question/${interactionId}/reply`
+      : `/permission/${interactionId}/reply`;
+
+    const body = kind === 'question'
+      ? { answers: (typeof decision === 'object' && decision !== null && Array.isArray(decision.answers)) ? decision.answers : [] }
+      : { reply, ...(message ? { message } : {}) };
+
+    if (this._testMode) {
+      if (typeof this._transportRequestOverride === 'function') {
+        return this._transportRequestOverride('POST', endpoint, body, 5000);
+      }
+      return { simulated: true };
+    }
+
+    try {
+      return await this._transportRequest('POST', endpoint, body, 5000);
+    } catch (err) {
+      if (err && err.statusCode === 404) return { resolved: true };
+      throw err;
+    }
   }
 
   RequestCancel(attempt, rung) {
@@ -1289,6 +1421,8 @@ class OpencodeAdapter {
       version: this._detectedVersion || 'unknown',
       facts_emitted: factCount,
       exit_code: this._mockExitCode !== null ? this._mockExitCode : 0,
+      interactions_seen: this._seenInteractionIds.size,
+      has_automation_policy: this._automationPolicy !== null,
     };
   }
 
@@ -1312,6 +1446,82 @@ class OpencodeAdapter {
 
   Recover(attempt) {
     return { state: this._cancelled ? 'cancelled' : (this._mockExitCode !== 0 ? 'failed' : 'done') };
+  }
+
+  async _probeEndpointShape(url, method, body, timeoutMs, name, shapeCheck) {
+    try {
+      const hdrs = {};
+      if (this._password) {
+        hdrs['Authorization'] = 'Basic ' + Buffer.from('opencode:' + this._password).toString('base64');
+      }
+      const u = new URL(url);
+      const result = await new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+          method: method || 'GET', headers: hdrs, timeout: timeoutMs || 5000,
+        }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            let parsed = null;
+            try { parsed = JSON.parse(raw); } catch {}
+            resolve({ statusCode: res.statusCode, body: raw, parsed });
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+        if (body) req.write(JSON.stringify(body));
+        req.end();
+      });
+      return shapeCheck(result);
+    } catch (err) {
+      return { name, ok: false, detail: err.message };
+    }
+  }
+
+  async _runEndpointShapeProbes(baseUrl) {
+    const results = [];
+    results.push(await this._probeEndpointShape(
+      `${baseUrl}/global/health`, 'GET', null, 5000, 'health_endpoint',
+      (r) => {
+        const p = r.parsed;
+        if (!p || typeof p !== 'object') return { name: 'health_endpoint', ok: false, detail: 'response not JSON' };
+        if (typeof p.healthy !== 'boolean') return { name: 'health_endpoint', ok: false, detail: 'missing boolean "healthy"' };
+        if (typeof p.version !== 'string') return { name: 'health_endpoint', ok: false, detail: 'missing string "version"' };
+        return { name: 'health_endpoint', ok: true, detail: `/global/health: healthy=${p.healthy}, version=${p.version}` };
+      }
+    ));
+    if (!this._testMode) {
+      results.push(await this._probeEndpointShape(
+        `${baseUrl}/permission`, 'GET', null, 5000, 'permission_endpoint',
+        (r) => {
+          if (r.statusCode >= 200 && r.statusCode < 300) {
+            return { name: 'permission_endpoint', ok: true, detail: `/permission returns ${Array.isArray(r.parsed) ? 'array' : typeof r.parsed}` };
+          }
+          return { name: 'permission_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+        }
+      ));
+      results.push(await this._probeEndpointShape(
+        `${baseUrl}/question`, 'GET', null, 5000, 'question_endpoint',
+        (r) => {
+          if (r.statusCode >= 200 && r.statusCode < 300) {
+            return { name: 'question_endpoint', ok: true, detail: `/question returns ${Array.isArray(r.parsed) ? 'array' : typeof r.parsed}` };
+          }
+          return { name: 'question_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+        }
+      ));
+      results.push(await this._probeEndpointShape(
+        `${baseUrl}/session/status`, 'GET', null, 5000, 'session_status_endpoint',
+        (r) => {
+          if (r.statusCode >= 200 && r.statusCode < 300) {
+            return { name: 'session_status_endpoint', ok: true, detail: `/session/status responds HTTP ${r.statusCode}` };
+          }
+          return { name: 'session_status_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+        }
+      ));
+    }
+    return results;
   }
 
   async LiveSmoke(timeoutMs) {

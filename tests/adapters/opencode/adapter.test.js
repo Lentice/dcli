@@ -185,12 +185,16 @@ async function main() {
 }
 
 // ===========================================================================
-// 13. Respond throws (not supported in thin slice)
+// 13. Respond is implemented and does not throw when capabilities declare it
 // ===========================================================================
 {
   const adapter = makeMinimalAdapter();
-  assert.throws(() => adapter.Respond('test-id', 'allow'), /not supported/);
-  console.log('PASS: Respond throws when capabilities not declared');
+  const caps = adapter.ProbeCapabilities();
+  const hasPerms = caps.extensions && caps.extensions.interactive_permissions && caps.extensions.interactive_permissions.supported;
+  assert.ok(hasPerms, 'opencode must declare interactive_permissions as supported');
+  // Respond returns a Promise; it should not throw synchronously
+  assert.doesNotThrow(() => adapter.Respond('test-id', 'allow'));
+  console.log('PASS: Respond implemented');
 }
 
 // ===========================================================================
