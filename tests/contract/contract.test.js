@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { validateFact, isKnownFactType, FACT_TYPES } = require('../../core/fact-types');
 const { InteractionOutcome, validateInteractionOutcome } = require('../../core/interaction-outcome');
+const { runContractSuite } = require('./suite');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
@@ -103,121 +104,8 @@ function makeValidFactForType(type) {
 }
 
 // ---------------------------------------------------------------------------
-// Adapter contract validation — parameterized suite
+// Adapter contract validation — shared suite (imported from ./suite.js)
 // ---------------------------------------------------------------------------
-
-function runContractSuite(adapterFactory) {
-  const adapter = adapterFactory();
-
-  // 5. GetIdentity returns shape with required fields
-  {
-    const id = adapter.GetIdentity();
-    assert.ok(id && typeof id === 'object');
-    assert.strictEqual(typeof id.backend, 'string');
-    assert.strictEqual(typeof id.adapter_version, 'string');
-    assert.strictEqual(typeof id.state_schema_version, 'number');
-  }
-
-  // 6. DeclareCancelRungs returns ordered array
-  {
-    const rungs = adapter.DeclareCancelRungs();
-    assert.ok(Array.isArray(rungs));
-    for (const r of rungs) {
-      assert.strictEqual(typeof r, 'string', 'Each rung must be a string');
-    }
-  }
-
-  // 7. ProbeCapabilities returns object
-  {
-    const caps = adapter.ProbeCapabilities();
-    assert.ok(caps && typeof caps === 'object');
-  }
-
-  // 8. DetectVersion returns string
-  {
-    const v = adapter.DetectVersion();
-    assert.strictEqual(typeof v, 'string');
-  }
-
-  // 9. ValidateRequest throws typed rejection
-  {
-    adapter.ValidateRequest({});  // no throw for valid
-    const failAdapter = adapterFactory();
-    if (failAdapter._script && failAdapter._script.behaviors && failAdapter._script.behaviors.failValidateOn) {
-      const req = {};
-      req[failAdapter._script.behaviors.failValidateOn] = 'some-value';
-      assert.throws(() => failAdapter.ValidateRequest(req), (err) => err.code === 'VALIDATION_FAILED');
-    }
-  }
-
-  // 10. Respond is gated by capability — throw when not declared
-  {
-    const basic = adapterFactory();
-    const caps = basic.ProbeCapabilities();
-    const hasPerms = caps.extensions && caps.extensions.interactive_permissions && caps.extensions.interactive_permissions.supported;
-
-    if (!hasPerms) {
-      assert.throws(() => basic.Respond('test-id', 'allow'), /not supported/);
-    } else {
-      basic.Respond('test-id', 'allow');
-    }
-  }
-
-  // 11. PrepareInvocation, SendPrompt, Resume are present (no throw)
-  {
-    assert.doesNotThrow(() => adapter.PrepareInvocation({}, {}));
-    assert.doesNotThrow(() => adapter.SendPrompt({}, 'test'));
-    assert.doesNotThrow(() => adapter.Resume({}, 'fork_from_artifacts', 'continue'));
-  }
-
-  // 12. Dispose is idempotent
-  {
-    const a = adapterFactory();
-    a.Dispose({});
-    assert.strictEqual(a.disposed, true);
-    assert.doesNotThrow(() => a.Dispose({}));
-  }
-
-  // 13. Recover postcondition: terminal or interrupted, never running
-  {
-    const a = adapterFactory();
-    const recovery = a.Recover({});
-    assert.ok(recovery && typeof recovery.state === 'string');
-    if (TERMINAL_OR_INTERRUPTED.includes(recovery.state)) {
-      // correct
-    } else {
-      assert.fail(`Recover returned state "${recovery.state}" which is not terminal or interrupted`);
-    }
-  }
-
-  // 14. Observe yields valid facts
-  {
-    const a = adapterFactory();
-    const iterator = a.Observe({});
-    assert.ok(iterator && typeof iterator[Symbol.asyncIterator] === 'function');
-  }
-
-  // 15. Start returns an execution handle
-  {
-    const handle = adapter.Start({});
-    assert.ok(handle && typeof handle === 'object');
-  }
-
-  // 16. CollectResult returns shape with text, usage, backend_session_id
-  {
-    const result = adapter.CollectResult({});
-    assert.ok(result && typeof result === 'object');
-    assert.strictEqual(typeof result.text, 'string');
-    assert.ok(result.usage && typeof result.usage === 'object');
-  }
-
-  // 17. CollectDiagnostics returns object with schema_version
-  {
-    const diag = adapter.CollectDiagnostics({});
-    assert.ok(diag && typeof diag === 'object');
-    assert.ok('schema_version' in diag);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Scenario tests — fake adapter produces all 8 scenarios
@@ -415,7 +303,7 @@ runContractSuite(() => new FakeAdapter({
   exitCode: 0,
   declaredRungs: ['hard_kill'],
   capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
-}));
+}), 'fake');
 
 // Also test that Recover never returns running for any configuration
 {
@@ -450,7 +338,7 @@ runContractSuite(() => new FakeAdapter({
       { type: 'process_exited', code: 0 },
     ],
     _mockExitCode: 0,
-  }));
+  }), 'opencode');
 }
 
 // Also test opencode-specific contract: DeclareCancelRungs returns 3 rungs
@@ -480,7 +368,7 @@ runContractSuite(() => new FakeAdapter({
       { type: 'process_exited', code: 0 },
     ],
     _mockExitCode: 0,
-  }));
+  }), 'codex');
 }
 
 // Also test codex-specific contract: DeclareCancelRungs returns exactly 1 rung

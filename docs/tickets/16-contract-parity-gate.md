@@ -119,4 +119,36 @@ test: contract parity gate across opencode, codex, and fake adapters
 
 ## Notes
 
-Record the four failure-criteria evaluations here, in full.
+### Failure-criteria evaluations
+
+**Criterion 1 — Contract suite required a backend-specific skip or alteration.**
+
+PASS. The shared suite (`tests/contract/suite.js`) contains zero adapter-specific branching.
+No adapter name string appears outside comments. All 14 assertions run identically for fake,
+opencode, and codex adapters. The `Respond` test uses dynamic capability negotiation via
+`ProbeCapabilities()` — a legitimate runtime query, not a hardcoded skip. The suite's `label`
+parameter is used only for human-readable reporting; it never drives conditional logic.
+
+**Criterion 2 — `core/` needed a backend conditional.**
+
+PASS. The parity gate's static scan (and the pre-existing
+`tests/adapters/codex/no-backend-conditional.test.js`) both confirm: no file in `core/`
+references any backend name (`opencode`, `codex`, `claude`) outside comments. The allowlist
+stays empty.
+
+**Criterion 3 — Either adapter invented a concept its backend does not have.**
+
+PASS. Codex correctly throws for `Respond` (never declares the capability), declares exactly
+1 cancel rung (`hard_kill`), and never fabricates a `backend_status` fact. Opencode declares
+3 cancel rungs matching its real HTTP API surface (`session_abort`, `server_dispose`,
+`hard_kill`). No adapter fabricates a synthetic idle status, fake session, or no-op rung
+reported as success.
+
+**Criterion 4 — The engine grew a second execution path for one adapter's shape.**
+
+PASS. The shared suite is byte-identical source required at runtime from `suite.js`. No change
+to `core/` or the adapter contract was needed. The zero-allowlist static scan proves no
+backend name reached production core code.
+
+**Verdict: gate passes.** The single-project, three-adapter premise holds at this checkpoint.
+Proceed to ticket 17.
