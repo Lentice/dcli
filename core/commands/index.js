@@ -27,6 +27,8 @@ function buildEnvelope(status) {
     failure: status.failure || null,
     findings: null,
     findings_status: status.findings_status || null,
+    truncation_info: null,
+    untracked_warning: null,
   };
 }
 

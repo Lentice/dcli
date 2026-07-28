@@ -6,7 +6,7 @@ const { spawnSync } = require('child_process');
 
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { JobStore } = require('../../core/job-store');
-const { buildReviewPrompt, generateDiff, executeReview, DIFF_CAP_BYTES } = require('../../core/commands/review');
+const { buildReviewPrompt, generateDiff, executeReview, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT } = require('../../core/commands/review');
 const { parseFindings } = require('../../core/findings');
 
 function withTempDir(fn) {
@@ -58,14 +58,14 @@ async function main() {
 }
 
 // ===========================================================================
-// 2. buildReviewPrompt includes truncation warning
+// 2. buildReviewPrompt includes truncation warning with file names
 // ===========================================================================
 {
   const diffInfo = {
     diff: '--- a/file.js\n+++ b/file.js\n@@ -1 +1 @@\n-old\n+new\n[... diff truncated ...]\n',
     truncated: true,
     totalBytes: 150000,
-    truncationInfo: 'Diff truncated: 150000 bytes total, showing first 100000 bytes. Remaining content was dropped.',
+    truncationInfo: 'Diff truncated: 150000 bytes total, showing first 100000 bytes. Dropped or partially dropped files: big3.js, big4.js.',
     untrackedWarning: null,
     untrackedFiles: [],
   };
@@ -73,7 +73,8 @@ async function main() {
   const prompt = buildReviewPrompt({ diffInfo });
   assert.ok(prompt.includes('Diff truncated'), 'prompt must include truncation info');
   assert.ok(prompt.includes('150000 bytes'), 'truncation info must mention byte count');
-  console.log('PASS: review test 2 — truncation in prompt');
+  assert.ok(prompt.includes('Dropped or partially dropped files: big3.js, big4.js'), 'truncation must name dropped files');
+  console.log('PASS: review test 2 — truncation in prompt with file names');
 }
 
 // ===========================================================================
@@ -310,6 +311,104 @@ await withTempDir(async (dir) => {
   assert.strictEqual(result3.status, 'malformed');
   console.log('PASS: review test 14 — parseFindings integration');
 }
+
+// ===========================================================================
+// 15. generateDiff — diff truncation with multiple files names dropped files
+// ===========================================================================
+await withTempDir(async (dir) => {
+  initGitRepo(dir);
+  const FILE_COUNT = 4;
+  for (let i = 1; i <= FILE_COUNT; i++) {
+    fs.writeFileSync(path.join(dir, `big${i}.js`), 'x\n', 'utf8');
+  }
+  gitAddCommit(dir, 'initial');
+
+  const largeContent = 'y'.repeat(35000);
+  for (let i = 1; i <= FILE_COUNT; i++) {
+    fs.writeFileSync(path.join(dir, `big${i}.js`), largeContent, 'utf8');
+  }
+
+  const info = generateDiff({ repoRoot: dir, scope: 'working', embedDiff: true });
+  assert.ok(info.truncated, 'large diff must be truncated');
+  assert.ok(info.truncationInfo.includes('Dropped or partially dropped files:'), 'truncationInfo must list files');
+  assert.ok(info.truncationInfo.includes('big3.js') || info.truncationInfo.includes('big4.js'), 'truncationInfo must name affected files');
+  assert.ok(info.truncationInfo.includes(info.totalBytes.toString()), 'truncationInfo must mention total bytes');
+  console.log('PASS: review test 15 — diff truncation names dropped files');
+});
+
+// ===========================================================================
+// 16. generateDiff — untracked truncation with file names
+// ===========================================================================
+await withTempDir(async (dir) => {
+  initGitRepo(dir);
+  fs.writeFileSync(path.join(dir, 'tracked.txt'), 'tracked\n', 'utf8');
+  gitAddCommit(dir, 'initial');
+
+  const fileContent = 'z'.repeat(20000);
+  for (let i = 1; i <= 4; i++) {
+    fs.writeFileSync(path.join(dir, `untracked${i}.js`), fileContent, 'utf8');
+  }
+
+  const info = generateDiff({ repoRoot: dir, scope: 'working', includeUntracked: true, embedDiff: true });
+  assert.ok(info.truncationInfo, 'truncationInfo must be set for untracked truncation');
+  assert.ok(info.truncationInfo.includes('Untracked content truncated'), 'truncationInfo must mention untracked truncation');
+  assert.ok(info.truncationInfo.includes('files not shown:'), 'truncationInfo must list dropped files');
+  assert.ok(info.truncationInfo.includes('untracked4.js'), 'truncationInfo must name dropped file');
+  assert.ok(info.diff.includes('Untracked files truncated'), 'diff must contain truncation message');
+  assert.ok(info.diff.includes('untracked4.js'), 'truncation message must name dropped file');
+  assert.ok(info.diff.includes('### untracked1.js'), 'diff must include untracked1.js content');
+  assert.ok(info.diff.includes('### untracked2.js'), 'diff must include untracked2.js content');
+  assert.ok(info.diff.includes('[Untracked files truncated:'), 'diff truncation message must be present');
+  console.log('PASS: review test 16 — untracked truncation with file names');
+});
+
+// ===========================================================================
+// 17. executeReview envelope contains truncation_info
+// ===========================================================================
+await withTempDir(async (dir) => {
+  initGitRepo(dir);
+  const FILE_COUNT = 4;
+  for (let i = 1; i <= FILE_COUNT; i++) {
+    fs.writeFileSync(path.join(dir, `big${i}.js`), 'x\n', 'utf8');
+  }
+  gitAddCommit(dir, 'initial');
+
+  const largeContent = 'y'.repeat(35000);
+  for (let i = 1; i <= FILE_COUNT; i++) {
+    fs.writeFileSync(path.join(dir, `big${i}.js`), largeContent, 'utf8');
+  }
+
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_trunc_env' },
+      { type: 'assistant_text', message_id: 'm1', text: 'Analysis.\n\n<!-- dcli:findings -->\n```json\n{"verdict":"Good.","items":[]}\n```' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const output = await executeReview({
+    store, adapter,
+    repoKey: 'test-repo',
+    repoRoot: dir,
+    prompt: '',
+    hardTimeoutSec: 60,
+    admission: null,
+    reviewScope: 'working',
+    includeUntracked: false,
+    embedDiff: true,
+    intent: 'Review test',
+    paths: null,
+  });
+
+  assert.ok(output.envelope.truncation_info, 'envelope must have truncation_info');
+  assert.ok(output.envelope.truncation_info.includes('Dropped or partially dropped files:'), 'envelope truncation_info must name files');
+  assert.ok('untracked_warning' in output.envelope, 'envelope must have untracked_warning field');
+  console.log('PASS: review test 17 — executeReview envelope includes truncation_info');
+});
 
 // ===========================================================================
 // Summary

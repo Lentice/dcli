@@ -31,9 +31,30 @@ function executeReview({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
     const findingsResult = parseFindings(output.text || '');
     output.envelope.findings_status = findingsResult.status;
     output.envelope.findings = findingsResult.data;
+    output.envelope.truncation_info = diffInfo.truncationInfo;
+    output.envelope.untracked_warning = diffInfo.untrackedWarning;
     output.findings = findingsResult;
     return output;
   });
+}
+
+function getDroppedFilesFromDiff(diffText, cutoffChars) {
+  const sections = [];
+  const headerRegex = /^diff --git a\/(\S+) b\//gm;
+  let match;
+  while ((match = headerRegex.exec(diffText)) !== null) {
+    sections.push({ path: match[1], start: match.index });
+  }
+  if (sections.length === 0) return [];
+  const result = [];
+  for (let i = 0; i < sections.length; i++) {
+    const { path, start } = sections[i];
+    const end = i < sections.length - 1 ? sections[i + 1].start : diffText.length;
+    if (end > cutoffChars) {
+      result.push(path);
+    }
+  }
+  return result;
 }
 
 function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUntracked, embedDiff }) {
@@ -73,7 +94,8 @@ function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUnt
   if (info.totalBytes > DIFF_CAP_BYTES) {
     info.truncated = true;
     const truncatedLen = Buffer.byteLength(diffText.slice(0, DIFF_CAP_BYTES), 'utf8');
-    info.truncationInfo = `Diff truncated: ${info.totalBytes} bytes total, showing first ${truncatedLen} bytes. Remaining content was dropped.`;
+    const droppedFiles = getDroppedFilesFromDiff(diffText, DIFF_CAP_BYTES);
+    info.truncationInfo = `Diff truncated: ${info.totalBytes} bytes total, showing first ${truncatedLen} bytes. Dropped or partially dropped files: ${droppedFiles.join(', ')}.`;
     diffText = diffText.slice(0, DIFF_CAP_BYTES) + '\n[... diff truncated ...]\n';
   }
 
@@ -90,8 +112,16 @@ function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUnt
       if (diffText.length > 0) diffText += '\n';
       diffText += untrackedContent.content;
       if (untrackedContent.truncated) {
-        const truncMsg = `\n[Untracked files truncated: showing ${untrackContent.shownBytes} of ${untrackedContent.totalBytes} bytes]\n`;
+        const parts = [`showing ${untrackedContent.shownBytes} of ${untrackedContent.totalBytes} bytes`];
+        if (untrackedContent.droppedFiles.length > 0) {
+          parts.push(`files not shown: ${untrackedContent.droppedFiles.join(', ')}`);
+        }
+        const truncMsg = `\n[Untracked files truncated: ${parts.join('; ')}]\n`;
         diffText += truncMsg;
+        const untrackedTruncMsg = `Untracked content truncated: ${parts.join('; ')}.`;
+        info.truncationInfo = info.truncationInfo
+          ? `${info.truncationInfo} ${untrackedTruncMsg}`
+          : untrackedTruncMsg;
       }
     }
   }
@@ -144,7 +174,9 @@ function getUntrackedContent(repoRoot, paths) {
     }
   }
 
-  return { files: resultFiles, content, totalBytes, truncated, shownBytes: totalBytes };
+  const droppedFiles = truncated ? files.slice(resultFiles.length) : [];
+
+  return { files: resultFiles, content, totalBytes, truncated, shownBytes: totalBytes, droppedFiles };
 }
 
 function buildReviewPrompt({ diffInfo, intent, focus, userPrompt }) {
@@ -183,4 +215,4 @@ function buildReviewPrompt({ diffInfo, intent, focus, userPrompt }) {
   return prompt;
 }
 
-module.exports = { executeReview, generateDiff, buildReviewPrompt, getUntrackedFiles, DIFF_CAP_BYTES };
+module.exports = { executeReview, generateDiff, buildReviewPrompt, getUntrackedFiles, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT };
