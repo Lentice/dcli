@@ -111,3 +111,25 @@ feat: bounded tail, compact debug report, and lease-aware retention cleanup
 ```
 
 ## Notes
+
+### Discoveries
+
+1. **parseArgs must validate `--older-than`.** The test calls `parseArgs` directly for invalid values (test 9, 10), so format and minimum checks live in `parseArgs`, not just in the cleanup command's `parseDuration`. The cleanup command keeps its own `parseDuration` as a second validation layer.
+
+2. **1h is below the retention minimum.** Cleanup tests that don't need age filtering skip `--older-than` entirely (threshold defaults to 0, meaning "no age filter"). Tests that need age filtering must use ≥ 1d.
+
+3. **`makeTerminalJob` does not set `backend_session_id`.** The scrub test manually sets it in `status.json` before verifying scrubbing.
+
+4. **The bounded-tail module already implements seek-before-read.** Ticket 11's tail command simply wraps `readTail()` without reinventing it.
+
+### Files created
+- `core/commands/tail.js` — `executeTail`
+- `core/commands/debug.js` — `executeDebug`
+- `core/commands/cleanup.js` — `executeCleanup`, `parseDuration`
+- `tests/core/commands-tail-debug-cleanup.test.js` — 15 tests
+
+### Files modified
+- `core/commands/index.js` — added `tail`, `debug`, `cleanup` to `COMMANDS`; added `--older-than`, `--dry-run`, `--scrub-session-ids`, `--max-bytes` flags
+- `cli/dcli.js` — help text and dispatch cases for all three commands
+- `README.md` — status line updated
+- `docs/2026-07-28-design-spec.md` — status line updated

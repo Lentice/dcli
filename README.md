@@ -3,7 +3,7 @@
 Delegate bounded work from Claude Code to a *different* coding-agent CLI, and get a durable, inspectable result
 back.
 
-**Status: core commands implemented (run, submit, status, wait, read, list).** Start at [`docs/tickets/`](docs/tickets/).
+**Status: core commands implemented (run, submit, status, wait, read, list, tail, debug, cleanup).** Start at [`docs/tickets/`](docs/tickets/).
 
 ## Why
 

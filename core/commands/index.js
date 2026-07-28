@@ -4,9 +4,10 @@ const { resolveDeadline } = require('../deadlines');
 const KNOWN_FLAGS = new Set([
   '--backend', '--repo', '--prompt-file', '--hard-timeout-sec', '--group', '--label',
   '--model', '--json', '--timeout-sec', '--all', '--help',
+  '--older-than', '--dry-run', '--scrub-session-ids', '--max-bytes',
 ]);
 
-const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review']);
+const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup']);
 
 function buildEnvelope(status) {
   return {
@@ -66,9 +67,19 @@ function parseArgs(argv) {
         i++;
         continue;
       }
+      if (arg === '--dry-run') {
+        result.dryRun = true;
+        i++;
+        continue;
+      }
+      if (arg === '--scrub-session-ids') {
+        result.scrubSessionIds = true;
+        i++;
+        continue;
+      }
 
       const valueFlag = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
-        '--group', '--label', '--model', '--timeout-sec']);
+        '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes']);
 
       if (valueFlag.has(arg)) {
         i++;
@@ -93,6 +104,28 @@ function parseArgs(argv) {
           case '--group': result.group = val; break;
           case '--label': result.label = val; break;
           case '--model': result.model = val; break;
+          case '--older-than':
+            if (!/^\d+[dh]$/.test(val)) {
+              const err = new Error(`Invalid --older-than format: "${val}". Use e.g. "30d" or "12h"`);
+              err.exitCode = 2;
+              throw err;
+            }
+            const ageNum = parseInt(val, 10);
+            if (ageNum < 1) {
+              const err = new Error(`--older-than value must be at least 1, got "${val}"`);
+              err.exitCode = 2;
+              throw err;
+            }
+            result.olderThan = val;
+            break;
+          case '--max-bytes':
+            result.maxBytes = parseInt(val, 10);
+            if (isNaN(result.maxBytes) || result.maxBytes < 0) {
+              const err = new Error(`Invalid --max-bytes: "${val}" must be a non-negative integer`);
+              err.exitCode = 2;
+              throw err;
+            }
+            break;
           case '--timeout-sec':
             result.timeoutSec = parseInt(val, 10);
             if (isNaN(result.timeoutSec) || result.timeoutSec < 0) {
@@ -133,8 +166,8 @@ function validatePositionals(parsed) {
   if (!cmd) return;
 
   const freeText = new Set(['run', 'submit']);
-  const singlePos = new Set(['status', 'wait', 'read']);
-  const zeroPos = new Set(['list']);
+  const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug']);
+  const zeroPos = new Set(['list', 'cleanup']);
 
   if (freeText.has(cmd)) return;
 

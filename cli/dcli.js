@@ -12,6 +12,9 @@ Commands:
   list      List jobs
   cancel    Cancel a job
   review    Run a code review
+  tail      Show tail of job logs
+  debug     Compact job diagnosis
+  cleanup   Remove aged terminal jobs
 
 Options:
   --help                    Show this message
@@ -25,6 +28,10 @@ Options:
   --json                    JSON output envelope
   --timeout-sec <n>         Wait timeout in seconds
   --all                     Wait for all matching jobs
+  --older-than <Nd|Nh>      Retention threshold for cleanup
+  --dry-run                 Preview cleanup without deleting
+  --scrub-session-ids       Blank recorded backend session ids
+  --max-bytes <n>           Maximum bytes for tail (default: 4096)
 
 Every recipe with a wait carries an explicit budget: set --timeout-sec and --hard-timeout-sec.
 
@@ -235,6 +242,89 @@ async function main() {
             console.log(line);
           }
         }
+      }
+      process.exit(0);
+    }
+
+    case 'tail': {
+      const { executeTail } = require('../core/commands/tail');
+      const jobId = parsed.positionals[0];
+      if (!jobId) {
+        console.error('tail requires a job ID');
+        process.exit(2);
+      }
+
+      const result = await executeTail({
+        store, repoKey, jobId,
+        maxBytes: parsed.maxBytes,
+      });
+
+      if (result.worker) {
+        console.log(`=== worker.log (${result.worker.totalBytes} bytes, showing ${result.worker.returnedBytes}) ===`);
+        console.log(result.worker.content);
+      }
+      if (result.backendEvents) {
+        console.log(`=== backend-events.jsonl (${result.backendEvents.totalBytes} bytes, showing ${result.backendEvents.returnedBytes}) ===`);
+        console.log(result.backendEvents.content);
+      }
+      if (!result.worker && !result.backendEvents) {
+        console.log('(no log files found)');
+      }
+      process.exit(0);
+    }
+
+    case 'debug': {
+      const { executeDebug } = require('../core/commands/debug');
+      const jobId = parsed.positionals[0];
+      if (!jobId) {
+        console.error('debug requires a job ID');
+        process.exit(2);
+      }
+
+      const report = await executeDebug({ store, repoKey, jobId });
+
+      console.log(`Job: ${report.job_id}`);
+      console.log(`State: ${report.state}  Phase: ${report.phase || '-'}  Attempt: ${report.attempt}`);
+      if (report.warning) {
+        console.log(`[WARNING: ${report.warning}]`);
+      }
+      if (report.worker) {
+        const alive = report.worker.alive === true ? 'yes' : report.worker.alive === false ? 'no' : 'unknown';
+        console.log(`Worker: pid=${report.worker.pid} identity=${report.worker.identity || '-'} alive=${alive}`);
+      }
+      if (report.containment) {
+        console.log(`Containment: kind=${report.containment.kind || '-'} degraded=${report.containment.degraded}`);
+      }
+      console.log(`Backend: ${report.backend || '-'}`);
+      console.log(`Timings: created=${report.timings.created_at || '-'} started=${report.timings.started_at || '-'} heartbeat=${report.timings.heartbeat_at || '-'} finished=${report.timings.finished_at || '-'}`);
+      console.log(`Result: present=${report.result.present} bytes=${report.result.bytes} findings=${report.result.findings_status || '-'}`);
+      if (report.stderr) {
+        console.log(`Stderr (last ${report.stderr.returnedBytes} bytes${report.stderr.truncated ? ', truncated' : ''}):`);
+        console.log(report.stderr.content);
+      }
+      process.exit(0);
+    }
+
+    case 'cleanup': {
+      const { executeCleanup } = require('../core/commands/cleanup');
+      const result = await executeCleanup({
+        store,
+        olderThan: parsed.olderThan,
+        dryRun: parsed.dryRun,
+        scrubSessionIds: parsed.scrubSessionIds,
+      });
+
+      if (result.errors.length > 0) {
+        for (const err of result.errors) {
+          console.error(`Error: ${err}`);
+        }
+      }
+
+      if (result.dryRun) {
+        console.log(`Dry-run: would remove ${result.removed} jobs`);
+        if (result.scrubbed > 0) console.log(`  would scrub ${result.scrubbed} session ids`);
+      } else {
+        console.log(`Cleanup: ${result.removed} removed, ${result.skipped} skipped, ${result.scrubbed} scrubbed`);
       }
       process.exit(0);
     }
