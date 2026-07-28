@@ -42,12 +42,38 @@ class FakeAdapter {
   }
 
   ValidateRequest(request) {
+    if (!request || typeof request !== 'object') return;
+
     const failOn = this._script.behaviors.failValidateOn;
-    if (failOn && request && request[failOn] !== undefined) {
-      const err = new Error(`Validation failed: unsupported option "${failOn}"`);
-      err.code = 'VALIDATION_FAILED';
+    if (failOn && request[failOn] !== undefined) {
+      const err = this._buildValidationError(failOn, request[failOn]);
       throw err;
     }
+
+    const unsupportedByDefault = ['reasoningEffort'];
+    for (const key of unsupportedByDefault) {
+      if (request[key] !== undefined && request[key] !== null && key !== failOn) {
+        if (!this._script.behaviors.allowedOptions || !this._script.behaviors.allowedOptions.includes(key)) {
+          const err = this._buildValidationError(key, request[key]);
+          throw err;
+        }
+      }
+    }
+  }
+
+  _buildValidationError(optionKey, optionValue) {
+    const flagName = optionKey.replace(/([A-Z])/g, '-$1').toLowerCase();
+    const err = new Error(
+      `--${flagName} is not supported by backend ${this._script.capabilities.backend || 'fake'}. ` +
+      `Use --variant <provider-specific-value>. ` +
+      `Run '${this._script.capabilities.backend || 'fake'} capabilities --json' for the current surface. ` +
+      `No job was created.`
+    );
+    err.code = 'VALIDATION_FAILED';
+    err.failureClass = 'unsupported_capability';
+    err.optionName = `--${flagName}`;
+    err.backendName = this._script.capabilities.backend || 'fake';
+    return err;
   }
 
   PrepareInvocation(attempt, request) {

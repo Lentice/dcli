@@ -127,3 +127,46 @@ feat: capability manifests, fail-closed version gating, and precise option rejec
 ```
 
 ## Notes
+
+### Implementation summary
+
+**New commands:**
+- `capabilities --json` — calls `adapter.ProbeCapabilities()` and outputs the effective manifest.
+- `doctor --json` — runs common probes (state root, git, repo resolution), per-backend diagnostics via
+  `adapter.CollectDiagnostics()`, and returns the envelope even when probes fail. Each probe is individually
+  bounded (10s timeout per probe).
+
+**Option validation:**
+- `--reasoning-effort`, `--variant`, `--effort`, `--live-smoke-timeout-sec` added as known flags to `parseArgs`.
+- `ValidateRequest(request)` called before `store.createJob()` in both `run.js` and `submit.js`.
+- The fake adapter rejects `--reasoning-effort` by default; other adapters declare their own `failValidateOn`.
+- Rejection message format: names backend, option, alternative, `capabilities --json`, and "No job was created."
+
+**Capability snapshot:**
+- `run.js` and `submit.js` now capture `adapter.ProbeCapabilities()` and pass it as `capabilitiesSnapshot` to
+  `store.createJob()`.
+
+**Verification:**
+```
+node tests/run-tests.js --suite full   # 1 contract + 15 core = 16 passed
+node cli/dcli.js --backend fake capabilities --json
+node cli/dcli.js --backend fake doctor --json
+node cli/dcli.js --backend fake run --reasoning-effort high   # exit 2 + unsupported_capability
+```
+
+**Documents updated:**
+- `cli/dcli.js` — help text now lists `capabilities` and `doctor` commands plus new flags.
+- `docs/2026-07-28-design-spec.md` — status header updated.
+
+### Things that contradicted the docs
+
+None. The design spec ADR-004, the ticket inline design, and the existing adapter contract all agreed.
+The fake adapter's `ValidateRequest` initially only rejected when `behaviors.failValidateOn` was configured,
+but the ticket's verification step expects `--reasoning-effort` to be rejected by default for the fake backend.
+Adjusted: the fake adapter now rejects `reasoningEffort` unless explicitly listed in `behaviors.allowedOptions`.
+
+### Per-backend probe completeness
+Per the checklist: "the framework and the opencode/codex/claude probe slots exist." The framework in
+`core/commands/doctor.js` calls `adapter.CollectDiagnostics()` for per-backend info. The actual
+backend-specific probes (e.g. `opencode serve` startup, `codex doctor --json` delegation) are stubs
+and will land with their respective adapter tickets.

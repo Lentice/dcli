@@ -15,6 +15,8 @@ Commands:
   tail      Show tail of job logs
   debug     Compact job diagnosis
   cleanup   Remove aged terminal jobs
+  capabilities  Show effective capability manifest
+  doctor    Run system and backend health checks
 
 Options:
   --help                    Show this message
@@ -32,6 +34,10 @@ Options:
   --dry-run                 Preview cleanup without deleting
   --scrub-session-ids       Blank recorded backend session ids
   --max-bytes <n>           Maximum bytes for tail (default: 4096)
+  --reasoning-effort <s>    Reasoning effort level (backend-specific)
+  --variant <s>             opencode-specific reasoning variant
+  --effort <s>              Codex/Claude effort level
+  --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: 120)
 
 Every recipe with a wait carries an explicit budget: set --timeout-sec and --hard-timeout-sec.
 
@@ -75,7 +81,7 @@ async function main() {
     const adapterPath = path.resolve(__dirname, '..', 'adapters', backend, 'adapter');
     const mod = require(adapterPath);
     const AdapterClass = mod.FakeAdapter || mod[Object.keys(mod)[0]];
-    adapter = new AdapterClass({ facts: getDefaultFacts(), exitCode: 0, declaredRungs: ['hard_kill'], capabilities: {} });
+    adapter = new AdapterClass({ facts: getDefaultFacts(), exitCode: 0, declaredRungs: ['hard_kill'], capabilities: getDefaultCapabilities(backend) });
   } catch (err) {
     console.error(`Failed to load adapter "${backend}": ${err.message}`);
     process.exit(12);
@@ -104,6 +110,9 @@ async function main() {
         prompt,
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
+        reasoningEffort: parsed.reasoningEffort,
+        variant: parsed.variant,
+        effort: parsed.effort,
       });
 
       if (parsed.json) {
@@ -124,10 +133,13 @@ async function main() {
       });
 
       const output = executeSubmit({
-        store, repoKey, repoRoot: fullPath,
+        store, adapter, repoKey, repoRoot: fullPath,
         prompt,
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
+        reasoningEffort: parsed.reasoningEffort,
+        variant: parsed.variant,
+        effort: parsed.effort,
       });
 
       if (parsed.json) {
@@ -329,6 +341,26 @@ async function main() {
       process.exit(0);
     }
 
+    case 'capabilities': {
+      const { executeCapabilities } = require('../core/commands/capabilities');
+      const result = await executeCapabilities({ adapter, json: parsed.json });
+      console.log(JSON.stringify(result.manifest, null, 2));
+      process.exit(0);
+    }
+
+    case 'doctor': {
+      const { executeDoctor } = require('../core/commands/doctor');
+      const result = await executeDoctor({
+        adapter,
+        stateRoot,
+        repoPath: repoPath,
+        json: parsed.json,
+        liveSmokeTimeoutSec: parsed.liveSmokeTimeoutSec,
+      });
+      console.log(JSON.stringify(result.envelope, null, 2));
+      process.exit(0);
+    }
+
     default: {
       console.error(`Unknown command: ${parsed.command}`);
       process.exit(2);
@@ -345,6 +377,16 @@ function getDefaultFacts() {
     { type: 'usage_reported', tokens: { input: 10, output: 20, total: 30 } },
     { type: 'process_exited', code: 0 },
   ];
+}
+
+function getDefaultCapabilities(backendName) {
+  return {
+    schema_version: 1,
+    backend: backendName,
+    backend_version: '1.0.0',
+    core: { run: true, submit: true, resume: false, cancel: true, wrapper_worktree: true },
+    extensions: {},
+  };
 }
 
 main().catch(err => {

@@ -5,9 +5,10 @@ const KNOWN_FLAGS = new Set([
   '--backend', '--repo', '--prompt-file', '--hard-timeout-sec', '--group', '--label',
   '--model', '--json', '--timeout-sec', '--all', '--help',
   '--older-than', '--dry-run', '--scrub-session-ids', '--max-bytes',
+  '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
 ]);
 
-const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup']);
+const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor']);
 
 function buildEnvelope(status) {
   return {
@@ -79,7 +80,8 @@ function parseArgs(argv) {
       }
 
       const valueFlag = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
-        '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes']);
+        '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
+        '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec']);
 
       if (valueFlag.has(arg)) {
         i++;
@@ -130,6 +132,17 @@ function parseArgs(argv) {
             result.timeoutSec = parseInt(val, 10);
             if (isNaN(result.timeoutSec) || result.timeoutSec < 0) {
               const err = new Error(`Invalid --timeout-sec: "${val}" must be a non-negative integer`);
+              err.exitCode = 2;
+              throw err;
+            }
+            break;
+          case '--reasoning-effort': result.reasoningEffort = val; break;
+          case '--variant': result.variant = val; break;
+          case '--effort': result.effort = val; break;
+          case '--live-smoke-timeout-sec':
+            result.liveSmokeTimeoutSec = parseInt(val, 10);
+            if (isNaN(result.liveSmokeTimeoutSec) || result.liveSmokeTimeoutSec < 0) {
+              const err = new Error(`Invalid --live-smoke-timeout-sec: "${val}" must be a non-negative integer`);
               err.exitCode = 2;
               throw err;
             }

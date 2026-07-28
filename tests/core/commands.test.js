@@ -587,9 +587,17 @@ console.log('PASS: help text mentions budget');
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
   const { executeSubmit } = require('../../core/commands/submit');
+  const { FakeAdapter } = require('../../adapters/fake/adapter');
+
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { submit: true }, extensions: {} },
+  });
 
   const result = await executeSubmit({
-    store,
+    store, adapter,
     repoKey: 'test-repo',
     prompt: 'background task',
     hardTimeoutSec: 300,

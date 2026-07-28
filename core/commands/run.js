@@ -4,10 +4,23 @@ const { buildEnvelope } = require('./index');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
-async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model }) {
+async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, reasoningEffort, variant, effort }) {
   const jobId = generateJobId();
   const now = new Date();
   const isoNow = now.toISOString();
+
+  const request = { model, reasoningEffort, variant, effort };
+  try {
+    adapter.ValidateRequest(request);
+  } catch (err) {
+    if (err.code === 'VALIDATION_FAILED') {
+      err.exitCode = 2;
+      throw err;
+    }
+    throw err;
+  }
+
+  const capabilitiesSnapshot = adapter.ProbeCapabilities();
 
   store.createJob({
     jobId, repoKey, repoRoot,
@@ -18,6 +31,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     access: 'read-only',
     group, label, model,
     hardTimeoutSec,
+    capabilitiesSnapshot,
   });
 
   const attemptNum = 1;
