@@ -118,4 +118,26 @@ feat(codex): thin adapter slice proving the contract against a single-shot CLI b
 
 ## Notes
 
-Record the two-adapter shape comparison here.
+### Two-adapter shape comparison
+
+| Aspect | opencode adapter | codex adapter |
+|---|---|---|
+| `DeclareCancelRungs()` | 3 rungs: `session_abort`, `server_dispose`, `hard_kill` | 1 rung: `['hard_kill']` |
+| `ProbeCapabilities().extensions` | Declares `graceful_session_abort`, marks perms/questions as unsupported | Empty `{}` — no extensions |
+| `ValidateRequest()` | Accepts `variant`; rejects `reasoningEffort`, `effort` | Accepts `effort`, `reasoningEffort`; rejects `variant` |
+| `Start()` | Starts `opencode serve` HTTP server, waits for port | Spawns `codex exec --json` as single-shot child |
+| `SendPrompt()` | HTTP POST `/session` + `/session/{id}/message` | Writes prompt to stdin, closes stdin |
+| `Observe()` | Yields pre-constructed in-memory facts | Parses JSONL events from stdout into facts |
+| `CollectResult()` | Reads last `assistant_text` fact from memory | Reads `--output-last-message` file from disk |
+| `RequestCancel()` | 3-rung ladder: HTTP abort → HTTP dispose → kill | One-shot: kill process tree |
+| `Dispose()` | HTTP dispose + kill server process | Kill child + clean temp dir |
+| `backend_status` fact | Never emitted (has no queryable status) | Never emitted (has no queryable status) |
+| `Respond()` | Throws (not supported) | Throws (not supported) |
+
+**Design verdict:** The contract successfully accommodates both adapter shapes without any backend-specific conditional in `core/`. The opencode adapter is session-based (HTTP server per job, queryable status), while the codex adapter is a single-shot child process (no queryable status, no graceful cancel). Both cleanly map onto the same contract interface. The asymmetry is exactly where ADR-004 says it should be: in capabilities and extensions, not in required operations.
+
+### Findings from implementation
+
+- `PrepareInvocation()` is not called by `executeRun()` or `executeSubmit()` — the engine does not yet invoke it, so the adapter stores the request during `ValidateRequest()` instead.
+- The codex live-smoke test succeeded on this machine because codex-cli 0.145.0 is installed via npm. This verified the version-detection and executable-resolution paths work end-to-end.
+- Full suite times out because opencode adapter tests attempt to spawn real opencode server processes; this is pre-existing and not introduced by this ticket.
