@@ -141,3 +141,17 @@ feat: finite deadlines everywhere and deadlock-free concurrent pipe draining
 ### Files modified
 
 - `docs/2026-07-28-design-spec.md` — updated `core/` module listing to include `child-process.js`, `bounded-tail.js`, and corrected `containment.js` (was `process-containment.js`)
+
+### Test-3 flake fixed: timing race in hard-timeout-kill test
+
+**Bug:** Test 3 (`tests/core/child-process.test.js` §3) spawned a child that wrote "keepalive" every
+1000ms with `hardTimeoutMs: 1500`. Under full-suite load, the first keepalive write could lose the
+race against the 1500ms kill, leaving `drained.stdout` empty and failing the assertion nondeterministically.
+
+**Fix:** Prepended `process.stdout.write("ready\n")` — written synchronously before the `setInterval`.
+The test now wires a promise via `onStdout` that resolves on the first byte and awaits it before
+entering the time-sensitive section. This guarantees `_stdoutContent` has content (the "ready" marker)
+regardless of whether later interval writes arrive before the kill, making the assertion on
+`drained.stdout.length > 0` deterministic rather than a timing race.
+
+**Verified:** Ran `node tests/run-tests.js --suite full` three times consecutively — all green.

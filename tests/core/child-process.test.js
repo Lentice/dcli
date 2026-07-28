@@ -113,14 +113,19 @@ async function main() {
   {
     const proc = new ManagedProcess({
       command: process.execPath,
-      args: ['-e', 'setInterval(()=>{process.stdout.write("keepalive\\n")},1000)'],
+      args: ['-e', 'process.stdout.write("ready\\n");setInterval(()=>{process.stdout.write("keepalive\\n")},1000)'],
       hardTimeoutMs: 1500,
       postExitDrainMs: 1000,
       startupSentinelMs: 3000,
     });
 
-    // Register consumer
-    proc.onStdout(() => {});
+    // Synchronize on first byte before starting time-sensitive assertions.
+    // This guarantees drained.stdout content regardless of whether the
+    // first keepalive write (1000ms interval) arrives before the hard kill.
+    let firstByteResolve;
+    const firstByte = new Promise(r => { firstByteResolve = r; });
+    proc.onStdout(() => { firstByteResolve(); });
+    await firstByte;
 
     const start = Date.now();
     const exit = await proc.waitForExit(5000);
