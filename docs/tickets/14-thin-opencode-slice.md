@@ -106,3 +106,24 @@ feat(opencode): thin adapter slice proving the contract against a server-backed 
 ```
 
 ## Notes
+
+### Discovery: opencode version mismatch
+The study documents opencode 1.18.7 as the tested version. The installed version on this host is
+**1.18.8** (`opencode --version`). The adapter declares `supported_version_range: { min: '1.18.0', max: '1.19.0' }`
+which covers both.
+
+### Known weakness: startup-output port parsing (→ ticket 17)
+`--port 0` causes opencode to allocate an ephemeral port. The only channel to obtain it is
+startup stdout: `opencode server listening on http://127.0.0.1:<port>`. Parsing human logs is
+not a contract. The adapter confirms the port with `GET /global/health`, but the initial
+discovery is fragile. This is the expected home for ticket 17 (server hardening).
+
+### Behaviors deferred to later tickets
+- Permission handling and `Respond` → tickets 18, 20.
+- `POST /session/{id}/message` is synchronous and blocks for the whole model turn → ticket 19
+  replaces this with `prompt_async`.
+- SSE event stream → ticket 19.
+- Server stdout/stderr continuous drain → ticket 07/17.
+- Containment through the native helper → ticket 06 (helper exists; not wired into thin slice).
+- `capabilities.json` and `compatibility.json` files → not created yet; `ProbeCapabilities()`
+  returns an inline manifest for now.

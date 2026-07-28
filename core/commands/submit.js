@@ -32,12 +32,15 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
 
   const capabilitiesSnapshot = manifest;
 
-  const backend = 'fake';
+  const identity = adapter.GetIdentity();
+  const backend = identity.backend || 'fake';
+  const backendVersion = detectedVersion || '1.0.0';
+  const adapterVersion = identity.adapter_version || '1.0.0';
   store.createJob({
     jobId, repoKey, repoRoot,
     backend,
-    backendVersion: '1.0.0',
-    adapterVersion: '1.0.0',
+    backendVersion,
+    adapterVersion,
     mode: 'submit',
     access: 'read-only',
     group, label, model,

@@ -435,7 +435,36 @@ runContractSuite(() => new FakeAdapter({
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle --json envelope shape test: CollectDiagnostics has schema_version
+// Run contract suite against the opencode adapter (test mode)
+// ---------------------------------------------------------------------------
+
+{
+  const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
+  runContractSuite(() => new OpencodeAdapter({
+    _testMode: true,
+    _mockVersion: '1.18.8',
+    _mockFacts: [
+      { type: 'started', backend_pid: 42, backend_session_id: 'ses_contract' },
+      { type: 'assistant_text', message_id: 'msg_1', text: 'Contract test result from opencode' },
+      { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
+      { type: 'process_exited', code: 0 },
+    ],
+    _mockExitCode: 0,
+  }));
+}
+
+// Also test opencode-specific contract: DeclareCancelRungs returns 3 rungs
+{
+  const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
+  const adapter = new OpencodeAdapter({ _testMode: true, _mockVersion: '1.18.8', _mockFacts: [], _mockExitCode: 0 });
+  const rungs = adapter.DeclareCancelRungs();
+  assert.strictEqual(rungs.length, 3);
+  assert.strictEqual(rungs[0], 'session_abort');
+  assert.strictEqual(rungs[1], 'server_dispose');
+  assert.strictEqual(rungs[2], 'hard_kill');
+}
+
+// Run contract suite against the fake adapter
 // ---------------------------------------------------------------------------
 {
   const adapter = new FakeAdapter({

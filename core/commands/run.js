@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
 const { buildEnvelope, isVersionInRange } = require('./index');
@@ -38,7 +39,10 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
 
   const capabilitiesSnapshot = manifest;
 
-  const backend = 'fake';
+  const identity = adapter.GetIdentity();
+  const backend = identity.backend || 'fake';
+  const backendVersion = detectedVersion || '1.0.0';
+  const adapterVersion = identity.adapter_version || '1.0.0';
   if (admission) {
     const result = admission.acquireSlot(backend);
     if (!result.acquired) {
@@ -52,8 +56,8 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   store.createJob({
     jobId, repoKey, repoRoot,
     backend,
-    backendVersion: '1.0.0',
-    adapterVersion: '1.0.0',
+    backendVersion,
+    adapterVersion,
     mode: 'run',
     access: 'read-only',
     group, label, model,
@@ -68,7 +72,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     attempt: attemptNum,
     from: null,
     to: 'created',
-    detail: { attempt_id: `attempt-${attemptNum}`, execution_token: 'tok-fake' },
+    detail: { attempt_id: `attempt-${attemptNum}`, execution_token: 'tok-' + crypto.randomBytes(16).toString('hex') },
   });
 
   store.journalTransition(jobId, repoKey, {
