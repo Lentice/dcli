@@ -80,7 +80,8 @@ dcli/
     dcli.js  dcli-codex.js  dcli-opencode.js  dcli-claude.js
   core/
     job-store.js  job-schema.js  lifecycle.js  locking.js
-    process-identity.js  process-containment.js  deadlines.js
+    process-identity.js  containment.js  deadlines.js
+    child-process.js  bounded-tail.js
     worktree.js  snapshot.js  results.js  exit-codes.js
     capabilities.js  validate.js
     commands/                # one file per core command

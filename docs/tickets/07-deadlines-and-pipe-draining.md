@@ -116,3 +116,28 @@ feat: finite deadlines everywhere and deadlock-free concurrent pipe draining
 ```
 
 ## Notes
+
+### Files created
+
+| File | Purpose |
+|---|---|
+| `core/deadlines.js` | All deadline defaults, `resolveDeadline()` with validation before conversion, `validateTimeoutMs()` |
+| `core/child-process.js` | `ManagedProcess` class: structural read-before-write, hard timeout from spawn, bounded post-exit drain, size-capped capture, startup sentinel with env override |
+| `core/bounded-tail.js` | `readTail()` that seeks to `max(0, length - maxBytes)` before reading; oversized lines truncated with marker |
+| `tests/core/deadlines.test.js` | 12 tests covering all deadline boundaries, validation, env overrides, 0 = unbounded |
+| `tests/core/bounded-tail.test.js` | 8 tests: empty, small, large bounded, oversized line, UTF-8, seek verification |
+| `tests/core/child-process.test.js` | 11 tests: structural read-before-write, backpressure, hard timeout, grandchild drain, teardown order, size cap, non-ASCII, sentinel env, dead-worker fast-fail |
+| `tests/fixtures/backpressure-child.js` | Writes ~100KB stdout before reading stdin (tunable via arg) |
+| `tests/fixtures/grandchild-pipe.js` | Spawns grandchild that inherits stdout, then exits leaving grandchild holding pipe open |
+| `tests/fixtures/verbose-server.js` | Produces continuous verbose output up to configurable line count |
+| `tests/fixtures/non-ascii-output.js` | Outputs multi-script non-ASCII text |
+
+### Discoveries
+
+- `ManagedProcess.drainOutput()` needs a small sleep (not just reading buffer) because Node's data events may be queued after the exit event. A 500ms cap on the drain wait is sufficient and bounded.
+- On Windows, `process.kill('SIGKILL')` calls `TerminateProcess` which terminates the child but doesn't immediately fire the 'exit' event — it fires on the next event-loop tick. The `waitForExit` mechanism correctly awaits this via the `_exitPromise`.
+- The startup sentinel is lightweight: if the process exits before the sentinel fires with no output, the exit event resolves `waitForExit` immediately regardless of the sentinel timer. The sentinel is only relevant for detecting a process that started but produced nothing for the entire sentinel window.
+
+### Files modified
+
+- `docs/2026-07-28-design-spec.md` — updated `core/` module listing to include `child-process.js`, `bounded-tail.js`, and corrected `containment.js` (was `process-containment.js`)
