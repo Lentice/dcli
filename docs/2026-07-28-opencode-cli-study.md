@@ -383,7 +383,7 @@ Model used for all live probes: **`opencode-go/deepseek-v4-flash`** (cheap, work
 Do not build behavior on these until they are tested:
 
 1. Rule precedence / ordering / pattern semantics of `PermissionRuleset`, and `deny` behavior (§7).
-2. Whether `--port 0` reliably reports the bound ephemeral port, and where.
+2. Whether `--port 0` reliably reports the bound port, and where.
 3. Basic-auth behavior with `OPENCODE_SERVER_PASSWORD` / `--password` / `--username` on every endpoint.
 4. `directory` / `workspace` query-parameter routing correctness per endpoint.
 5. SSE framing, reconnect, replay, and whether events can be missed.

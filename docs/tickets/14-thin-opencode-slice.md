@@ -165,6 +165,27 @@ because nothing called `RequestCancel` or `Dispose` — the process tree survive
   with the spawn signature `opencode serve --port 0 --hostname 127.0.0.1` were left alive
   (after cleaning up 2 pre-existing orphans from prior runs, PIDs 45904 and 42128).
 
+### Discovery: opencode 1.18.8 `--port 0` resolves to fixed default 4096, not ephemeral (→ ticket 17)
+
+The study (§11.2) and earlier Notes entries assumed `--port 0` allocated an ephemeral port.
+**This is false for opencode 1.18.8.** Verified by invoking both the bun shim
+(`C:\Users\lenticetsai\.bun\bin\opencode.exe`) and the real binary
+(`C:\Users\lenticetsai\.bun\install\global\node_modules\opencode-ai\bin\opencode.exe`) directly
+with `serve --port 0 --hostname 127.0.0.1`. Both bound to fixed port 4096. `opencode serve --help`
+confirms `--port [number] [default: 0]`, meaning 0 is opencode's own sentinel for "use the
+built-in default (4096)", not "request an ephemeral port from the OS".
+
+**Consequence for ticket 17 (per-job server lifecycle):** If every concurrent job's server binds
+4096, port collision is guaranteed for any second simultaneous job on the same machine. This is
+not solvable by a different `--port` interpretation — the adapter must either:
+- Choose a unique port (parse `--port 4096+N` or use a reservation protocol), or
+- Adopt a different server-per-job topology.
+
+No fix is attempted here; documented as a hard constraint for ticket 17.
+
+**Correction applied to** `docs/2026-07-28-opencode-cli-study.md` §11.2 (removed "ephemeral" from
+the unverified-item description).
+
 ### Behaviors deferred to later tickets
 - Permission handling and `Respond` → tickets 18, 20.
 - `POST /session/{id}/message` is synchronous and blocks for the whole model turn → ticket 19

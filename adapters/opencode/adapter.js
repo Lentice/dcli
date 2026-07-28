@@ -1,5 +1,7 @@
 const { spawn } = require('node:child_process');
 const http = require('node:http');
+const path = require('node:path');
+const fs = require('node:fs');
 
 const STARTUP_TIMEOUT_MS = 30000;
 const HEALTH_TIMEOUT_MS = 10000;
@@ -85,20 +87,54 @@ function generatePassword() {
   return 'dcli_' + crypto.randomBytes(24).toString('hex');
 }
 
+function resolvePastBunShim(shimPath) {
+  function checkBunPrefix(prefix) {
+    try {
+      const p = path.join(prefix, 'install', 'global', 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
+      if (fs.existsSync(p)) return p;
+    } catch {}
+    return null;
+  }
+
+  // Strategy 1: BUN_INSTALL env var
+  if (process.env.BUN_INSTALL) {
+    const fromEnv = checkBunPrefix(process.env.BUN_INSTALL);
+    if (fromEnv) return fromEnv;
+  }
+
+  // Strategy 2: bun pm bin -g command
+  try {
+    const result = require('node:child_process').execSync('bun pm bin -g', {
+      encoding: 'utf8', timeout: 5000, windowsHide: true,
+    });
+    const binDir = result.trim().split('\n')[0].trim();
+    if (binDir) {
+      const prefix = path.dirname(binDir);
+      const fromBun = checkBunPrefix(prefix);
+      if (fromBun) return fromBun;
+    }
+  } catch {}
+
+  // Strategy 3: Derive from shim path containing .bun\bin\opencode.exe
+  const normalized = shimPath.replace(/\\/g, '/').toLowerCase();
+  const marker = '.bun/bin/opencode.exe';
+  const idx = normalized.indexOf(marker);
+  if (idx !== -1) {
+    const prefix = shimPath.substring(0, idx + 4);
+    const fromShim = checkBunPrefix(prefix);
+    if (fromShim) return fromShim;
+  }
+
+  return null;
+}
+
 function resolveOpencodePath() {
   if (process.env.OPENCODE_PATH) return process.env.OPENCODE_PATH;
 
-  const knownPaths = [
-    'C:\\Users\\lenticetsai\\.bun\\bin\\opencode.exe',
-  ];
-
-  for (const p of knownPaths) {
-    try {
-      if (require('fs').existsSync(p)) return p;
-    } catch {}
-  }
-
   const { execSync } = require('node:child_process');
+
+  let resolved = null;
+
   try {
     const result = execSync('where opencode 2>nul || which opencode 2>/dev/null', {
       encoding: 'utf8',
@@ -106,10 +142,13 @@ function resolveOpencodePath() {
       windowsHide: true,
     });
     const line = result.trim().split('\n')[0].trim();
-    if (line) return line;
+    if (line) resolved = line;
   } catch {}
 
-  return 'opencode';
+  if (!resolved) return 'opencode';
+
+  const realPath = resolvePastBunShim(resolved);
+  return realPath || resolved;
 }
 
 class OpencodeAdapter {
