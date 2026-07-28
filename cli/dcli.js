@@ -42,7 +42,7 @@ if (process.argv.includes('--help')) {
   process.exit(0);
 }
 
-const { parseArgs, buildEnvelope } = require('../core/commands/index');
+const { parseArgs, buildEnvelope, resolvePrompt } = require('../core/commands/index');
 const { JobStore } = require('../core/job-store');
 const { getStateRoot } = require('../core/state-root');
 const { computeRepoKeyWithPath } = require('../core/repo-key');
@@ -85,7 +85,12 @@ async function main() {
   switch (parsed.command) {
     case 'run': {
       const { executeRun } = require('../core/commands/run');
-      const prompt = parsed.positionals.join(' ') || '';
+      const stdinPipeActive = !process.stdin.isTTY;
+      const prompt = await resolvePrompt({
+        promptFile: parsed.promptFile,
+        stdinPipeActive,
+        positionals: parsed.positionals,
+      });
 
       const output = await executeRun({
         store, adapter, repoKey, repoRoot: fullPath,
@@ -104,7 +109,12 @@ async function main() {
 
     case 'submit': {
       const { executeSubmit } = require('../core/commands/submit');
-      const prompt = parsed.positionals.join(' ') || '';
+      const stdinPipeActive = !process.stdin.isTTY;
+      const prompt = await resolvePrompt({
+        promptFile: parsed.promptFile,
+        stdinPipeActive,
+        positionals: parsed.positionals,
+      });
 
       const output = executeSubmit({
         store, repoKey, repoRoot: fullPath,

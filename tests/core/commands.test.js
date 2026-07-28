@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawnSync } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
 
 const { JobStore } = require('../../core/job-store');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
@@ -22,7 +22,7 @@ function withTempDir(fn) {
   return fn(dir).then(cleanup, (err) => { cleanup(); throw err; });
 }
 
-function spawnCli(args, stdin) {
+function spawnCli(args, stdin, env) {
   const opts = {
     encoding: 'utf8',
     windowsHide: true,
@@ -30,6 +30,9 @@ function spawnCli(args, stdin) {
   };
   if (stdin !== undefined) {
     opts.input = stdin;
+  }
+  if (env !== undefined) {
+    opts.env = env;
   }
   return spawnSync(process.execPath, [CLI, ...args], opts);
 }
@@ -91,7 +94,7 @@ await withTempDir(async (dir) => {
 {
   const { resolvePrompt } = require('../../core/commands/index');
   // Simulate: no --prompt-file, stdin not piped (isTTY), positional = "hello"
-  const prompt = resolvePrompt({ promptFile: null, stdinPipeActive: false, positionals: ['hello'] });
+  const prompt = await resolvePrompt({ promptFile: null, stdinPipeActive: false, positionals: ['hello'] });
   assert.strictEqual(prompt, 'hello', 'positional text must be used when no other source');
 }
 console.log('PASS: run test 3 — positional prompt');
@@ -104,7 +107,7 @@ console.log('PASS: run test 3 — positional prompt');
   const pFile = path.join(os.tmpdir(), 'dcli-test-prompt-' + Date.now());
   fs.writeFileSync(pFile, 'file-content', 'utf8');
   try {
-    const prompt = resolvePrompt({ promptFile: pFile, stdinPipeActive: false, positionals: ['pos'] });
+    const prompt = await resolvePrompt({ promptFile: pFile, stdinPipeActive: false, positionals: ['pos'] });
     assert.strictEqual(prompt, 'file-content', '--prompt-file must have highest precedence');
   } finally {
     try { fs.unlinkSync(pFile); } catch {}
@@ -117,14 +120,80 @@ console.log('PASS: run test 4 — --prompt-file precedence');
 // ===========================================================================
 {
   const { resolvePrompt } = require('../../core/commands/index');
-  assert.throws(() => {
-    resolvePrompt({ promptFile: '/nonexistent/file.md', stdinPipeActive: false, positionals: [] });
-  }, /prompt-file/i, 'unreadable --prompt-file must throw');
+  await assert.rejects(
+    resolvePrompt({ promptFile: '/nonexistent/file.md', stdinPipeActive: false, positionals: [] }),
+    /prompt-file/i,
+    'unreadable --prompt-file must throw'
+  );
 }
 console.log('PASS: run test 5 — unusable --prompt-file is error');
 
 // ===========================================================================
-// 6. submit returns a job id and exits
+// 6. run with piped stdin (e2e via spawnCli)
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const env = { ...process.env, DCLI_STATE_ROOT: dir };
+  const result = spawnCli(
+    ['--backend', 'fake', 'run', '--hard-timeout-sec', '60'],
+    'piped prompt text',
+    env
+  );
+  assert.strictEqual(result.status, 0, `piped stdin must exit 0, got ${result.status}`);
+  assert.ok(result.stdout.length > 0, 'piped stdin must produce stdout');
+  console.log('PASS: run test 6 — piped stdin via CLI');
+});
+
+// ===========================================================================
+// 7. run with --prompt-file (e2e via spawnCli)
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const env = { ...process.env, DCLI_STATE_ROOT: dir };
+  const pFile = path.join(dir, 'prompt.txt');
+  fs.writeFileSync(pFile, 'file-sourced prompt', 'utf8');
+  const result = spawnCli(
+    ['--backend', 'fake', 'run', '--hard-timeout-sec', '60', '--prompt-file', pFile],
+    undefined,
+    env
+  );
+  assert.strictEqual(result.status, 0, `--prompt-file must exit 0, got ${result.status}`);
+  assert.ok(result.stdout.length > 0, '--prompt-file must produce stdout');
+  // Also verify positionals are ignored when --prompt-file is present
+  const result2 = spawnCli(
+    ['--backend', 'fake', 'run', '--hard-timeout-sec', '60', '--prompt-file', pFile, 'ignored-pos'],
+    undefined,
+    env
+  );
+  assert.strictEqual(result2.status, 0, `--prompt-file with positionals must exit 0`);
+  console.log('PASS: run test 7 — --prompt-file via CLI');
+});
+
+// ===========================================================================
+// 8. Open-but-silent stdin does not hang (bounded read)
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const env = { ...process.env, DCLI_STATE_ROOT: dir };
+  const child = spawn(process.execPath, [CLI, '--backend', 'fake', 'run', '--hard-timeout-sec', '60'], {
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  // Never write to or close stdin — the bounded read must let the process exit
+  const exitCode = await new Promise((resolve) => {
+    const killTimer = setTimeout(() => {
+      child.kill();
+      resolve(null);
+    }, 15000);
+    child.on('exit', (code) => {
+      clearTimeout(killTimer);
+      resolve(code);
+    });
+  });
+  assert.strictEqual(exitCode, 0, `silent pipe must exit 0, got ${exitCode}`);
+  console.log('PASS: run test 8 — open-but-silent stdin bounded read');
+});
+
+// ===========================================================================
+// 10. submit returns a job id and exits
 // ===========================================================================
 await withTempDir(async (dir) => {
   const env = { ...process.env, DCLI_STATE_ROOT: dir };
@@ -142,7 +211,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 7. status reconciles before reporting
+// 11. status reconciles before reporting
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
@@ -172,7 +241,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 8. wait --timeout-sec returns exit 20 on caller timeout
+// 12. wait --timeout-sec returns exit 20 on caller timeout
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
@@ -201,7 +270,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 9. wait --all --group gathers a snapshot batch
+// 13. wait --all --group gathers a snapshot batch
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
@@ -251,7 +320,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 10. read returns exit 4 for non-terminal job
+// 14. read returns exit 4 for non-terminal job
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
@@ -271,7 +340,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 11. read returns result for terminal job
+// 15. read returns result for terminal job
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
@@ -307,7 +376,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 12. list is newest-first with --repo filtering
+// 16. list is newest-first with --repo filtering
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
@@ -356,7 +425,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 13. --json envelope has schema_version, all fields present, null when unset
+// 17. --json envelope has schema_version, all fields present, null when unset
 // ===========================================================================
 {
   const { buildEnvelope } = require('../../core/commands/index');
@@ -391,7 +460,7 @@ await withTempDir(async (dir) => {
 console.log('PASS: --json envelope test');
 
 // ===========================================================================
-// 14. Valueless flags rejected with exit 2
+// 18. Valueless flags rejected with exit 2
 // ===========================================================================
 {
   const { parseArgs } = require('../../core/commands/index');
@@ -418,7 +487,7 @@ console.log('PASS: --json envelope test');
 console.log('PASS: valueless flags rejected');
 
 // ===========================================================================
-// 15. Unknown flags rejected with exit 2
+// 19. Unknown flags rejected with exit 2
 // ===========================================================================
 {
   const { parseArgs } = require('../../core/commands/index');
@@ -434,7 +503,7 @@ console.log('PASS: valueless flags rejected');
 console.log('PASS: unknown flags rejected');
 
 // ===========================================================================
-// 16. Stray positionals rejected
+// 20. Stray positionals rejected
 // ===========================================================================
 {
   const { parseArgs } = require('../../core/commands/index');
@@ -450,7 +519,7 @@ console.log('PASS: unknown flags rejected');
 console.log('PASS: stray positionals rejected');
 
 // ===========================================================================
-// 17. Range validation precedes conversion
+// 21. Range validation precedes conversion
 // ===========================================================================
 {
   const { parseArgs } = require('../../core/commands/index');
@@ -466,7 +535,7 @@ console.log('PASS: stray positionals rejected');
 console.log('PASS: range validation precedes conversion');
 
 // ===========================================================================
-// 18. --help dispatches quickly before heavyweight imports
+// 22. --help dispatches quickly before heavyweight imports
 // ===========================================================================
 {
   const start = Date.now();
@@ -482,7 +551,7 @@ console.log('PASS: range validation precedes conversion');
 }
 
 // ===========================================================================
-// 19. Every example in docs includes a budget
+// 23. Every example in docs includes a budget
 //    - Check the CLI help text
 // ===========================================================================
 {
@@ -499,7 +568,7 @@ console.log('PASS: range validation precedes conversion');
 console.log('PASS: help text mentions budget');
 
 // ===========================================================================
-// 20. submit job persists in store
+// 24. submit job persists in store
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });
@@ -524,7 +593,7 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 21. status --json emits envelope
+// 25. status --json emits envelope
 // ===========================================================================
 {
   const { buildEnvelope } = require('../../core/commands/index');
@@ -550,7 +619,7 @@ await withTempDir(async (dir) => {
 console.log('PASS: status --json envelope');
 
 // ===========================================================================
-// 22. list cross-repository listing
+// 26. list cross-repository listing
 // ===========================================================================
 await withTempDir(async (dir) => {
   const store = new JobStore({ stateRoot: dir });

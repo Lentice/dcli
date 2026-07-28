@@ -1,4 +1,5 @@
 const { generateJobId } = require('../job-id');
+const { resolveDeadline } = require('../deadlines');
 
 const KNOWN_FLAGS = new Set([
   '--backend', '--repo', '--prompt-file', '--hard-timeout-sec', '--group', '--label',
@@ -150,7 +151,7 @@ function validatePositionals(parsed) {
   }
 }
 
-function resolvePrompt({ promptFile, stdinPipeActive, positionals }) {
+async function resolvePrompt({ promptFile, stdinPipeActive, positionals }) {
   if (promptFile) {
     try {
       return require('fs').readFileSync(promptFile, 'utf8');
@@ -162,7 +163,7 @@ function resolvePrompt({ promptFile, stdinPipeActive, positionals }) {
   }
 
   if (stdinPipeActive) {
-    return null;
+    return readStdinBounded();
   }
 
   if (positionals.length > 0) {
@@ -170,6 +171,53 @@ function resolvePrompt({ promptFile, stdinPipeActive, positionals }) {
   }
 
   return '';
+}
+
+function readStdinBounded() {
+  const deadlineMs = resolveDeadline('STDIN_READ_MS');
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let settled = false;
+
+    function cleanup() {
+      if (settled) return;
+      clearTimeout(timer);
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', onEnd);
+      process.stdin.removeListener('error', onError);
+    }
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(chunks.join(''));
+    }
+
+    const timer = setTimeout(finish, deadlineMs);
+
+    function onData(chunk) {
+      chunks.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+    }
+
+    function onEnd() {
+      finish();
+    }
+
+    function onError(err) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    }
+
+    if (process.stdin.isPaused()) {
+      process.stdin.resume();
+    }
+    process.stdin.on('data', onData);
+    process.stdin.on('end', onEnd);
+    process.stdin.on('error', onError);
+  });
 }
 
 module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS };
