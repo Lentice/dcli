@@ -221,7 +221,7 @@ runs opencode. Not used by the wrapper.
 | execution backend | **per-job `opencode serve --port 0 --hostname 127.0.0.1` + HTTP** (ADR-002) |
 | prompt | `POST /session/{id}/prompt_async` body (no shell length limits) |
 | model | `POST /session` `model: {providerID, id, variant?}` |
-| reasoning effort | `variant` — **surfaced as `copencode --variant`, never `--effort`** (ADR-004) |
+| reasoning effort | `variant` — **surfaced as `dcli-opencode --variant`, never `--effort`** (ADR-004) |
 | agent | `POST /session` `agent` |
 | access / isolation | per-session `permission: PermissionRuleset` (`allow`\|`deny`\|`ask`) |
 | resume | `POST /session` `parentID`, or reuse the recorded session id |

@@ -104,9 +104,9 @@ An `interrupted` attempt supports `retry_attempt` and `fork_from_artifacts`. It 
 ```powershell
 node tests/run-tests.js --suite full
 
-$id = node cli/copencode.js submit --hard-timeout-sec 600 "Draft a plan for X"
-node cli/copencode.js wait $id --timeout-sec 600 --json
-"Now critique your own plan." | node cli/copencode.js resume $id --kind continue_backend_session --hard-timeout-sec 600
+$id = node cli/dcli-opencode.js submit --hard-timeout-sec 600 "Draft a plan for X"
+node cli/dcli-opencode.js wait $id --timeout-sec 600 --json
+"Now critique your own plan." | node cli/dcli-opencode.js resume $id --kind continue_backend_session --hard-timeout-sec 600
 ```
 
 ## Definition of done

@@ -38,15 +38,15 @@ Source of truth, in `integration/source/`: `core.md`, `codex.md`, `opencode.md`,
 Combined with core command metadata, the exit-code contract, and each adapter's capability manifest to produce:
 
 ```
-integration/generated/skills/{ccodex,copencode,cclaude,delegate-cli}/SKILL.md
-integration/generated/commands/{ccodex,copencode,cclaude}/{review,ask,implement,resume,jobs,doctor,cleanup}.md
-integration/generated/rules/delegate-delegation.md
+integration/generated/skills/{ccodex,dcli-opencode,dcli-claude,dcli}/SKILL.md
+integration/generated/commands/{ccodex,dcli-opencode,dcli-claude}/{review,ask,implement,resume,jobs,doctor,cleanup}.md
+integration/generated/rules/dcli-delegation.md
 integration/generated/worker-prompts/*.md
 ```
 
 Generated files are **checked in**. CI fails if they are stale.
 
-`delegate-cli/SKILL.md` is a **router only**: choose a backend, then load that backend's skill. It must not
+`dcli/SKILL.md` is a **router only**: choose a backend, then load that backend's skill. It must not
 reproduce all three references.
 
 ### What each skill must teach
@@ -61,13 +61,13 @@ reproduce all three references.
 - `findings_status: malformed` is **not** a clean review.
 - Keep delegated work out of the caller's context until collection, when token saving is the point.
 
-Plus the per-backend truths: `copencode --variant` (unbounded string) vs `ccodex/cclaude --reasoning-effort`
+Plus the per-backend truths: `dcli-opencode --variant` (unbounded string) vs `ccodex/dcli-claude --reasoning-effort`
 (different enums); which backends can answer an interaction; which have graceful cancel; that opencode's
 structured output is unusable.
 
 ### The project policy file
 
-`.delegate/delegate.json`, all keys optional, with documented defaults and **strict integer range validation**
+`.dcli/policy.json`, all keys optional, with documented defaults and **strict integer range validation**
 (a real bug class — validate before use, whole numbers only, explicit inclusive bounds):
 
 ```json
@@ -82,6 +82,12 @@ structured output is unusable.
 - **Stage and swap, never merge.** Build the new tree at `<dest>.staging`, then swap it in whole; remove the old
   copy only after the complete new one exists, so a failed copy never leaves a half-installed CLI.
 - Empty the namespaced command directory first, so removed commands do not linger as ghosts.
+- **Ownership manifest (ADR-009).** The installer hard-refuses to overwrite any target it cannot positively
+  identify as its own — shim paths, skill directories, command directories, rule files, and the state root,
+  each checked independently. Ownership is proven by a manifest carrying a stable product id, schema version,
+  and installed-file hashes. *"The directory already has the expected name" is not proof.* Provide an explicit
+  uninstall/migration operation; provide **no** generic force-overwrite that bypasses the check. This is what
+  stops `dcli` from ever clobbering the predecessor `ccodex` installation, which remains live throughout.
 - **Two refusal guards, both load-bearing:** refuse an install directory that collides with the state root, and
   refuse to replace an existing non-empty directory that lacks the tool's marker file.
 - After install, **verify installed copies byte-match the repo** (hash per file).
@@ -109,7 +115,7 @@ document it rather than pretending otherwise.
       lacking them and fails.
 - [ ] Skills teach: independent verification, never auto-apply, inspect `diff` first, exact lineage, no retry on
       quota/auth/permission/timeout, neutral intent, and that `malformed` findings are not clean.
-- [ ] `.delegate/delegate.json` is read with strict inclusive integer range validation, validated before use.
+- [ ] `.dcli/policy.json` is read with strict inclusive integer range validation, validated before use.
 - [ ] Installer stages and swaps whole; a planted stale file from a previous version is gone after upgrade.
 - [ ] Installer empties the namespaced command directory so removed commands leave no ghosts.
 - [ ] Installer refuses a directory colliding with the state root — regression test.
@@ -125,7 +131,7 @@ node tests/run-tests.js --suite full
 node scripts/generate-integration.js --check      # must report no drift
 pwsh -NoProfile -File install.ps1
 # then verify byte-match, e.g.
-Get-ChildItem "$env:USERPROFILE\.claude\skills\copencode" -Recurse -File |
+Get-ChildItem "$env:USERPROFILE\.claude\skills\dcli-opencode" -Recurse -File |
   ForEach-Object { Get-FileHash $_.FullName }
 ```
 

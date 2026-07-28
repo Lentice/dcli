@@ -28,9 +28,9 @@ the evidence you need to explain why the first try failed.
 Platform state roots:
 
 ```
-Windows  %LOCALAPPDATA%\delegate-cli\        config: %APPDATA%\delegate-cli\
-macOS    ~/Library/Application Support/delegate-cli/
-Linux    ${XDG_STATE_HOME:-~/.local/state}/delegate-cli/
+Windows  %LOCALAPPDATA%\dcli\        config: %APPDATA%\dcli\
+macOS    ~/Library/Application Support/dcli/
+Linux    ${XDG_STATE_HOME:-~/.local/state}/dcli/
 ```
 
 ## Design

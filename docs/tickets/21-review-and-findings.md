@@ -63,7 +63,7 @@ severity, and require exactly one appendix.
 ### The findings contract
 
 ````markdown
-<!-- delegate:findings -->
+<!-- dcli:findings -->
 ```json
 { "verdict": "One-line verdict.",
   "items": [ { "severity": "critical|important|minor", "file": "relative/path.ts", "line": 42,
@@ -90,6 +90,12 @@ from "unparseable", and conflating them is the headline bug.
 
 The prose in `result.md` is **always** preserved, whatever the parser decides.
 
+### Marker coexistence with the predecessor
+
+Producers emit **only** `<!-- dcli:findings -->`. A consumer may additionally recognize the predecessor''s
+`<!-- ccodex:findings -->` during the coexistence period, but a document containing **both** is ambiguous and
+must be **rejected** — never silently resolved by taking the last one. The marker carries no version; the
+schema version lives inside the JSON object, so parsers dispatch on one stable delimiter (ADR-009).
 ### The corpus fixture
 
 Check in a corpus of **real model outputs** from all three backends — clean, findings-bearing, preamble-bearing,
@@ -127,7 +133,7 @@ fixture, not a runtime pre-flight: do not add a warm-up review call per invocati
 ```powershell
 node tests/run-tests.js --suite full
 
-node cli/copencode.js review --working --path core/ --intent "Add cache invalidation" `
+node cli/dcli-opencode.js review --working --path core/ --intent "Add cache invalidation" `
   --hard-timeout-sec 900 --json
 ```
 

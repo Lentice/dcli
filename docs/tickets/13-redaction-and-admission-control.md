@@ -97,8 +97,8 @@ An engine-level controller bounds **global** and **per-backend** concurrency, bo
 node tests/run-tests.js --suite full
 
 # planted-token check, by hand
-node cli/delegate.js --backend fake run --hard-timeout-sec 60 "echo"
-Select-String -Path "$env:LOCALAPPDATA\delegate-cli\jobs\*\*\**" -Pattern 'PLANTED_SECRET_VALUE' -ErrorAction SilentlyContinue
+node cli/dcli.js --backend fake run --hard-timeout-sec 60 "echo"
+Select-String -Path "$env:LOCALAPPDATA\dcli\jobs\*\*\**" -Pattern 'PLANTED_SECRET_VALUE' -ErrorAction SilentlyContinue
 ```
 
 The `Select-String` must return nothing.

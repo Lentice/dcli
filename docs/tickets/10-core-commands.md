@@ -98,9 +98,9 @@ primitive — callers must never hand-roll a polling loop, and the docs must say
 
 ```powershell
 node tests/run-tests.js --suite full
-"do something" | node cli/delegate.js --backend fake run --hard-timeout-sec 60
-node cli/delegate.js --backend fake submit --hard-timeout-sec 300 --group demo
-node cli/delegate.js --backend fake wait --all --group demo --timeout-sec 60 --json
+"do something" | node cli/dcli.js --backend fake run --hard-timeout-sec 60
+node cli/dcli.js --backend fake submit --hard-timeout-sec 300 --group demo
+node cli/dcli.js --backend fake wait --all --group demo --timeout-sec 60 --json
 ```
 
 ## Definition of done

@@ -41,7 +41,7 @@ tests/core/  tests/contract/  tests/adapters/  tests/integration/  tests/fixture
 - `package.json` with `"type": "commonjs"` or `"module"` — pick one and be consistent. No bundler, no
   transpiler, no TypeScript compile step.
 - A `jsconfig.json` enabling `checkJs` and `strict` for editor/CI type checking of JSDoc annotations.
-  This must **not** be a build step: `node cli/delegate.js` runs the source directly.
+  This must **not** be a build step: `node cli/dcli.js` runs the source directly.
 - Node version floor recorded in `engines`. Pick the oldest version whose `AbortSignal`, `fs.rm`, and
   `structuredClone` behavior you rely on.
 
@@ -89,7 +89,7 @@ integration:  0 passed, 3 skipped (opencode not installed)
 ## Checklist
 
 - [ ] Directory skeleton from Design exists and is committed.
-- [ ] `package.json` has no build script; `node cli/delegate.js --help` runs from source.
+- [ ] `package.json` has no build script; `node cli/dcli.js --help` runs from source.
 - [ ] `jsconfig.json` enables `checkJs`; a deliberately-wrong JSDoc annotation is reported by the type
       checker (verify manually once, then revert).
 - [ ] `core/fs-text.js` provides the three writers, all UTF-8 **without BOM**.
@@ -108,7 +108,7 @@ integration:  0 passed, 3 skipped (opencode not installed)
 ```powershell
 node tests/run-tests.js                 # quick; should be green and list skips
 node tests/run-tests.js --suite full    # full; should be green
-node cli/delegate.js --help             # runs from source, no build
+node cli/dcli.js --help             # runs from source, no build
 ```
 
 Then plant a deliberately failing test file and confirm the runner exits non-zero and names it.

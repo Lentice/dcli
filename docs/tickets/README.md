@@ -1,6 +1,6 @@
 # Tickets
 
-Tracer-bullet vertical slices for `delegate-cli`, numbered in dependency order (blockers first). Each ticket is a
+Tracer-bullet vertical slices for `dcli`, numbered in dependency order (blockers first). Each ticket is a
 **self-contained design spec with a checklist** — read [`00-onboarding.md`](00-onboarding.md) plus your one ticket
 file and you have everything you need.
 
@@ -67,4 +67,4 @@ discovered before any adapter work.
 |---|---|---|
 | 06 | Job Object cannot contain the Bun binary | Reverse ADR-003 to pure Go; re-scope |
 | 16 | Contract needs a backend-specific skip, or `core/` needs a conditional | Change the contract; if impossible, invoke the ADR-001 kill criteria |
-| 27 | A native Claude child escapes containment, or recursion cannot be bounded | Record as an ADR-001 R6 finding; isolate or abandon `cclaude` rather than weakening all backends |
+| 27 | A native Claude child escapes containment, or recursion cannot be bounded | Record as an ADR-001 R6 finding; isolate or abandon `dcli-claude` rather than weakening all backends |

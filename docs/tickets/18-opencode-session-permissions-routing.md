@@ -117,7 +117,7 @@ If a semantic turns out to be unreliable, **narrow what the wrapper depends on**
 node tests/run-tests.js --suite full
 
 # the decisive live check: a prompt that would hang on the CLI path must complete here
-node cli/copencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash `
+node cli/dcli-opencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash `
   --access read-only "List the files in the current directory."
 ```
 

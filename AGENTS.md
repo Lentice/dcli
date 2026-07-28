@@ -1,4 +1,4 @@
-# Repository guidelines — delegate-cli
+# Repository guidelines — dcli
 
 **Read this file before writing any code in this repository.** It is short on purpose. Everything in
 it was paid for by a real bug, a real stall, or a real review finding in this project's predecessor
@@ -12,9 +12,9 @@ and your ticket file. This file is the standing rules that apply to every ticket
 
 ## What this is
 
-`delegate-cli` lets an engineer in Claude Code delegate bounded work to a *different* coding-agent CLI
+`dcli` lets an engineer in Claude Code delegate bounded work to a *different* coding-agent CLI
 and get a durable, inspectable result back. Three backends behind three shim commands:
-`copencode` (opencode), `ccodex` (Codex CLI), `cclaude` (Claude Code), plus `delegate --backend <b>`.
+`dcli-opencode` (opencode), `dcli-codex` (Codex CLI), `dcli-claude` (Claude Code), plus `dcli --backend <b>`.
 
 **Status:** design complete, no code written. Start at [`docs/tickets/`](docs/tickets/).
 
@@ -177,6 +177,27 @@ tool's marker file.
 - **Watch startup cost.** The predecessor eagerly loaded every module on every invocation, ~380 ms on
   every command including `--help`. Dispatch help before heavyweight imports; measure before and after.
 
+## Names are contracts (ADR-009)
+
+The family is **`dcli`**: umbrella `dcli`, shims `dcli-codex` / `dcli-opencode` / `dcli-claude`, state root
+`dcli`, policy `.dcli/policy.json`, marker `<!-- dcli:findings -->`, environment prefix `DCLI_`, and
+`status.json.backend` values `codex` / `opencode` / `claude`.
+
+- **The predecessor `ccodex` is untouchable.** It is installed, working, and stays that way for the whole
+  build. Never install over its command, skill, commands, rule, or state root. The failure this prevents is
+  invisible: skill installation and `PATH` resolution select independently, so an agent can read one
+  generation''s instructions while running the other generation''s binary, and the call still looks valid.
+- **Every identifier above is persisted, parsed, or discovered by path — so it is already a contract.** Only
+  help text and display names are soft. Never reuse a stable identifier for a new meaning.
+- **`backend` values are opaque adapter IDs owned by us**, not vendor names. Need richer identity? Add a
+  field; never change the enum.
+- **Environment variables have declared classes.** Runtime `DCLI_WORKER` / `DCLI_DEPTH` / `DCLI_STATE_ROOT` /
+  `DCLI_BACKEND` / `DCLI_JOB_ID`; test-only `DCLI_TEST_*`. **A test-only variable must never become an
+  undocumented production override just because production code happens to read it.** Prefer argument
+  injection over an environment knob — every knob is a process-global hidden input.
+- `OPENCODE_SERVER_PASSWORD` is **not ours to name** — opencode requires it. Generate per job, keep it in
+  memory only long enough to build the child environment, never mirror it into a `DCLI_*` variable, and redact
+  it everywhere.
 ## Testing rules learned the hard way
 
 - **Test false greens are real and have shipped.** A whole commit was needed to fix tests that passed

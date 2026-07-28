@@ -110,7 +110,7 @@ Bound the idle interval (120 s default): no event *and* no keepalive means inves
 node tests/run-tests.js --suite full
 
 # live: a tool-using turn, which exercises multi-message selection
-node cli/copencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash `
+node cli/dcli-opencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash `
   "Run the bash command 'git rev-parse --abbrev-ref HEAD' and report only its output."
 ```
 

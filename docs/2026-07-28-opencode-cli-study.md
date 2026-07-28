@@ -3,7 +3,7 @@
 Date: 2026-07-28
 Subject: `opencode` **1.18.7** (Bun-built binary at `C:\Users\lenticetsai\.bun\bin\opencode.exe`)
 Host: Windows 11 Pro 10.0.26200 x64, PowerShell 7
-Purpose: establish the factual basis for the `copencode` adapter design.
+Purpose: establish the factual basis for the `dcli-opencode` adapter design.
 
 Everything below marked **[observed]** was run live on this host. Anything marked
 **[unverified]** was NOT confirmed and must not be relied on until it is. Two independent studies
@@ -109,7 +109,7 @@ tmp     %LOCALAPPDATA%\Temp\opencode
 `session`, `message`, `part`, `permission`, `todo`, `workspace`, `event`).
 
 **Rule:** the SQLite DB is an opencode implementation detail and contains credentials/transcripts.
-`copencode` must never read it on a normal path. `doctor --deep` may run narrow read-only queries
+`dcli-opencode` must never read it on a normal path. `doctor --deep` may run narrow read-only queries
 via `opencode db "<SQL>" --format json` for forensics, with redaction.
 
 ---
@@ -196,7 +196,7 @@ with exit `1` — i.e. error payloads can be entirely generic.
 | Nonexistent provider/model | `1` |
 | Credit/billing failure (401 in event) | `1` |
 
-opencode has no granular exit-code contract. `copencode` must define its own (see design spec).
+opencode has no granular exit-code contract. `dcli-opencode` must define its own (see design spec).
 
 ### Encoding
 

@@ -50,9 +50,9 @@ retroactively change how an old job reads.
 ### Option rejection
 
 ```
-copencode: --reasoning-effort is not supported by backend opencode.
+dcli-opencode: --reasoning-effort is not supported by backend opencode.
 Use --variant <provider-specific-value>.
-Run 'copencode capabilities --json' for the current surface.
+Run 'dcli-opencode capabilities --json' for the current surface.
 No job was created.
 ```
 
@@ -111,9 +111,9 @@ environment failure — the predecessor uses distinct exit codes for exactly thi
 
 ```powershell
 node tests/run-tests.js --suite full
-node cli/delegate.js --backend fake capabilities --json
-node cli/delegate.js --backend fake doctor --json
-node cli/delegate.js --backend fake run --reasoning-effort high   # expect exit 2 + unsupported_capability
+node cli/dcli.js --backend fake capabilities --json
+node cli/dcli.js --backend fake doctor --json
+node cli/dcli.js --backend fake run --reasoning-effort high   # expect exit 2 + unsupported_capability
 ```
 
 ## Definition of done

@@ -12,7 +12,7 @@ matters most.
 
 ## Purpose
 
-`ccodex run "say hello"` works against a real Codex install, through the narrowest possible adapter.
+`dcli-codex run "say hello"` works against a real Codex install, through the narrowest possible adapter.
 
 ## Why it matters — this is the whole point of the ticket
 
@@ -47,7 +47,7 @@ adapter, stop. The contract is wrong — fix the contract, not this adapter.**
 
 ## Design
 
-1. `cli/ccodex.js` selects the backend before argument parsing.
+1. `cli/dcli-codex.js` selects the backend before argument parsing.
 2. `adapters/codex/adapter.js`:
    - `Start`: spawn under containment (ticket 06) with argv built as an **array**:
      `codex exec --json --color never -s <sandbox> -a never -C <dir> -o <result-file> -`
@@ -75,7 +75,7 @@ adapter, stop. The contract is wrong — fix the contract, not this adapter.**
 
 ## Checklist
 
-- [ ] `ccodex` shim selects the backend before argument parsing.
+- [ ] `dcli-codex` shim selects the backend before argument parsing.
 - [ ] Adapter runs `codex exec --json` with the prompt on **stdin** and `-o` for the result.
 - [ ] argv is built as an **array** and golden-tested, with exec-level options before any subcommand token.
 - [ ] The executable resolves to the executable form; a test uses an **npm-shaped PATH** with both shims present.
@@ -96,7 +96,7 @@ adapter, stop. The contract is wrong — fix the contract, not this adapter.**
 
 ```powershell
 node tests/run-tests.js --suite full
-node cli/ccodex.js run --hard-timeout-sec 300 "Reply with exactly: PONG"
+node cli/dcli-codex.js run --hard-timeout-sec 300 "Reply with exactly: PONG"
 ```
 
 Then the design check that justifies this ticket: **diff the two adapters' shapes.** If the opencode adapter

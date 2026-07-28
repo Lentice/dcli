@@ -9,7 +9,7 @@
 
 ## Purpose
 
-`cclaude` runs work through a child Claude Code process on the shared engine, with the wrapper owning the job
+`dcli-claude` runs work through a child Claude Code process on the shared engine, with the wrapper owning the job
 lifecycle.
 
 ## Why it matters
@@ -118,8 +118,8 @@ from output, which removes a whole class of lineage bug.
 
 ```powershell
 node tests/run-tests.js --suite full
-node cli/cclaude.js doctor --json
-node cli/cclaude.js run --hard-timeout-sec 600 --access read-only "Summarize AGENTS.md in three bullets."
+node cli/dcli-claude.js doctor --json
+node cli/dcli-claude.js run --hard-timeout-sec 600 --access read-only "Summarize AGENTS.md in three bullets."
 ```
 
 Then attempt a mutation under `--access read-only` and confirm it is refused.

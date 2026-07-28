@@ -10,32 +10,32 @@
 
 ## Purpose
 
-A Claude Code worker cannot recursively delegate back into `cclaude`, and the failure is fast and loud rather than
+A Claude Code worker cannot recursively delegate back into `dcli-claude`, and the failure is fast and loud rather than
 a fork bomb.
 
 ## Why it matters
 
-`cclaude` is Claude Code wrapping Claude Code. The caller is a Claude session with the `cclaude` skill installed;
+`dcli-claude` is Claude Code wrapping Claude Code. The caller is a Claude session with the `dcli-claude` skill installed;
 the worker is a Claude session that, unguarded, can discover the same skill and delegate again. Each level
 multiplies processes, tokens, and cost.
 
 This is also a formal **kill criterion** for the whole project (R6): if recursion cannot be reliably bounded — if
-workers keep rediscovering `cclaude`, cannot run isolated, or leave native children outside containment — then
-`cclaude` should be isolated or abandoned rather than weakening all three backends. Part of this ticket's job is
+workers keep rediscovering `dcli-claude`, cannot run isolated, or leave native children outside containment — then
+`dcli-claude` should be isolated or abandoned rather than weakening all three backends. Part of this ticket's job is
 to establish, with evidence, that it *can* be bounded.
 
 ## Design
 
 ### Defense in depth — all four layers, not one
 
-1. **Environment sentinel.** Stamp `CCLAUDE_WORKER=1` (plus `CCLAUDE_DEPTH=<n>`) into the child environment. On
-   startup, `cclaude` reads them: if the sentinel is present and depth is at or above the configured limit,
+1. **Environment sentinel.** Stamp `DCLI_WORKER=1` (plus `DCLI_DEPTH=<n>`) into the child environment. On
+   startup, `dcli-claude` reads them: if the sentinel is present and depth is at or above the configured limit,
    **fail fast with exit `2`** and a message explaining the guard.
 2. **Capability removal.** Base worker runs on `--safe-mode` (or `--bare` per ticket 26's auth finding) plus
    `--disable-slash-commands`, so the worker has no skills to rediscover. Do not install the delegating skill
    into the worker context where that is avoidable.
-3. **Instruction.** The generated skill and delegation rule (ticket 24) state that a `cclaude` worker must not
-   delegate via `cclaude` unless explicitly requested and depth-bounded.
+3. **Instruction.** The generated skill and delegation rule (ticket 24) state that a `dcli-claude` worker must not
+   delegate via `dcli-claude` unless explicitly requested and depth-bounded.
 4. **Lineage record.** Store the parent wrapper job id and the native Claude session id **separately**, so a chain
    is auditable after the fact and a cycle is detectable.
 
@@ -49,7 +49,7 @@ detail naming the guard and the current depth.
 
 ### Cycle detection
 
-Beyond depth: if a new job's `root_job_id` chain already contains a `cclaude` job for the same repository and
+Beyond depth: if a new job's `root_job_id` chain already contains a `dcli-claude` job for the same repository and
 prompt fingerprint, refuse. Depth alone does not catch a two-node cycle created through a different entry point.
 
 ### Native children
@@ -74,14 +74,14 @@ R6 failure condition — if it does escape, record it and escalate rather than s
 
 ## Checklist
 
-- [ ] `CCLAUDE_WORKER=1` and `CCLAUDE_DEPTH=<n>` are stamped into every worker environment.
-- [ ] `cclaude` reads both at startup and **fails fast with exit `2`** when the depth limit is reached.
+- [ ] `DCLI_WORKER=1` and `DCLI_DEPTH=<n>` are stamped into every worker environment.
+- [ ] `dcli-claude` reads both at startup and **fails fast with exit `2`** when the depth limit is reached.
 - [ ] A round-trip test proves the sentinel survives every shim layer on Windows and Unix.
 - [ ] Default depth limit is 1; raising it is explicit, per invocation, and recorded in the job.
 - [ ] A too-deep request fails loudly and is **never silently clamped** — test.
 - [ ] Worker runs disable skills (`--safe-mode`/`--bare` plus `--disable-slash-commands`).
 - [ ] A live test proves a worker cannot invoke the delegating skill.
-- [ ] Cycle detection refuses a repeated `cclaude` job for the same repo and prompt fingerprint in one lineage
+- [ ] Cycle detection refuses a repeated `dcli-claude` job for the same repo and prompt fingerprint in one lineage
       chain — test with a two-node cycle.
 - [ ] Parent wrapper job id and native Claude session id are stored **separately**.
 - [ ] A containment test proves every worker descendant, including subagents, is inside the contained job.
@@ -97,12 +97,12 @@ R6 failure condition — if it does escape, record it and escalate rather than s
 node tests/run-tests.js --suite full
 
 # the sentinel must be visible to the worker
-node cli/cclaude.js run --hard-timeout-sec 300 "Print the value of the CCLAUDE_WORKER environment variable."
+node cli/dcli-claude.js run --hard-timeout-sec 300 "Print the value of the DCLI_WORKER environment variable."
 
 # and a nested attempt must fail fast
-$env:CCLAUDE_WORKER='1'; $env:CCLAUDE_DEPTH='1'
-node cli/cclaude.js run --hard-timeout-sec 60 "anything"   # expect exit 2
-Remove-Item Env:CCLAUDE_WORKER, Env:CCLAUDE_DEPTH
+$env:DCLI_WORKER='1'; $env:DCLI_DEPTH='1'
+node cli/dcli-claude.js run --hard-timeout-sec 60 "anything"   # expect exit 2
+Remove-Item Env:DCLI_WORKER, Env:DCLI_DEPTH
 ```
 
 ## Definition of done

@@ -111,9 +111,9 @@ Session identity arrives as a `thread.started` event carrying a `thread_id`.
 ```powershell
 node tests/run-tests.js --suite full
 
-node cli/ccodex.js doctor --json
-node cli/ccodex.js review --range HEAD~1..HEAD --path core/ --intent "…" --hard-timeout-sec 900 --json
-node cli/ccodex.js run --mode implement --access workspace --hard-timeout-sec 1800 "…"
+node cli/dcli-codex.js doctor --json
+node cli/dcli-codex.js review --range HEAD~1..HEAD --path core/ --intent "…" --hard-timeout-sec 900 --json
+node cli/dcli-codex.js run --mode implement --access workspace --hard-timeout-sec 1800 "…"
 Get-Process pwsh,codex,node -ErrorAction SilentlyContinue   # no survivors from the run
 ```
 

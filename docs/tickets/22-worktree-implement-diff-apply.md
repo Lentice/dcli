@@ -114,10 +114,10 @@ both exit `2` **up front, before the main repo is touched**.
 ```powershell
 node tests/run-tests.js --suite full
 
-node cli/copencode.js run --mode implement --access workspace --hard-timeout-sec 1800 "Add a docstring to core/job-store.js"
-node cli/copencode.js diff <job-id> --stat
-node cli/copencode.js diff <job-id>
-node cli/copencode.js apply --reset-author --message "docs: add docstring" <job-id>
+node cli/dcli-opencode.js run --mode implement --access workspace --hard-timeout-sec 1800 "Add a docstring to core/job-store.js"
+node cli/dcli-opencode.js diff <job-id> --stat
+node cli/dcli-opencode.js diff <job-id>
+node cli/dcli-opencode.js apply --reset-author --message "docs: add docstring" <job-id>
 ```
 
 ## Definition of done

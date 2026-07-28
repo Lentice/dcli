@@ -127,7 +127,7 @@ A code review against the current repository, inside the non-interactive path.
 
 `PROMPT` = custom review instructions; `-` reads from stdin.
 
-**The wrapper does not use this.** `delegate review` composes its own prompt and embeds a
+**The wrapper does not use this.** `dcli review` composes its own prompt and embeds a
 wrapper-generated diff (`--embed-diff`, spec §11) so the findings contract and scoping are identical
 across all three backends. Native review is recorded as a namespaced extension.
 
@@ -147,7 +147,7 @@ Interactive TUI paths — the wrapper uses `exec resume`, not these.
 ## `codex doctor`
 
 `--json` (redacted machine-readable report), `--summary`, `--all`, `--no-color`, `--ascii`.
-`ccodex doctor` delegates to this; `delegate doctor` should too, for the codex adapter.
+`dcli-codex doctor` delegates to this; `dcli doctor` should too, for the codex adapter.
 
 ## `codex sandbox [COMMAND]...`
 
@@ -182,7 +182,7 @@ as JSON).
 | final result | `-o/--output-last-message <file>` |
 | event stream | `--json` → JSONL on stdout |
 | model | `-m/--model` |
-| reasoning effort | `-c model_reasoning_effort=<level>` — surfaced as `ccodex --reasoning-effort` |
+| reasoning effort | `-c model_reasoning_effort=<level>` — surfaced as `dcli-codex --reasoning-effort` |
 | access `read-only` | `-s read-only` |
 | access `workspace` | `-s workspace-write` |
 | approval policy | `-a never` (execution failures return to the model) |

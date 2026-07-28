@@ -1,4 +1,4 @@
-# delegate-cli — development guide
+# dcli — development guide
 
 Date: 2026-07-28. Read this **before writing any code**.
 Companions: [CLI study](2026-07-28-opencode-cli-study.md) (*study §n*),
@@ -178,7 +178,7 @@ precedence, ordering, patterns, or `deny`. Write contract tests before relying o
 rules. Broad `allow` is an explicit opt-in mode, never a default. Never write to the user's
 permanent opencode configuration.
 
-### 2.10 `cclaude` recursion
+### 2.10 `dcli-claude` recursion
 
 Claude wrapping Claude requires the ADR-005 safeguards. Test that a worker cannot re-enter the
 delegating skill, and that direct self-recursion fails fast with exit `2`.

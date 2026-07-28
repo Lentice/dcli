@@ -40,8 +40,8 @@ Interactive by default. **`-p/--print` is the non-interactive mode** the wrapper
 | `--prompt-suggestions [v]` | enum | emits a `prompt_suggestion` message after each turn |
 
 `--input-format stream-json` + `--output-format stream-json` is the **most promising candidate for a
-control channel** to answer permission prompts, which would make `cclaude` symmetric with
-`copencode`. **Unverified** — see spec §19.7. Until verified, assume `claude -p` can block the same
+control channel** to answer permission prompts, which would make `dcli-claude` symmetric with
+`dcli-opencode`. **Unverified** — see spec §19.7. Until verified, assume `claude -p` can block the same
 way opencode's CLI does and treat it as the study §5 hazard class.
 
 ## Model and effort
@@ -53,7 +53,7 @@ way opencode's CLI does and treat it as the study §5 hazard class.
 | `--betas <betas...>` | beta headers (API-key users only) |
 
 `--effort`'s enum here differs from Codex's (`none..ultra`, and not even a flag there) and from
-opencode's unbounded `--variant` string. Hence `cclaude --reasoning-effort low|medium|high|xhigh|max`
+opencode's unbounded `--variant` string. Hence `dcli-claude --reasoning-effort low|medium|high|xhigh|max`
 rather than a shared `--effort` (ADR-004).
 
 ## Permissions and tools
@@ -158,7 +158,7 @@ dispatched sessions: `--agent`, `--model`, `--effort`, `--permission-mode`,
 
 **ADR-005: bypassed by default.** This is the only backend with its own job manager; two overlapping
 managers create ambiguous authority over status, results, containment, and crash recovery. Offered
-later, if at all, as `cclaude native-agent ...`.
+later, if at all, as `dcli-claude native-agent ...`.
 
 ## Subcommands
 
@@ -177,7 +177,7 @@ later, if at all, as `cclaude native-agent ...`.
 | `ultrareview [options] [target]` | cloud-hosted multi-agent review of the branch / a PR / a base branch |
 | `update\|upgrade` | check and install updates |
 
-`claude doctor` having no `--json` matters: the `delegate doctor` envelope must be built by the
+`claude doctor` having no `--json` matters: the `dcli doctor` envelope must be built by the
 adapter for this backend, not delegated as it can be for Codex.
 
 ---
@@ -190,7 +190,7 @@ adapter for this backend, not delegated as it can be for Codex.
 | final result | last assistant message from the stream (or `--output-format json`) |
 | event stream | `stream-json` on stdout |
 | model | `--model` |
-| reasoning effort | `--effort low..max` — surfaced as `cclaude --reasoning-effort` |
+| reasoning effort | `--effort low..max` — surfaced as `dcli-claude --reasoning-effort` |
 | access `read-only` | `--permission-mode` + `--disallowedTools`/`--tools`, wrapper-verified |
 | access `workspace` | `--permission-mode acceptEdits` inside the wrapper's worktree |
 | working directory | process cwd (+ `--add-dir` for extras) |
@@ -202,7 +202,7 @@ adapter for this backend, not delegated as it can be for Codex.
 | auth remediation | `claude auth` / `claude setup-token` |
 | cancellation | no graceful API — **process-tree kill only** (native agents excepted) |
 | interactive permission reply | **unverified** — possibly via `--input-format stream-json` |
-| recursion guard | `CCLAUDE_WORKER=1` + `--safe-mode`/`--disable-slash-commands` (ADR-005) |
+| recursion guard | `DCLI_WORKER=1` + `--safe-mode`/`--disable-slash-commands` (ADR-005) |
 | native worktree | `-w/--worktree` — extension, unused |
 | native background jobs | `--bg` + `claude agents` — extension, bypassed |
 
@@ -218,4 +218,4 @@ adapter for this backend, not delegated as it can be for Codex.
    how errors and denials surface, and whether `--include-partial-messages` changes framing.
 5. Whether `--json-schema` failures degrade gracefully or corrupt the session (the opencode failure
    mode, study §8).
-6. Whether a `-p` worker can still discover and invoke `cclaude` despite the recursion guard.
+6. Whether a `-p` worker can still discover and invoke `dcli-claude` despite the recursion guard.

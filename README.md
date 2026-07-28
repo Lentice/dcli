@@ -1,4 +1,4 @@
-# delegate-cli
+# dcli
 
 Delegate bounded work from Claude Code to a *different* coding-agent CLI, and get a durable, inspectable result
 back.
@@ -9,15 +9,15 @@ back.
 
 You are working in Claude Code and you want a genuinely independent second opinion, or a scoped code review whose
 diff never enters your own context window, or a long task running in the background, or a code change made
-somewhere your working tree cannot be touched. `delegate-cli` gives you one job model for all of that, across
+somewhere your working tree cannot be touched. `dcli` gives you one job model for all of that, across
 three backends.
 
 | Command | Backend | Driven by |
 |---|---|---|
-| `copencode` | [opencode](https://opencode.ai) 1.18.7 | one `opencode serve` process per job, over HTTP |
-| `ccodex` | Codex CLI 0.145.0 | `codex exec --json`, prompt on stdin |
-| `cclaude` | Claude Code 2.1.220 | `claude -p --output-format stream-json` |
-| `delegate --backend <b>` | any | umbrella, for scripting |
+| `dcli-opencode` | [opencode](https://opencode.ai) 1.18.7 | one `opencode serve` process per job, over HTTP |
+| `dcli-codex` | Codex CLI 0.145.0 | `codex exec --json`, prompt on stdin |
+| `dcli-claude` | Claude Code 2.1.220 | `claude -p --output-format stream-json` |
+| `dcli --backend <b>` | any | umbrella, for scripting |
 
 Each backend also installs **its own** Claude Code skill, generated from one source — so an agent reading a skill
 sees exactly one coherent surface and never assumes a sibling backend's flag exists.
@@ -26,20 +26,20 @@ sees exactly one coherent surface and never assumes a sibling backend's flag exi
 
 ```powershell
 # a second opinion, synchronously
-"Compare these two designs." | copencode run --mode brainstorm --hard-timeout-sec 900
+"Compare these two designs." | dcli-opencode run --mode brainstorm --hard-timeout-sec 900
 
 # a scoped review; the wrapper generates and embeds the diff itself
-copencode review --range main..HEAD --path src/ --intent "Add cache invalidation" --hard-timeout-sec 900
+dcli-opencode review --range main..HEAD --path src/ --intent "Add cache invalidation" --hard-timeout-sec 900
 
 # something long, in the background
-"Run the full test suite." | cclaude submit --mode test --access workspace --hard-timeout-sec 3600
-copencode wait --all --group nightly --timeout-sec 3600 --json
+"Run the full test suite." | dcli-claude submit --mode test --access workspace --hard-timeout-sec 3600
+dcli-opencode wait --all --group nightly --timeout-sec 3600 --json
 
 # a code change, isolated — you review it before it lands
-ccodex run --mode implement --access workspace --hard-timeout-sec 1800 "Add retry logic to the fetch helper"
-ccodex diff <job-id> --stat
-ccodex diff <job-id>
-ccodex apply --reset-author --message "feat: add retry logic" <job-id>
+dcli-codex run --mode implement --access workspace --hard-timeout-sec 1800 "Add retry logic to the fetch helper"
+dcli-codex diff <job-id> --stat
+dcli-codex diff <job-id>
+dcli-codex apply --reset-author --message "feat: add retry logic" <job-id>
 ```
 
 Every recipe carries an execution budget and a wait budget. That is not decoration — an unbounded wait once cost a

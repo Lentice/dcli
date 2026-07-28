@@ -8,16 +8,16 @@ should not read the whole `docs/` tree unless your ticket tells you to.
 
 ## 1. What this project is
 
-`delegate-cli` lets an engineer working inside **Claude Code** hand bounded work to a *different*
+`dcli` lets an engineer working inside **Claude Code** hand bounded work to a *different*
 coding-agent CLI and get a durable, inspectable result back. Three backends:
 
 | Shim command | Backend CLI | How it is driven |
 |---|---|---|
-| `copencode` | opencode 1.18.7 | one `opencode serve` process **per job**, over HTTP |
+| `dcli-opencode` | opencode 1.18.7 | one `opencode serve` process **per job**, over HTTP |
 | `ccodex` | codex-cli 0.145.0 | `codex exec --json`, prompt on stdin |
-| `cclaude` | Claude Code 2.1.220 | `claude -p --output-format stream-json` |
+| `dcli-claude` | Claude Code 2.1.220 | `claude -p --output-format stream-json` |
 
-Plus an umbrella `delegate --backend <b> ...` for scripting.
+Plus an umbrella `dcli --backend <b> ...` for scripting.
 
 Typical uses: a second opinion on a design; a scoped code review whose diff never enters the user's own
 context window; a long task run in the background; a code change made in an isolated worktree that the
@@ -28,7 +28,7 @@ user reviews before applying.
 ## 2. The shape of the code
 
 ```
-cli/          shims: ccodex, copencode, cclaude, delegate
+cli/          shims: ccodex, dcli-opencode, dcli-claude, delegate
 core/         the shared job engine — knows NOTHING about any backend
 adapters/     codex/ opencode/ claude/ — the only backend-aware code
 native/       tiny prebuilt Windows process-containment helper
@@ -69,7 +69,7 @@ docs/         specs, ADRs, CLI references, these tickets
   result while its process tree is still alive — this was observed live, a Codex job sat in
   `finalizing` for 14+ minutes because a helper subprocess never exited. Key off `state`.
 - `interrupted` means the controlling process died. Recovery never reattaches to a running backend; it
-  starts a **new attempt**. This is a deliberate non-promise: *delegate-cli does not promise
+  starts a **new attempt**. This is a deliberate non-promise: *dcli does not promise
   continuation of running jobs across wrapper crashes.*
 
 ## 5. Exit codes you will need

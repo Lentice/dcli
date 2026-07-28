@@ -94,9 +94,9 @@ Rules, each from a real bug:
 
 ```powershell
 node tests/run-tests.js --suite full
-node cli/delegate.js --backend fake cleanup --dry-run
-node cli/delegate.js --backend fake cleanup --older-than 30d
-node cli/delegate.js --backend fake debug <job-id>
+node cli/dcli.js --backend fake cleanup --dry-run
+node cli/dcli.js --backend fake cleanup --older-than 30d
+node cli/dcli.js --backend fake debug <job-id>
 ```
 
 ## Definition of done

@@ -26,7 +26,7 @@ strongest signal in this record.
 opencode additionally demolished the argument I had used to justify the ordering:
 
 > "'ccodex works today, porting risks regression' does **not** protect against over-fitting, because
-> `delegate-cli` is a separate repo. The Codex adapter in `delegate-cli` does not touch the
+> `dcli` is a separate repo. The Codex adapter in `dcli` does not touch the
 > production `ccodex` tool. **No regression risk.**"
 
 That is correct, and it was the load-bearing premise of my phase order. **ADOPTED** — see
@@ -270,7 +270,7 @@ against a failure the parser can already detect after the fact. The legitimate p
 that a malformed appendix must never read as clean, and that format stability needs proving — is
 adopted as #16, in the parser and in a corpus fixture, not as a runtime pre-flight.
 
-### R5. "opencode 1.19.0 renames `/session/status` → 404 → classified unknown → 'delegate-cli broken'"
+### R5. "opencode 1.19.0 renames `/session/status` → 404 → classified unknown → 'dcli broken'"
 *(opencode)*
 
 **Rejected as already-designed-for**, not as wrong. The scenario is real, but capability probing at

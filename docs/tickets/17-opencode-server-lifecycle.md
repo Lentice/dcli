@@ -105,7 +105,7 @@ fan-out and record the numbers — the defaults must come from measurement.
 node tests/run-tests.js --suite full
 
 # leak check after a live run
-node cli/copencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash "Reply: PONG"
+node cli/dcli-opencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash "Reply: PONG"
 Get-Process opencode -ErrorAction SilentlyContinue
 Get-NetTCPConnection -State Listen | Where-Object LocalPort -gt 40000
 ```

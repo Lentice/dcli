@@ -12,7 +12,7 @@
 
 ## Purpose
 
-`copencode run "say hello"` works against a real opencode install, through the narrowest possible adapter.
+`dcli-opencode run "say hello"` works against a real opencode install, through the narrowest possible adapter.
 No permission handling, no interactions, no worktrees — just prove a real server-backed backend satisfies the
 contract.
 
@@ -44,7 +44,7 @@ reconciliation → 19, interactions → 20.
 
 ## Design
 
-1. `cli/copencode.js` selects the backend **before argument parsing**, so help and validation are
+1. `cli/dcli-opencode.js` selects the backend **before argument parsing**, so help and validation are
    backend-specific from the first token.
 2. `adapters/opencode/adapter.js` implements the contract minimally:
    - `Start`: spawn `opencode serve --port 0 --hostname 127.0.0.1` under containment (ticket 06), with a
@@ -72,7 +72,7 @@ reconciliation → 19, interactions → 20.
 
 ## Checklist
 
-- [ ] `copencode` shim selects the backend before argument parsing.
+- [ ] `dcli-opencode` shim selects the backend before argument parsing.
 - [ ] Adapter starts a per-job server under containment, with the password passed via environment only.
 - [ ] The bound port is obtained and then **confirmed** with `GET /global/health`.
 - [ ] If startup-output parsing was necessary, it is recorded in Notes as a ticket-17 weakness.
@@ -91,7 +91,7 @@ reconciliation → 19, interactions → 20.
 
 ```powershell
 node tests/run-tests.js --suite full
-node cli/copencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash "Reply with exactly: PONG"
+node cli/dcli-opencode.js run --hard-timeout-sec 300 --model opencode-go/deepseek-v4-flash "Reply with exactly: PONG"
 Get-Process opencode -ErrorAction SilentlyContinue   # must show no survivor from that run
 ```
 

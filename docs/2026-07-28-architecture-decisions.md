@@ -11,8 +11,8 @@ specific fact that would reverse it. Evidence references are to
 **Status:** accepted.
 
 **Decision.** Build a single repository containing one shared job engine and three backend
-adapters (Codex CLI, opencode CLI, Claude Code CLI). Ship three shim commands — `ccodex`,
-`copencode`, `cclaude` — plus an umbrella `delegate --backend <b>` for scripting. Generate three
+adapters (Codex CLI, opencode CLI, Claude Code CLI). Ship three shim commands — `dcli-codex`,
+`dcli-opencode`, `dcli-claude` — plus an umbrella `dcli --backend <b>` for scripting. Generate three
 separate Claude skills from one documentation source.
 
 **Why one project.** The expensive, failure-prone machinery is genuinely backend-independent:
@@ -45,7 +45,7 @@ risk into invisible divergence plus triplicated fixes.
 
 **Status:** accepted. **This reverses an earlier CLI-first recommendation.**
 
-**Decision.** For each `copencode` job, launch a dedicated
+**Decision.** For each `dcli-opencode` job, launch a dedicated
 `opencode serve --port 0 --hostname 127.0.0.1` process, drive it over HTTP, and dispose of it when
 the job reaches a terminal state. Do **not** use `opencode run --format json` as the production path.
 
@@ -221,9 +221,9 @@ regardless of native support. That is a separate wrapper facility, not a pretenc
 **Unsupported options must hard-fail with exit `2`, before any job is reserved:**
 
 ```
-copencode: --reasoning-effort is not supported by backend opencode.
+dcli-opencode: --reasoning-effort is not supported by backend opencode.
 Use --variant <provider-specific-value>.
-Run 'copencode capabilities --json' for the current surface.
+Run 'dcli-opencode capabilities --json' for the current surface.
 ```
 
 The message must name the backend, the rejected option, the supported alternative if one exists,
@@ -232,14 +232,14 @@ reinterpret.
 
 ---
 
-## ADR-005 — `cclaude` bypasses Claude's native `--bg` / `claude agents` by default
+## ADR-005 — `dcli-claude` bypasses Claude's native `--bg` / `claude agents` by default
 
 **Status:** accepted.
 
-**Decision.** `cclaude` launches an ordinary child `claude -p` process and the wrapper owns
+**Decision.** `dcli-claude` launches an ordinary child `claude -p` process and the wrapper owns
 detachment, status, timeout, containment, logs, and cleanup. Native background agents are offered
-later, if at all, as an explicitly namespaced extension (`cclaude native-agent ...`) — never as the
-implementation of ordinary `cclaude submit`.
+later, if at all, as an explicitly namespaced extension (`dcli-claude native-agent ...`) — never as the
+implementation of ordinary `dcli-claude submit`.
 
 **Why.** Claude Code is the only one of the three backends with its own job manager. Two
 overlapping job managers create ambiguous authority over status, result retrieval, process
@@ -247,8 +247,8 @@ containment, and crash recovery.
 
 **Recursion safeguards are mandatory** (Claude wrapping Claude is sound only with them):
 
-- Stamp the child environment with a recursion sentinel (e.g. `CCLAUDE_WORKER=1`).
-- The installed skill/rule must forbid `cclaude` delegation from inside a `cclaude` worker unless
+- Stamp the child environment with a recursion sentinel (e.g. `DCLI_WORKER=1`).
+- The installed skill/rule must forbid `dcli-claude` delegation from inside a `dcli-claude` worker unless
   explicitly requested and depth-bounded.
 - Use a stripped/controlled settings environment (`--bare`, explicit `--settings`).
 - Avoid installing the delegating skill into the worker context where practical.
@@ -316,7 +316,7 @@ counterexample while designing every interface. Deferring Codex's *production mi
 deferring its *adapter proof* is not. Claude stays last.
 
 The argument that previously justified deferring Codex — "`ccodex` works today, porting risks a live
-regression" — was shown to be a non-argument: `delegate-cli` is a separate repository, so a Codex
+regression" — was shown to be a non-argument: `dcli` is a separate repository, so a Codex
 adapter here does not touch the production `ccodex` command. There is no regression risk to trade
 against.
 
@@ -341,7 +341,7 @@ exactly the two-implementation problem ADR-003 exists to avoid.
 - The helper is tied to the invoking controller. **Controller death always kills the job.**
 - Recovery marks the affected attempt `interrupted`.
 - `resume` starts a **new attempt** from durable inputs — it never reattaches to a running backend.
-- This is a stated **non-promise**: *delegate-cli does not promise continuation of running jobs
+- This is a stated **non-promise**: *dcli does not promise continuation of running jobs
   across wrapper crashes.* Say it in the user documentation, not just here.
 
 **Keeping it from rotting into two implementations:**
@@ -360,6 +360,104 @@ exactly the two-implementation problem ADR-003 exists to avoid.
 **Ownership proof.** pid + creation time + image path reduces PID-reuse mistakes but does not *prove*
 ownership. The helper generates a random execution token per job; the wrapper stores it and verifies
 it before acting. OS identity is corroboration only.
+
+---
+
+## ADR-009 — Naming contract: the `dcli` family, permanently distinct from the predecessor
+
+**Status:** accepted 2026-07-28, after a dedicated review by the Codex CLI and an availability search.
+
+**Decision.** The family name is **`dcli`**. Every identifier below is a **locked contract** — not a label —
+because each is persisted, parsed, discovered by path, or copied into project configuration.
+
+| Item | Value |
+|---|---|
+| repository / package | `dcli` |
+| umbrella command | `dcli` (`dcli --backend <b> …`, `dcli backends --json`) |
+| shim commands | `dcli-codex`, `dcli-opencode`, `dcli-claude` |
+| state root | `%LOCALAPPDATA%\dcli\` · `~/Library/Application Support/dcli/` · `${XDG_STATE_HOME}/dcli/` |
+| project policy | `.dcli/policy.json`, top-level key `delegation` |
+| installed skills | `~/.claude/skills/{dcli-codex,dcli-opencode,dcli-claude,dcli}/SKILL.md` |
+| installed commands | `~/.claude/commands/{dcli-codex,dcli-opencode,dcli-claude}/*.md` |
+| installed rule | `~/.claude/rules/dcli-delegation.md` |
+| findings marker | `<!-- dcli:findings -->` |
+| environment prefix | `DCLI_` |
+| `status.json.backend` values | `codex` · `opencode` · `claude` |
+
+### Why not reuse `ccodex` / `copencode` / `cclaude`
+
+There is an existing, working, installed production tool named **`ccodex`** — this project's predecessor —
+with its own command on `PATH`, its own state root, its own installed skill, commands, rule, `status.json`
+schema, exit codes, and `<!-- ccodex:findings -->` marker. It keeps running unchanged while `dcli` is built
+(the Codex adapter is one of the last tickets), so **both exist for a long period**.
+
+The decisive failure mode, and the reason a temporary alias is not enough:
+
+> Skill installation and `PATH` resolution select **independently**. An agent can read one generation's
+> `ccodex` skill while executing the other generation's binary. The invocation still *looks* valid, so the
+> result is silent contract drift — wrong flags, wrong status interpretation, wrong findings parsing, wrong
+> recursion behavior — rather than a clear "command not found".
+
+A loud collision would be recoverable. This one is invisible. So the new family takes permanently distinct
+names, the predecessor is left completely untouched, and the two can be compared side by side while rollback
+is still trivial.
+
+The property that mattered about short shim names is preserved: the **backend-bearing suffix** is the visible
+type tag, not the `c` prefix. `dcli-codex` says which adapter is being invoked just as clearly, and adds
+provenance.
+
+**Rejected: renaming the predecessor.** That spends the stability of a working production tool to reserve an
+attractive six-character name, and creates compatibility work without reducing any design risk.
+
+**Rejected: `dgate` / `delegate`.** `delegate` is far too generic for a globally installed executable. `dgate`
+was the reviewer's recommendation, but an availability search found an existing npm package `dgate` (a domain
+gateway) that **ships a `dgate` binary** — adopting it would inflict the exact silent-`PATH`-collision failure
+this ADR exists to prevent, on someone else. `dcli` is free on npm and on `PATH`; `dcodex` is *not* free on
+npm, which is why the shims are hyphenated rather than `dcodex`/`dopencode`/`dclaude`.
+
+### Installer ownership — a consequence of this ADR
+
+The installer must **hard-refuse to overwrite any target it cannot positively identify as its own**, applied
+independently to shim paths, skill directories, command directories, rule files, and the state root.
+
+Ownership is established by an **installation manifest** carrying a stable product id, schema version, and
+installed-file hashes. *"The directory already has the expected name" is not proof of ownership.* There is an
+explicit uninstall/migration operation; there is **no** generic force-overwrite flag that bypasses the
+foreign-ownership check.
+
+### Marker coexistence
+
+Producers emit **only** `<!-- dcli:findings -->`. Consumers may recognize the predecessor's
+`<!-- ccodex:findings -->` during coexistence, but a document containing both is **ambiguous and rejected** —
+never silently resolved by taking the last one. The marker is **not versioned**; the schema version lives
+inside the JSON object (`schema_version`), so parsers dispatch on one stable delimiter instead of an expanding
+set.
+
+### `backend` values are opaque IDs
+
+`codex` / `opencode` / `claude` are adapter identifiers **owned by this project**, not vendor or product
+display names. Do not qualify them (`openai-codex`) — that falsely implies vendor identity participates in
+routing and still does not survive a rename. If richer identity is ever needed, **add fields**
+(`backend_display_name`, `backend_implementation`); never change the enum.
+
+### Environment variables
+
+One prefix, `DCLI_`, with three declared classes:
+
+- **Runtime:** `DCLI_WORKER`, `DCLI_DEPTH`, `DCLI_STATE_ROOT`, `DCLI_BACKEND`, `DCLI_JOB_ID`.
+- **Test-only:** `DCLI_TEST_*`. Prefer explicit injection through arguments or harness configuration; every
+  environment knob is a process-global hidden input. **A test-only variable must never become an undocumented
+  production override merely because production code happens to read it** — declare the class and enforce it.
+- **Not ours to name:** the per-job backend server secret is passed as `OPENCODE_SERVER_PASSWORD` because
+  opencode requires that exact name. It is generated per job, held in memory only long enough to build the
+  child environment, never mirrored into a `DCLI_*` variable, and redacted from every captured environment and
+  diagnostic dump.
+
+### What is allowed to change later
+
+Only the human-facing labels: help text, backend display names, repository description. Everything in the
+table above is persisted, parsed, or discovered by path, and is therefore already a contract. **Never reuse a
+stable identifier for a new meaning, even if the old meaning appears obsolete.**
 
 ---
 
@@ -406,17 +504,17 @@ Check for these before committing, and re-check at each phase boundary:
 - **R2** A shared `status.json` cannot describe jobs without changing the meaning of existing
   fields. Nullable fields and a namespaced `backend_state` object are fine; backend-dependent
   meanings for `done`, `cancelled`, `session_id`, `access`, or `result` are not.
-- **R3** The implementations require incompatible deployment environments — e.g. `copencode` must
+- **R3** The implementations require incompatible deployment environments — e.g. `dcli-opencode` must
   become a continuously running service with fundamentally different packaging/security needs, not
   merely a per-job helper.
 - **R4** Release coupling prevents safe operation — a broken opencode adapter forcing an otherwise
   valid `ccodex` release to be withheld. Try independently versioned adapter packages first.
 - **R5** No stable cross-backend core exists — `run`, `submit`, `wait`, `read`, `cancel`, `cleanup`
   cannot retain outcome-level contracts across all three.
-- **R6** `cclaude` recursion cannot be bounded — workers repeatedly rediscover and invoke `cclaude`,
-  cannot run isolated, or leave native children outside containment. Isolate or abandon `cclaude`
+- **R6** `dcli-claude` recursion cannot be bounded — workers repeatedly rediscover and invoke `dcli-claude`,
+  cannot run isolated, or leave native children outside containment. Isolate or abandon `dcli-claude`
   rather than weakening all backends.
-- **R7** Native ownership becomes mandatory — `cclaude` must use `claude agents` and `copencode`
+- **R7** Native ownership becomes mandatory — `dcli-claude` must use `claude agents` and `dcli-opencode`
   must use a persistent shared server while `ccodex` stays process-owned.
 - **R8** Security review requires separate trust or update boundaries for the Node HTTP backend.
 

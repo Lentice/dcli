@@ -1,4 +1,4 @@
-# delegate-cli — design specification
+# dcli — design specification
 
 Date: 2026-07-28. Status: proposed; no code written yet.
 Companion documents: [CLI study](2026-07-28-opencode-cli-study.md) (cited *study §n*),
@@ -19,10 +19,10 @@ artifacts and stable machine-readable contracts. Three backends: **Codex CLI**, 
 Installed commands (ADR-001):
 
 ```
-ccodex      # backend: codex
-copencode   # backend: opencode
-cclaude     # backend: claude
-delegate    # umbrella: delegate --backend <b> ... ; delegate backends --json
+dcli-codex      # backend: codex
+dcli-opencode   # backend: opencode
+dcli-claude     # backend: claude
+delegate    # umbrella: dcli --backend <b> ... ; dcli backends --json
 ```
 
 The shim name is the backend type tag. Agents use the shims; they must not have to repeat
@@ -46,7 +46,7 @@ Supporting arbitrary backend versions without a compatibility check.
 ## 2. Layered architecture
 
 ```
-        shims: ccodex | copencode | cclaude | delegate
+        shims: dcli-codex | dcli-opencode | dcli-claude | dcli
                           │
                   command layer (core)
    run submit status wait read list resume cancel tail
@@ -75,9 +75,9 @@ the ADR-001 kill criterion R1.
 ## 3. Repository layout
 
 ```
-delegate-cli/
+dcli/
   cli/                       # shims; select backend BEFORE argument parsing
-    delegate.js  ccodex.js  copencode.js  cclaude.js
+    dcli.js  dcli-codex.js  dcli-opencode.js  dcli-claude.js
   core/
     job-store.js  job-schema.js  lifecycle.js  locking.js
     process-identity.js  process-containment.js  deadlines.js
@@ -95,7 +95,7 @@ delegate-cli/
   integration/
     source/  core.md  codex.md  opencode.md  claude.md  router.md
     generated/               # checked in; CI fails if stale
-      skills/{ccodex,copencode,cclaude,delegate-cli}/SKILL.md
+      skills/{dcli-codex,dcli-opencode,dcli-claude,dcli}/SKILL.md
       commands/  rules/  worker-prompts/
   tests/
     core/  contract/  adapters/{codex,opencode,claude}/  integration/  fixtures/
@@ -112,9 +112,9 @@ Adapter implementation languages may differ behind the boundary (ADR-003).
 Platform-native:
 
 ```
-Windows  %LOCALAPPDATA%\delegate-cli\        config: %APPDATA%\delegate-cli\
-macOS    ~/Library/Application Support/delegate-cli/
-Linux    ${XDG_STATE_HOME:-~/.local/state}/delegate-cli/
+Windows  %LOCALAPPDATA%\dcli\        config: %APPDATA%\dcli\
+macOS    ~/Library/Application Support/dcli/
+Linux    ${XDG_STATE_HOME:-~/.local/state}/dcli/
 ```
 
 ```
@@ -181,7 +181,7 @@ never omitted.
   "adapter_version": "1.0.0",
   "repo_key": "f8d3ffc01046",
   "repo_root": "D:\\src\\project",
-  "execution_root": "C:\\...\\delegate-cli\\worktrees\\20260728T075904Z-xdzv9ovy",
+  "execution_root": "C:\\...\\dcli\\worktrees\\20260728T075904Z-xdzv9ovy",
   "mode": "review",
   "access": "read-only",
   "state": "running",
@@ -476,7 +476,7 @@ severity; require exactly one findings appendix.
 Findings contract (wrapper-parsed — ADR-006, never native structured output):
 
 ````markdown
-<!-- delegate:findings -->
+<!-- dcli:findings -->
 ```json
 {
   "verdict": "One-line verdict.",
@@ -624,7 +624,7 @@ verifies it before acting, using OS identity as corroboration only (ADR-008).
 **Controller death terminates the job (ADR-008).** The helper is tied to the invoking controller.
 Recovery marks the attempt `interrupted`; `resume` starts a **new attempt** from durable inputs and
 never reattaches to a running backend. State this as a non-promise in user documentation:
-*delegate-cli does not promise continuation of running jobs across wrapper crashes.*
+*dcli does not promise continuation of running jobs across wrapper crashes.*
 
 Containment failure is **fail-closed**: if containment is requested and the helper is missing or
 version-incompatible, the job does not start. `taskkill`-based cleanup is a **declared degraded
@@ -679,18 +679,18 @@ not transfer between backends.
 **Backend-qualified options** (ADR-004 — deliberately not unified):
 
 ```
-ccodex    --reasoning-effort none|low|medium|high|ultra
-cclaude   --reasoning-effort low|medium|high|xhigh|max
-copencode --variant <provider-specific string>
+dcli-codex --reasoning-effort none|low|medium|high|ultra
+dcli-claude   --reasoning-effort low|medium|high|xhigh|max
+dcli-opencode --variant <provider-specific string>
 ```
 
 **Namespaced extensions:**
 
 ```
-copencode permission list|reply       copencode question list|reply|reject
-copencode session diff                copencode native-worktree ...
-cclaude   native-agent ...            cclaude from-pr <n>
-ccodex    thread ...
+dcli-opencode permission list|reply       dcli-opencode question list|reply|reject
+dcli-opencode session diff                dcli-opencode native-worktree ...
+dcli-claude   native-agent ...            dcli-claude from-pr <n>
+dcli-codex thread ...
 ```
 
 Modes: `review`, `brainstorm`, `test`, `implement`.
@@ -705,15 +705,15 @@ never mutate the user's permanent opencode configuration.
 Examples:
 
 ```powershell
-"Compare these two designs." | copencode run --mode brainstorm
-copencode review --working --path src/ --intent "Add cache invalidation" --embed-diff
-"Run the full test suite." | cclaude submit --mode test --access workspace
-copencode status <job-id> --json
-copencode wait --all --group nightly --json
-copencode resume <job-id> --prompt-file follow-up.md
-copencode diff <job-id> --stat
-copencode apply --reset-author --message "fix: ..." <job-id>
-delegate backends --json
+"Compare these two designs." | dcli-opencode run --mode brainstorm
+dcli-opencode review --working --path src/ --intent "Add cache invalidation" --embed-diff
+"Run the full test suite." | dcli-claude submit --mode test --access workspace
+dcli-opencode status <job-id> --json
+dcli-opencode wait --all --group nightly --json
+dcli-opencode resume <job-id> --prompt-file follow-up.md
+dcli-opencode diff <job-id> --stat
+dcli-opencode apply --reset-author --message "fix: ..." <job-id>
+dcli backends --json
 ```
 
 `wait --all --group <g> --json` is the fan-out/gather primitive; callers must never hand-roll
@@ -745,12 +745,12 @@ Generated (ADR-001) from `integration/source/` + core command metadata + adapter
 manifests + version warnings:
 
 ```
-~/.claude/skills/{ccodex,copencode,cclaude,delegate-cli}/SKILL.md
-~/.claude/commands/{ccodex,copencode,cclaude}/{review,ask,implement,resume,jobs,doctor,cleanup}.md
-~/.claude/rules/delegate-delegation.md
+~/.claude/skills/{dcli-codex,dcli-opencode,dcli-claude,dcli}/SKILL.md
+~/.claude/commands/{dcli-codex,dcli-opencode,dcli-claude}/{review,ask,implement,resume,jobs,doctor,cleanup}.md
+~/.claude/rules/dcli-delegation.md
 ```
 
-`delegate-cli/SKILL.md` is a **router only**: choose a backend, then load that backend's skill. It
+`dcli/SKILL.md` is a **router only**: choose a backend, then load that backend's skill. It
 must not reproduce all three references.
 
 Generation tests fail the build if: a public command lacks skill documentation; a capability is
@@ -763,7 +763,7 @@ inspect `diff` before `apply`; use exact wrapper lineage rather than "continue l
 per the failure-class table; never retry quota/auth/permission/timeout failures; keep review intent
 neutral; keep delegated work out of the caller's context until collection.
 
-Project policy file (`.delegate/delegate.json`), all keys optional:
+Project policy file (`.dcli/policy.json`), all keys optional:
 
 ```json
 { "delegation": {
@@ -823,7 +823,7 @@ Everything in study §11 remains open. Additionally:
 5. `PermissionRuleset` precedence/ordering/pattern semantics and `deny` behavior (study §11.1).
 6. Claude Code's exact noninteractive permission behavior under `-p` — can it block like opencode?
 7. Whether `claude --output-format stream-json` with `--input-format stream-json` offers a control
-   channel for answering permissions (would make `cclaude` symmetric with `copencode`).
+   channel for answering permissions (would make `dcli-claude` symmetric with `dcli-opencode`).
 8. Whether a Job Object can be attached before the Bun-built opencode binary spawns descendants,
    and its breakaway behavior.
 9. Minimum/maximum supported version per backend, after compatibility testing.

@@ -132,9 +132,9 @@ from an environment failure.
 node tests/run-tests.js --suite full
 
 # the decisive live check: reproduce the blocked case and confirm the naming
-node cli/copencode.js run --hard-timeout-sec 180 --model opencode-go/deepseek-v4-flash `
+node cli/dcli-opencode.js run --hard-timeout-sec 180 --model opencode-go/deepseek-v4-flash `
   "Read the file <some path outside this repo> and tell me its contents."
-node cli/copencode.js debug <job-id>
+node cli/dcli-opencode.js debug <job-id>
 ```
 
 Expected: exit `15`, `failure_reason: permission_or_sandbox`, and `debug` naming the permission and patterns —
