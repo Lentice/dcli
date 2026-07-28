@@ -126,6 +126,45 @@ environment. When the env var is present, opencode requires Basic auth on every 
 generated password through the `opts` parameter to every HTTP call site. Confirms
 study §11.3 open question.
 
+### Bugfix: hardTimeoutSec enforcement and server leak prevention (ticket 14/10)
+`core/commands/run.js`'s `executeRun()` previously accepted `hardTimeoutSec` and stored it in
+job metadata via `store.createJob()` but never used it to bound the actual adapter operations.
+Three code paths ran unbounded:
+- `adapter.Start(attempt)`
+- `adapter.SendPrompt(attempt, prompt)`
+- `for await (const fact of adapter.Observe(attempt))`
+
+The only internal bound was the opencode adapter's `MESSAGE_TIMEOUT_MS` (600000ms / 10 min).
+When that HTTP-level timeout failed to fire (observed: the command hung indefinitely past the
+stated 60-second hard timeout), the job became a permanent hang, and the server process leaked
+because nothing called `RequestCancel` or `Dispose` — the process tree survived as an orphan.
+
+**Fix applied:**
+1. Added a hard timeout timer in `executeRun()` that fires after `hardTimeoutSec * 1000`.
+   On fire: calls `adapter.RequestCancel()` through all declared rungs (session_abort,
+   server_dispose, hard_kill), sets `hardTimedOut = true`.
+2. After `Start()`, after `SendPrompt()`, and at each iteration of the `Observe()` loop,
+   checks `hardTimedOut`. If true, journals `attempt_state_changed → timed_out` with
+   `failure_reason: 'hard_timeout'`, releases the admission slot, and returns.
+3. A post-loop `hardTimedOut` check catches the case where the Observe generator ended
+   mid-cancellation (interrupted by `RequestCancel`).
+4. Added a wall-clock safety net to `adapters/opencode/adapter.js`'s `httpRequest()`:
+   a `setTimeout` at effectiveTimeout + 5s that destroys the request and rejects, guarding
+   against scenarios where the socket-level timeout doesn't fire (e.g. slow data trickle).
+   Also fixed a potential double-rejection by routing all resolve/reject through a
+   `settled` flag.
+5. Added regression test `tests/adapters/opencode/hard-timeout.test.js` (gated on
+   `DCLI_OPENCODE_LIVE_SMOKE` and opencode on PATH).
+
+**Manual verification results:**
+- `node cli/dcli-opencode.js run --hard-timeout-sec 10 --model opencode-go/deepseek-v4-flash --json "Reply with exactly: PONG"`
+  → returned within ~15s with `{"state":"timed_out","failure_reason":"hard_timeout"}`.
+- `node cli/dcli-opencode.js run --hard-timeout-sec 60 --model opencode-go/deepseek-v4-flash --json "Reply with exactly: PONG"`
+  → also returned within ~70s with `timed_out` (model inference exceeds 60s on this host).
+- Neither command hung. Both produced a clean JSON envelope. No leaked server processes
+  with the spawn signature `opencode serve --port 0 --hostname 127.0.0.1` were left alive
+  (after cleaning up 2 pre-existing orphans from prior runs, PIDs 45904 and 42128).
+
 ### Behaviors deferred to later tickets
 - Permission handling and `Respond` → tickets 18, 20.
 - `POST /session/{id}/message` is synchronous and blocks for the whole model turn → ticket 19

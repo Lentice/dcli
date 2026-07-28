@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
 const { buildEnvelope, isVersionInRange } = require('./index');
+const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
@@ -84,10 +85,57 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   });
 
   const attempt = {};
+
+  const hardTimeoutMs = hardTimeoutSec !== undefined && hardTimeoutSec !== null && hardTimeoutSec > 0
+    ? hardTimeoutSec * 1000
+    : 0;
+  let hardTimedOut = false;
+  let hardTimeoutTimer = null;
+
+  function cancelThroughRungs() {
+    try {
+      const rungs = adapter.DeclareCancelRungs();
+      if (rungs && rungs.length > 0) {
+        for (const rung of rungs) {
+          try { adapter.RequestCancel(attempt, rung); } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  if (hardTimeoutMs > 0) {
+    hardTimeoutTimer = setTimeout(() => {
+      if (hardTimedOut) return;
+      hardTimedOut = true;
+      cancelThroughRungs();
+    }, hardTimeoutMs);
+    if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
+  }
+
   try {
     await adapter.Start(attempt);
+    if (hardTimedOut) throw null;
     await adapter.SendPrompt(attempt, prompt);
+    if (hardTimedOut) throw null;
   } catch (err) {
+    clearTimeout(hardTimeoutTimer);
+    if (hardTimedOut) {
+      store.journalTransition(jobId, repoKey, {
+        kind: 'attempt_state_changed',
+        attempt: attemptNum,
+        from: 'running',
+        to: 'timed_out',
+        detail: {
+          finished_at: new Date().toISOString(),
+          command_exit_code: null,
+          phase: 'terminal',
+          failure_reason: 'hard_timeout',
+        },
+      });
+      if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
+      const finalStatus = store.readStatus({ repoKey, jobId });
+      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 3 };
+    }
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
   }
@@ -95,6 +143,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   const facts = [];
   try {
     for await (const fact of adapter.Observe(attempt)) {
+      if (hardTimedOut) throw null;
       facts.push(fact);
 
       if (fact.type === 'process_exited') {
@@ -123,8 +172,46 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
       }
     }
   } catch (err) {
+    clearTimeout(hardTimeoutTimer);
+    if (hardTimedOut) {
+      store.journalTransition(jobId, repoKey, {
+        kind: 'attempt_state_changed',
+        attempt: attemptNum,
+        from: 'running',
+        to: 'timed_out',
+        detail: {
+          finished_at: new Date().toISOString(),
+          command_exit_code: null,
+          phase: 'terminal',
+          failure_reason: 'hard_timeout',
+        },
+      });
+      if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
+      const finalStatus = store.readStatus({ repoKey, jobId });
+      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 3 };
+    }
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
+  }
+
+  clearTimeout(hardTimeoutTimer);
+
+  if (hardTimedOut) {
+    store.journalTransition(jobId, repoKey, {
+      kind: 'attempt_state_changed',
+      attempt: attemptNum,
+      from: 'running',
+      to: 'timed_out',
+      detail: {
+        finished_at: new Date().toISOString(),
+        command_exit_code: null,
+        phase: 'terminal',
+        failure_reason: 'hard_timeout',
+      },
+    });
+    if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
+    const finalStatus = store.readStatus({ repoKey, jobId });
+    return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 3 };
   }
 
   const collected = adapter.CollectResult(attempt);

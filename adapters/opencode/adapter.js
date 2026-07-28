@@ -10,6 +10,7 @@ const DISPOSE_TIMEOUT_MS = 5000;
 function httpRequest(method, url, body, timeoutMs, password) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
+    const effectiveTimeout = timeoutMs || 10000;
     const headers = body ? { 'Content-Type': 'application/json' } : {};
     if (password) {
       headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + password).toString('base64');
@@ -20,8 +21,17 @@ function httpRequest(method, url, body, timeoutMs, password) {
       path: u.pathname + u.search,
       method,
       headers,
-      timeout: timeoutMs || 10000,
+      timeout: effectiveTimeout,
     };
+
+    let settled = false;
+    function settle(err, result) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(wallClock);
+      if (err) reject(err);
+      else resolve(result);
+    }
 
     const req = http.request(options, (res) => {
       const chunks = [];
@@ -30,21 +40,30 @@ function httpRequest(method, url, body, timeoutMs, password) {
         const raw = Buffer.concat(chunks).toString('utf8');
         if (res.statusCode >= 200 && res.statusCode < 300) {
           try {
-            resolve(JSON.parse(raw));
+            settle(null, JSON.parse(raw));
           } catch {
-            resolve(raw);
+            settle(null, raw);
           }
         } else {
           const err = new Error(`HTTP ${res.statusCode} from ${method} ${url}: ${raw.slice(0, 500)}`);
           err.statusCode = res.statusCode;
           err.body = raw;
-          reject(err);
+          settle(err);
         }
       });
     });
 
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error(`Request timed out after ${timeoutMs || 10000}ms: ${method} ${url}`)); });
+    req.on('error', (err) => settle(err));
+    req.on('timeout', () => {
+      req.destroy();
+      settle(new Error(`Request timed out after ${effectiveTimeout}ms: ${method} ${url}`));
+    });
+
+    const wallClock = setTimeout(() => {
+      req.destroy();
+      settle(new Error(`Request wall-clock timeout after ${effectiveTimeout + 5000}ms: ${method} ${url}`));
+    }, effectiveTimeout + 5000);
+    if (wallClock.unref) wallClock.unref();
 
     if (body) {
       req.write(JSON.stringify(body));
