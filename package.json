@@ -1,0 +1,10 @@
+{
+  "name": "dcli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "description": "Delegate bounded work from Claude Code to a different coding-agent CLI"
+}

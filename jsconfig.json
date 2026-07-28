@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node"
+  },
+  "include": [
+    "cli/**/*.js",
+    "core/**/*.js",
+    "adapters/**/*.js",
+    "tests/**/*.js",
+    "native/**/*.js"
+  ]
+}

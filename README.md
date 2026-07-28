@@ -79,6 +79,15 @@ and every line of it was paid for by a real bug.
 | What a backend CLI actually accepts | [`docs/reference/`](docs/reference/) |
 | Verified facts about opencode, and what is not verified | [`docs/2026-07-28-opencode-cli-study.md`](docs/2026-07-28-opencode-cli-study.md) |
 
+## Running tests
+
+```powershell
+node tests/run-tests.js              # quick suite; skips slow tests, lists them
+node tests/run-tests.js --suite full # full suite; runs everything
+```
+
+Tests are plain Node assertion scripts checked by exit code. No test framework.
+
 ## Prior art
 
 This design descends from `ccodex`, a complete production PowerShell tool that wrapped the Codex CLI. Its two
