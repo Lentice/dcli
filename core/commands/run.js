@@ -115,6 +115,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   }
 
   try {
+    adapter.PrepareInvocation(attempt, request);
     await adapter.Start(attempt);
     if (hardTimedOut) throw null;
     await adapter.SendPrompt(attempt, prompt);

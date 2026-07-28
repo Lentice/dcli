@@ -424,13 +424,13 @@ class OpencodeAdapter {
       throw new Error('Project identity check failed: no response from /project/current');
     }
 
-    const effectiveDir = project.directory || project.path || null;
+    const effectiveDir = project.directory || project.path || project.worktree || null;
     if (!effectiveDir) {
       throw new Error('Project identity check failed: /project/current returned no directory');
     }
 
-    const normalizedEffective = path.resolve(effectiveDir).toLowerCase();
-    const normalizedCanonical = path.resolve(this._canonicalDir).toLowerCase();
+    const normalizedEffective = fs.realpathSync.native(path.resolve(effectiveDir)).toLowerCase();
+    const normalizedCanonical = fs.realpathSync.native(path.resolve(this._canonicalDir)).toLowerCase();
 
     if (normalizedEffective !== normalizedCanonical) {
       throw new Error(
