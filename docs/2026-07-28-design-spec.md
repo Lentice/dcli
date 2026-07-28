@@ -852,7 +852,9 @@ Everything in study §11 remains open. Additionally:
 6. Claude Code's exact noninteractive permission behavior under `-p` — can it block like opencode?
 7. Whether `claude --output-format stream-json` with `--input-format stream-json` offers a control
    channel for answering permissions (would make `dcli-claude` symmetric with `dcli-opencode`).
-8. Whether a Job Object can be attached before the Bun-built opencode binary spawns descendants,
-   and its breakaway behavior.
+8. ~~Whether a Job Object can be attached before the Bun-built opencode binary spawns descendants,~~
+   ~~and its breakaway behavior.~~
+   **RESOLVED 2026-07-28 by experiment (ticket 06).** Yes to all four questions. See ADR-003
+   second amendment and ticket 06 Notes.
 9. Minimum/maximum supported version per backend, after compatibility testing.
 10. Whether a per-job server materially costs anything under realistic fan-out.

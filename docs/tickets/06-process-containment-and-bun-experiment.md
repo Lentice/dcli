@@ -131,3 +131,38 @@ feat: kernel-enforced process containment with fail-closed native helper
 ## Notes
 
 Record the experiment results here in full — they are load-bearing for ADR-003.
+
+### Experiment results (2026-07-28)
+
+All four experiment questions confirmed positively. Full details in ADR-003 second amendment.
+
+**Q1:** `opencode serve` can be created suspended with `CREATE_SUSPENDED`, assigned to a
+Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (breakaway NOT set), then resumed.
+Verified with both test fixtures and real opencode 1.18.8.
+
+**Q2:** Grandchildren (processes spawned by the contained child) are inside the job.
+Test fixture: parent spawned a child; terminating the job killed both. opencode's own
+children were observed inside the job.
+
+**Q3:** When the helper process was killed with `SIGKILL` (no cleanup), the kernel's
+kill-on-close terminated all processes in the job. Verified for test processes and
+opencode serve.
+
+**Q4:** No `CREATE_BREAKAWAY_FROM_JOB` observed. opencode and its descendants all died
+when the helper died. Re-verify if opencode version changes containment behavior.
+
+### Implementation notes
+
+- Helper written in C# with .NET 10, P/Invoking kernel32.dll for Win32 Job Object APIs.
+- Protocol: NDJSON over stdin/stdout. Commands: `spawn` (with args, cwd, env, stdio)
+  and `terminate` (with execution_token, grace_ms). Events: `started`, `exited`,
+  `terminated`, `error`, `stdout`, `stderr`.
+- `CREATE_NO_WINDOW` always set; `CREATE_NEW_CONSOLE` never set; `shell: true` never used.
+- Fail-closed: missing helper throws immediately; no fallback to taskkill in this
+  implementation (degraded mode described in spec §14 is deferred to the adapter layer).
+- Review confirms helper contains none of the banned concerns: no telemetry, path
+  resolution, string manipulation (beyond command-line building), business logic,
+  process-tree introspection, timeout decisions, cancellation-rung decisions, job
+  state, or backend knowledge.
+- Helper binary: `native/windows-job-helper/bin/Debug|Release/contain.exe`.
+  Build with `dotnet build native/windows-job-helper` or `dotnet publish -c Release`.

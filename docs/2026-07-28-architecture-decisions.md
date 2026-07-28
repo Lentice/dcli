@@ -477,7 +477,37 @@ stable identifier for a new meaning, even if the old meaning appears obsolete.**
 - **Engine-level admission control** bounds global and per-backend concurrency. Fan-out multiplies
   model runtimes, file watchers, caches, provider connections, and memory — not merely process count.
 
-### ADR-003 amendment (2026-07-28)
+### ADR-003 second amendment (2026-07-28) — experiment results
+
+The containment experiment (ticket 06, step 1) confirms all four questions positively:
+
+1. **Can opencode serve be created suspended, assigned to a Job Object with
+   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and breakaway disallowed, then resumed?**
+   **YES.** The native helper (`contain.exe`) successfully creates any Windows process
+   (including `opencode serve`) with `CREATE_SUSPENDED`, assigns it to the Job Object
+   before it runs any code, then resumes it. Verified: `CreateJobObjectW` +
+   `SetInformationJobObject` (kill-on-close, breakaway disallowed) + `AssignProcessToJobObject` +
+   `ResumeThread` works correctly for both test fixtures and opencode 1.18.8.
+
+2. **Do its grandchildren end up inside the job?**
+   **YES.** A test fixture that spawns a child process inside the job is killed when
+   the Job Object is terminated. opencode serve's children (watchers, providers) are
+   observed inside the job. No process escapes containment.
+
+3. **When the handle-holding process is killed, does the kernel kill the tree?**
+   **YES.** When the helper process is killed with `SIGKILL` (no cleanup opportunity),
+   the kernel's kill-on-close mechanism terminates all contained processes. Verified
+   for both test processes and opencode serve. No survivor detected.
+
+4. **Does opencode ever create a process with `CREATE_BREAKAWAY_FROM_JOB`?**
+   **No observed breakaway.** When the helper was killed, opencode and all its
+   descendants died. No process survived outside the job on this host (opencode
+   1.18.8, Windows 11 10.0.26200). If future opencode versions introduce breakaway,
+   containment must be re-verified.
+
+**Consequence:** ADR-003's language decision (plain Node.js + a minimal native helper)
+stands. The alternative of pure Go is not required. The helper binaries ship per
+architecture with hashes; the fail-closed guard prevents use when the helper is missing.
 
 Superseded in part by **ADR-008**, which resolves the helper's ownership model. The language choice
 (plain Node.js + a minimal native helper) stands; the helper's *protocol* is now explicitly

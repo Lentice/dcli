@@ -4,3 +4,7 @@ node_modules/
 .superpowers/
 .scratch/
 .claude/settings.local.json
+
+# .NET build artifacts
+native/windows-job-helper/bin/
+native/windows-job-helper/obj/

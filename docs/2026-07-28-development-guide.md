@@ -408,8 +408,10 @@ Do not start phase 4 without closing these; they are the assumptions the archite
 2. Whether `--port 0` reliably reports the bound port, and on which stream.
 3. Basic-auth mechanics on every endpoint used.
 4. Whether SSE can miss events, and what reconciliation is sufficient.
-5. Whether a Job Object can be attached before the Bun-built opencode binary spawns descendants,
-   and its breakaway behavior. **This one gates ADR-003** — if it fails, the answer is pure Go.
+5. ~~Whether a Job Object can be attached before the Bun-built opencode binary spawns descendants,~~
+   ~~and its breakaway behavior. **This one gates ADR-003** — if it fails, the answer is pure Go.~~
+   **RESOLVED 2026-07-28 by experiment (ticket 06).** Yes to all four questions.
+   ADR-003 confirmed; Go reversal not required.
 6. Whether Claude Code's `-p` can block on permissions the way opencode does, and whether
    `--input-format stream-json` provides a control channel to answer them.
 
