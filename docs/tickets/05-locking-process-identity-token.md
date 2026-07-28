@@ -101,3 +101,33 @@ feat: scoped locking, PID-reuse-safe identity, and execution-token ownership pro
 ```
 
 ## Notes
+
+### Implementation decisions
+
+**Lock mechanism.** The `wx` flag (`O_CREAT | O_EXCL`) provides cross-platform exclusive file
+creation. On Windows the open handle is kept as the liveness signal; on Unix it provides the
+same semantics plus the benefit that no `flock` syscall is needed (Node has no native `flock`).
+The lock file carries full metadata for stale detection and ownership proof.
+
+**Stale detection nuance.** Within the same process, multiple `LockManager` instances each
+generate their own `executionToken`. The initial `_isStale` implementation treated a pid match
+with a mismatched token as PID reuse (stale). This was wrong: two LockManagers in the same
+process have the same pid but different tokens. The fix checks `startTime` as a tiebreaker:
+if `pid` and `startTime` both match, it's the same process session even if tokens differ,
+so the lock is NOT stale.
+
+**tryAcquire vs acquire.** `tryAcquire` is the non-blocking variant that returns `null` instead
+of throwing on contention. `acquire` blocks up to `timeoutMs` (default 10 000 ms) polling with
+backoff, then throws with `exitCode = 17`.
+
+**Quarantine.** When a stale lock is detected, the lock file is renamed to `.stale`. If the
+rename fails, the file is unlinked instead. After quarantine the acquirer retries the
+exclusive-creation attempt.
+
+### Files created
+
+- `core/process-identity.js` — `getOwnIdentity`, `generateExecutionToken`,
+  `formatWorkerIdentity`, `parseWorkerIdentity`, `identitiesMatch`, `isProcessAlive`
+- `core/locking.js` — `LockManager`, `LOCK_SCOPES` enum, `LOCK_EXIT_CODE`
+- `tests/core/process-identity.test.js` — 7 tests
+- `tests/core/locking.test.js` — 12 tests (all 11 checklist items covered, plus releaseAll)
