@@ -14,7 +14,7 @@ coding-agent CLI and get a durable, inspectable result back. Three backends:
 | Shim command | Backend CLI | How it is driven |
 |---|---|---|
 | `dcli-opencode` | opencode 1.18.7 | one `opencode serve` process **per job**, over HTTP |
-| `ccodex` | codex-cli 0.145.0 | `codex exec --json`, prompt on stdin |
+| `dcli-codex` | codex-cli 0.145.0 | `codex exec --json`, prompt on stdin |
 | `dcli-claude` | Claude Code 2.1.220 | `claude -p --output-format stream-json` |
 
 Plus an umbrella `dcli --backend <b> ...` for scripting.

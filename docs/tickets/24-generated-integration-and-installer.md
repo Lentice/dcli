@@ -61,7 +61,7 @@ reproduce all three references.
 - `findings_status: malformed` is **not** a clean review.
 - Keep delegated work out of the caller's context until collection, when token saving is the point.
 
-Plus the per-backend truths: `dcli-opencode --variant` (unbounded string) vs `ccodex/dcli-claude --reasoning-effort`
+Plus the per-backend truths: `dcli-opencode --variant` (unbounded string) vs `dcli-codex/dcli-claude --reasoning-effort`
 (different enums); which backends can answer an interaction; which have graceful cancel; that opencode's
 structured output is unusable.
 
