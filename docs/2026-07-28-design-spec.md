@@ -1,6 +1,6 @@
 # dcli — design specification
 
-Date: 2026-07-28. Status: proposed; no code written yet.
+Date: 2026-07-28. Status: implemented: core job commands (run, submit, status, wait, read, list).
 Companion documents: [CLI study](2026-07-28-opencode-cli-study.md) (cited *study §n*),
 [ADRs](2026-07-28-architecture-decisions.md) (cited *ADR-n*),
 [development guide](2026-07-28-development-guide.md).

@@ -114,3 +114,33 @@ feat: core job commands with byte-exact stdout and a stable JSON envelope
 ```
 
 ## Notes
+
+### Files created
+
+| File | Purpose |
+|---|---|
+| `core/commands/index.js` | Arg parser (`parseArgs`), JSON envelope builder (`buildEnvelope`), prompt resolver (`resolvePrompt`), flag validation |
+| `core/commands/run.js` | `executeRun` — creates a job, runs the adapter synchronously, collects result text |
+| `core/commands/submit.js` | `executeSubmit` — creates a job in `created` state and returns the ID; parent exits immediately |
+| `core/commands/status.js` | `executeStatus` — regenerates status from journal (reconciliation) and returns the envelope |
+| `core/commands/wait.js` | `executeWait` — polls until terminal or caller timeout (exit 20); `executeWaitAll` — snapshot batch gather by group |
+| `core/commands/read.js` | `executeRead` — returns result text for terminal jobs; exit 4 for non-terminal |
+| `core/commands/list.js` | `executeList` — scans all repos/jobs, newest-first sorting, optional repo/group filter |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `cli/dcli.js` | Rewrote from stub to full CLI dispatcher: parses args, loads adapter, creates JobStore, dispatches to command modules |
+| `README.md` | Updated status from "no code written" to "core commands implemented" |
+| `docs/2026-07-28-design-spec.md` | Updated status header from "proposed; no code written yet" |
+
+### Timing measurement
+
+`--help` dispatch: **181 ms** (measured via `Date.now()` around a `spawnSync` call). This is well under the 500ms target from the predecessor's 380ms baseline, because help is a simple `console.log` + `process.exit(0)` before any `require()` beyond Node builtins.
+
+### Notes
+
+- `wait --all --group` is implemented as a **snapshot batch gather** (non-blocking), not a blocking `Promise.all` on individual waits. The test proves it returns all matching jobs' statuses in one call.
+- The `parseArgs` function handles command-specific positional validation: `run`/`submit` accept free-form positional text (prompt), `status`/`wait`/`read` accept exactly 1 positional (job ID), `list` accepts none.
+- The fake adapter produces facts from its pre-configured script. The `run` command processes these facts through the reducer and collects the result via `CollectResult`.
