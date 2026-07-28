@@ -1,6 +1,6 @@
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
-const { buildEnvelope } = require('./index');
+const { buildEnvelope, isVersionInRange } = require('./index');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
@@ -20,7 +20,22 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     throw err;
   }
 
-  const capabilitiesSnapshot = adapter.ProbeCapabilities();
+  const detectedVersion = adapter.DetectVersion();
+  const manifest = adapter.ProbeCapabilities();
+  if (manifest.supported_version_range) {
+    if (!isVersionInRange(detectedVersion, manifest.supported_version_range)) {
+      const range = manifest.supported_version_range;
+      const err = new Error(
+        `Backend version ${detectedVersion} is outside supported range ` +
+        `${range.min || 'any'} - ${range.max || 'any'}. Cannot create job.`
+      );
+      err.code = 'VERSION_OUT_OF_RANGE';
+      err.exitCode = 12;
+      throw err;
+    }
+  }
+
+  const capabilitiesSnapshot = manifest;
 
   store.createJob({
     jobId, repoKey, repoRoot,

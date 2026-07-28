@@ -266,4 +266,22 @@ function readStdinBounded() {
   });
 }
 
-module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS };
+function compareVersions(a, b) {
+  const aParts = a.split('.').map(Number);
+  const bParts = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+    const aVal = aParts[i] || 0;
+    const bVal = bParts[i] || 0;
+    if (aVal < bVal) return -1;
+    if (aVal > bVal) return 1;
+  }
+  return 0;
+}
+
+function isVersionInRange(version, range) {
+  if (range.min && compareVersions(version, range.min) < 0) return false;
+  if (range.max && compareVersions(version, range.max) >= 0) return false;
+  return true;
+}
+
+module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange };

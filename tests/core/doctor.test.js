@@ -57,6 +57,12 @@ await withTempDir(async (dir) => {
     assert.ok(typeof probe.ok === 'boolean', `probe ${probe.name} must have boolean ok`);
     assert.ok(typeof probe.detail === 'string', `probe ${probe.name} must have string detail`);
   }
+
+  // Verify containment_helper probe is present
+  const containmentProbe = result.envelope.probes.find(p => p.name === 'containment_helper');
+  assert.ok(containmentProbe, 'probes must include containment_helper');
+  assert.strictEqual(typeof containmentProbe.ok, 'boolean');
+  assert.ok(containmentProbe.detail.length > 0);
 });
 console.log('PASS: doctor test 1 — --json returns envelope with probe results');
 
@@ -151,6 +157,106 @@ console.log('PASS: doctor test 3 — per-backend probe slot exists');
   assert.ok(probeDefs.length >= 1, 'doctor must define probe functions');
 }
 console.log('PASS: doctor test 4 — probes individually bounded in source');
+
+// ===========================================================================
+// 5. Live smoke probe appears when liveSmokeTimeoutSec is provided
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: {
+      schema_version: 1,
+      backend: 'fake',
+      core: { run: true },
+      extensions: {},
+    },
+  });
+
+  const { executeDoctor } = require('../../core/commands/doctor');
+  const result = await executeDoctor({
+    adapter,
+    stateRoot: dir,
+    repoPath: dir,
+    json: true,
+    liveSmokeTimeoutSec: 5,
+  });
+
+  const liveProbe = result.envelope.probes.find(p => p.name === 'live_smoke');
+  assert.ok(liveProbe, 'live_smoke probe must be present when liveSmokeTimeoutSec is provided');
+  assert.strictEqual(liveProbe.ok, true, 'live smoke should pass for default fake adapter');
+  assert.ok(liveProbe.detail, 'live_smoke probe must have detail');
+});
+console.log('PASS: doctor test 5 — live smoke probe present when timeout provided');
+
+// ===========================================================================
+// 6. Live smoke timeout is distinguishable from environment failure
+// ===========================================================================
+// Test timeout
+await withTempDir(async (dir) => {
+  const hangAdapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: {
+      schema_version: 1,
+      backend: 'fake',
+      core: { run: true },
+      extensions: {},
+    },
+    behaviors: { liveSmokeWaitMs: 10000 },
+  });
+
+  const { executeDoctor } = require('../../core/commands/doctor');
+  const result = await executeDoctor({
+    adapter: hangAdapter,
+    stateRoot: dir,
+    repoPath: dir,
+    json: true,
+    liveSmokeTimeoutSec: 1,
+  });
+
+  const liveProbe = result.envelope.probes.find(p => p.name === 'live_smoke');
+  assert.ok(liveProbe, 'live_smoke probe must be present');
+  assert.strictEqual(liveProbe.ok, false, 'live smoke must report ok: false on timeout');
+  assert.strictEqual(liveProbe.status, 'timed_out', 'timeout result must have status: timed_out');
+  assert.ok(liveProbe.detail.includes('timed out'), 'detail must mention timeout');
+
+  // Test environment failure
+  const failAdapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: {
+      schema_version: 1,
+      backend: 'fake',
+      core: { run: true },
+      extensions: {},
+    },
+    behaviors: { liveSmokeFail: 'adapter unavailable' },
+  });
+
+  const result2 = await executeDoctor({
+    adapter: failAdapter,
+    stateRoot: dir,
+    repoPath: dir,
+    json: true,
+    liveSmokeTimeoutSec: 5,
+  });
+
+  const failProbe = result2.envelope.probes.find(p => p.name === 'live_smoke');
+  assert.ok(failProbe, 'live_smoke probe must be present');
+  assert.strictEqual(failProbe.ok, false, 'live smoke must report ok: false on failure');
+  assert.strictEqual(failProbe.status, 'failed', 'failure result must have status: failed');
+  assert.ok(failProbe.detail.includes('adapter unavailable'), 'detail must mention the failure reason');
+
+  // Verify the two outcomes are distinguishable
+  assert.strictEqual(liveProbe.status, 'timed_out');
+  assert.strictEqual(failProbe.status, 'failed');
+  assert.notStrictEqual(liveProbe.status, failProbe.status, 'timeout and failure status values must differ');
+});
+console.log('PASS: doctor test 6 — live smoke timeout vs failure distinguishable');
 
 // ===========================================================================
 // Summary

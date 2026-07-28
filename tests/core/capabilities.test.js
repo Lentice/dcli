@@ -289,6 +289,82 @@ console.log('PASS: capabilities test 7 — --json distinguishes failure classes'
 console.log('PASS: capabilities test 8 — no option silently ignored');
 
 // ===========================================================================
+// 9. Version gating — version outside range rejected before job creation
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    detectedVersion: '3.0.0',
+    capabilities: {
+      schema_version: 1,
+      backend: 'fake',
+      core: { run: true },
+      extensions: {},
+      supported_version_range: { min: '1.0.0', max: '2.0.0' },
+    },
+  });
+
+  const store = new JobStore({ stateRoot: dir });
+  const { executeRun } = require('../../core/commands/run');
+
+  try {
+    await executeRun({
+      store, adapter,
+      repoKey: 'test-repo',
+      repoRoot: dir,
+      prompt: 'test version gating',
+      hardTimeoutSec: 60,
+    });
+    assert.fail('Should have thrown due to version out of range');
+  } catch (err) {
+    assert.strictEqual(err.code, 'VERSION_OUT_OF_RANGE');
+    assert.strictEqual(err.exitCode, 12);
+    assert.ok(err.message.includes('3.0.0'));
+    assert.ok(err.message.includes('1.0.0') && err.message.includes('2.0.0'));
+  }
+
+  const jobsDir = path.join(dir, 'jobs');
+  assert.ok(!fs.existsSync(jobsDir), 'no job directory should exist after version rejection');
+});
+console.log('PASS: capabilities test 9 — version outside range rejected before job creation');
+
+// ===========================================================================
+// 10. Version gating — version inside range proceeds normally
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    detectedVersion: '1.5.0',
+    capabilities: {
+      schema_version: 1,
+      backend: 'fake',
+      core: { run: true },
+      extensions: {},
+      supported_version_range: { min: '1.0.0', max: '2.0.0' },
+    },
+  });
+
+  const store = new JobStore({ stateRoot: dir });
+  const { executeRun } = require('../../core/commands/run');
+
+  await executeRun({
+    store, adapter,
+    repoKey: 'test-repo',
+    repoRoot: dir,
+    prompt: 'test version in range',
+    hardTimeoutSec: 60,
+  });
+
+  const jobsDir = path.join(dir, 'jobs');
+  assert.ok(fs.existsSync(jobsDir), 'job directory should exist when version is in range');
+});
+console.log('PASS: capabilities test 10 — version inside range proceeds normally');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll capability tests passed.');

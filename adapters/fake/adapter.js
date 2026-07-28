@@ -7,6 +7,7 @@ class FakeAdapter {
       capabilities: { schema_version: 1, backend: 'fake', core: {} },
       behaviors: {},
       rungFailures: {},
+      detectedVersion: '1.0.0',
       ...script,
     };
     this._cancelled = false;
@@ -30,7 +31,7 @@ class FakeAdapter {
   }
 
   DetectVersion() {
-    return '1.0.0';
+    return this._script.detectedVersion || '1.0.0';
   }
 
   ProbeCapabilities() {
@@ -164,6 +165,16 @@ class FakeAdapter {
     if (this._script.behaviors.hangAfter) return { state: 'interrupted' };
     if (this._script.exitCode !== 0) return { state: 'failed' };
     return { state: 'done' };
+  }
+
+  async LiveSmoke(timeoutMs) {
+    const wait = this._script.behaviors && this._script.behaviors.liveSmokeWaitMs;
+    if (wait) {
+      await new Promise(r => setTimeout(r, wait));
+    }
+    if (this._script.behaviors && this._script.behaviors.liveSmokeFail) {
+      throw new Error(this._script.behaviors.liveSmokeFail);
+    }
   }
 
   async _interruptibleSleep(ms) {

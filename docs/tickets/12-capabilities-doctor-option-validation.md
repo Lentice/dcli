@@ -158,6 +158,28 @@ node cli/dcli.js --backend fake run --reasoning-effort high   # exit 2 + unsuppo
 - `cli/dcli.js` — help text now lists `capabilities` and `doctor` commands plus new flags.
 - `docs/2026-07-28-design-spec.md` — status header updated.
 
+### Gaps closed in follow-up commit 4221628 audit
+
+**GAP 1 — Version gating.** `core/commands/capabilities.js` was a passthrough with no version
+compatibility check. Added: `DetectVersion()` output is checked against `supported_version_range` in the
+capability manifest before job creation in both `run.js` and `submit.js`. Version helper functions
+(`compareVersions`, `isVersionInRange`) are in `core/commands/index.js`. Out-of-range versions produce
+`err.code = 'VERSION_OUT_OF_RANGE'`, `err.exitCode = 12`, and an error message naming the supported
+range. Tests 9 and 10 in `tests/core/capabilities.test.js` verify rejection (no job directory) and
+acceptance respectively.
+
+**GAP 2 — Containment helper probe.** Added `probeContainmentHelper()` to `core/commands/doctor.js`,
+reporting `isAvailable()` / `resolveHelperPath()` from `core/containment.js`. Included in
+`runCommonProbes()`. Verified in doctor test 1 (probe presence and shape) and CLI output.
+
+**GAP 3 — Live smoke.** `runLiveSmoke()` in `core/commands/doctor.js` calls `adapter.LiveSmoke()` with a
+bounded timeout. On timeout the result has `status: 'timed_out'`; on environment failure it has
+`status: 'failed'`. Tests 5 and 6 in `tests/core/doctor.test.js` prove both the presence of the live
+smoke probe when `liveSmokeTimeoutSec` is provided and the distinguishability of timeout vs failure.
+
+Also added `detectedVersion` to the fake adapter's configurable script defaults and an async
+`LiveSmoke()` method with `behaviors.liveSmokeWaitMs` / `behaviors.liveSmokeFail` for test injection.
+
 ### Things that contradicted the docs
 
 None. The design spec ADR-004, the ticket inline design, and the existing adapter contract all agreed.

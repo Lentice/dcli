@@ -2,11 +2,17 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { resolveDeadline } = require('../deadlines');
+const { isAvailable, resolveHelperPath } = require('../containment');
 
 const PROBE_TIMEOUT_MS = 10000;
 
 async function executeDoctor({ adapter, stateRoot, repoPath, json, liveSmokeTimeoutSec }) {
-  const commonProbes = await runCommonProbes({ stateRoot, repoPath });
+  const probes = await runCommonProbes({ stateRoot, repoPath });
+
+  if (liveSmokeTimeoutSec) {
+    const timeoutMs = liveSmokeTimeoutSec * 1000;
+    probes.push(await runLiveSmoke(adapter, timeoutMs));
+  }
 
   let backendInfo = {};
   try {
@@ -31,7 +37,7 @@ async function executeDoctor({ adapter, stateRoot, repoPath, json, liveSmokeTime
     schema_version: 1,
     backend: identity.backend || 'unknown',
     adapter_version: identity.adapter_version || null,
-    probes: commonProbes,
+    probes,
     backend_info: backendInfo,
     live_smoke_timeout_sec: liveSmokeTimeoutSec || null,
   };
@@ -39,10 +45,46 @@ async function executeDoctor({ adapter, stateRoot, repoPath, json, liveSmokeTime
   return { envelope, json };
 }
 
+async function runLiveSmoke(adapter, timeoutMs) {
+  const probePromise = (async () => {
+    try {
+      if (typeof adapter.LiveSmoke === 'function') {
+        await adapter.LiveSmoke(timeoutMs);
+      }
+      return { name: 'live_smoke', ok: true, detail: 'Backend live smoke check passed' };
+    } catch (err) {
+      return { name: 'live_smoke', ok: false, status: 'failed', detail: `Environment failure: ${err.message}` };
+    }
+  })();
+
+  const timer = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('timed_out')), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([probePromise, timer]);
+  } catch (err) {
+    return { name: 'live_smoke', ok: false, status: 'timed_out', detail: `Live smoke timed out after ${timeoutMs}ms` };
+  }
+}
+
+async function probeContainmentHelper() {
+  try {
+    const available = isAvailable();
+    if (available) {
+      return { name: 'containment_helper', ok: true, detail: `Containment helper available at: ${resolveHelperPath()}` };
+    }
+    return { name: 'containment_helper', ok: false, detail: 'Containment helper not found. Build it: dotnet build native/windows-job-helper' };
+  } catch (err) {
+    return { name: 'containment_helper', ok: false, detail: `Containment helper check failed: ${err.message}` };
+  }
+}
+
 async function runCommonProbes({ stateRoot, repoPath }) {
   const probes = [];
 
   probes.push(await probeWithTimeout(probeStateRoot(stateRoot), PROBE_TIMEOUT_MS, 'state_root'));
+  probes.push(await probeWithTimeout(probeContainmentHelper(), PROBE_TIMEOUT_MS, 'containment_helper'));
   probes.push(await probeWithTimeout(probeGit(), PROBE_TIMEOUT_MS, 'git'));
   probes.push(await probeWithTimeout(probeRepo(repoPath), PROBE_TIMEOUT_MS, 'repo_resolution'));
 
