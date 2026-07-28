@@ -156,3 +156,43 @@ feat(opencode): async prompting with event-stream progress and state-based recon
 - `Observe` is now a proper async generator that runs the reconciliation loop:
   SSE events → facts, status polling → backend_status, stream reconnection with message
   re-read, and final message selection on idle.
+
+### Correction: the async flow did NOT complete correctly against a real server — two real bugs found and fixed
+
+Manual live tracing against a real `opencode serve` (1.18.8, model `opencode-go/deepseek-v4-flash`)
+with the trivial prompt `"Reply with exactly: TRACEPONG2"` showed the backend genuinely finished
+the turn (`backend_status: idle`) at **t≈17s**, but the job did not complete until **t≈58.6s**,
+and even then returned **completely empty text** — the real, successful reply was silently lost.
+This was invisible to every mocked test because the test suite always overrides
+`_mockIdleTimeoutMs` to `1` for fast execution, so the real default (`120000`ms) production path
+that this bug lived in was never exercised end to end.
+
+Two bugs, both fixed:
+
+1. **`statusCache === 'idle'` was gated on the wrong constant.** The reconciliation loop required
+   idle status to persist continuously for `IDLE_TIMEOUT_MS` (120000ms, the documented "idle
+   timeout") before treating the turn as complete — but a REST poll reporting `idle` is itself an
+   immediate, reliable signal that the backend already finished; it does not need two more minutes
+   of confirmation. `IDLE_TIMEOUT_MS`'s actual documented purpose ("distinguishes no keepalive from
+   still working") is about SSE connection staleness tolerance, a different concept that was
+   conflated with backend-idle confirmation. Fixed by introducing a separate, short
+   `IDLE_CONFIRM_MS` (3000ms) specifically for backend-idle confirmation, leaving
+   `IDLE_TIMEOUT_MS`/`_idleTimeoutMs` (still 120000ms, still tested at that value) for its original
+   purpose. Live-verified fix: the same prompt now returns the correct real text
+   (`"TRACEPONG4"`) at **t≈26s** instead of empty text at t≈58.6s.
+
+2. **The SSE `http.get()` call set a blunt 60000ms socket-idle timeout.** This is independent of
+   bug 1 and matters for any real turn that legitimately runs longer than a minute (a real use
+   case for this project — long code-review or implement tasks): the socket would be torn down
+   purely on elapsed wall-clock time with no actual dead-connection evidence, well before a
+   long-running turn finishes. Raised to `SSE_SOCKET_TIMEOUT_MS` (600000ms), matching the scale of
+   `MESSAGE_TIMEOUT_MS`.
+
+**Not fully resolved:** zero real SSE `text`/`step-finish` events were observed during either live
+trace, despite the backend demonstrably producing output (status correctly transitioned
+busy→idle). The reconciliation loop's REST-polling fallback (fetch-on-idle, per the ticket's own
+"completion is never declared from stream closure" design) makes the adapter correct regardless,
+but the SSE progress channel itself may not be delivering events as designed on this opencode
+version/configuration — this is flagged for a future ticket to investigate (progress-reporting
+quality, not correctness) rather than solved here, since the polling path is the documented
+authoritative source of truth per this ticket's own Definition of Done.

@@ -137,7 +137,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
       });
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
-      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 3 };
+      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
@@ -191,7 +191,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
       });
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
-      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 3 };
+      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
@@ -214,7 +214,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     });
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     const finalStatus = store.readStatus({ repoKey, jobId });
-    return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 3 };
+    return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
   }
 
   const collected = adapter.CollectResult(attempt);

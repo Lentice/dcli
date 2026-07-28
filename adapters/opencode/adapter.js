@@ -19,6 +19,18 @@ const MAX_STDERR_BYTES = 10 * 1024 * 1024;
 const POLL_INTERVAL_MS = 5000;
 const IDLE_TIMEOUT_MS = 120000;
 const SSE_READ_TIMEOUT_MS = 3000;
+// How long a REST-polled 'idle' status must be observed before it is treated
+// as authoritative turn completion. This is deliberately short (a status
+// poll is itself an immediate, reliable signal that the turn already
+// finished) and is a distinct concept from IDLE_TIMEOUT_MS, which bounds SSE
+// connection keepalive/staleness tolerance, not backend-idle confirmation.
+const IDLE_CONFIRM_MS = 3000;
+// Socket idle timeout for the long-lived SSE connection itself. Must be
+// comfortably longer than any real model turn's gaps between SSE bytes —
+// this connection legitimately sits with no activity for a while during a
+// long turn, and a short value here tears down a still-useful connection
+// purely due to elapsed wall-clock time.
+const SSE_SOCKET_TIMEOUT_MS = 600000;
 const PROMPT_ASYNC_TIMEOUT_MS = 15000;
 const MESSAGES_TIMEOUT_MS = 30000;
 const SESSION_STATUS_TIMEOUT_MS = 10000;
@@ -911,7 +923,6 @@ class OpencodeAdapter {
     yield { type: 'started', backend_pid: this._backendPid, backend_session_id: this._sessionId };
 
     const POLL_MS = this._pollIntervalMs;
-    const IDLE_MS = this._idleTimeoutMs;
     const SSE_TIMEOUT = SSE_READ_TIMEOUT_MS;
 
     let sseLastId = null;
@@ -948,7 +959,7 @@ class OpencodeAdapter {
         if (statusCache === 'idle') {
           if (idleSince === null) {
             idleSince = Date.now();
-          } else if (Date.now() - idleSince > IDLE_MS) {
+          } else if (Date.now() - idleSince > IDLE_CONFIRM_MS) {
             sseDone = true;
             break;
           }
@@ -1115,7 +1126,7 @@ class OpencodeAdapter {
         port: u.port,
         path: u.pathname + u.search,
         headers,
-        timeout: 60000,
+        timeout: SSE_SOCKET_TIMEOUT_MS,
       }, (res) => { resolve(res); });
       req.on('error', reject);
       req.on('timeout', () => {
