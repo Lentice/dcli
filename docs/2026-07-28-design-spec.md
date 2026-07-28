@@ -646,15 +646,27 @@ Background jobs are **separate worker processes**. The top-level CLI never stays
 
 ### Admission control
 
-An engine-level admission controller bounds **global and per-backend concurrency**, configurable.
-Fan-out multiplies model runtimes, file watchers, caches, provider connections, and memory — not
-merely process count (both reviewers, review record finding 14). Ten small background tasks can become
+An engine-level admission controller (`core/admission.js`) bounds **global and per-backend concurrency**,
+configurable. Fan-out multiplies model runtimes, file watchers, caches, provider connections, and memory —
+not merely process count (both reviewers, review record finding 14). Ten small background tasks can become
 ten servers plus ten agent processes and exhaust memory or provider quota before any timeout logic
 helps. Jobs beyond the limit queue rather than launch, and `status` says so.
 
-Measured, not assumed: `opencode serve` came up in ~2 s against 30–90 s model turns on the study host,
-so per-job server startup is not a latency concern at low concurrency. Re-measure under realistic
-fan-out in the opencode adapter work before choosing default limits.
+**Slot accounting.** Each running job occupies a durable slot file in `<state-root>/locks/admission/<uuid>.json`
+containing the owner's pid, start time, hostname, execution token, backend, and acquisition time. Slot
+files survive a controller crash.
+
+**Queue.** Queued jobs are recorded in `<state-root>/queue/<job-id>.json`. When a slot is released,
+`tryDequeue()` scans the queue, acquires slots for the oldest queued jobs, and removes them from the
+queue.
+
+**Reconciliation.** `reconcile()` scans slot files, checks owner pid liveness via `process.kill(pid, 0)`,
+and removes stale entries. Called at controller startup and exposed for periodic use.
+
+**Defaults.** Global limit: 5. Per-backend limit: 5 (configurable per backend in the CLI layer; CLI sets
+`opencode: 3, codex: 3, claude: 3`). Measured, not assumed: `opencode serve` came up in ~2 s against
+30–90 s model turns on the study host, so per-job server startup is not a latency concern at low
+concurrency. Re-measure under realistic fan-out in the opencode adapter work before choosing final defaults.
 
 ---
 
@@ -826,19 +838,46 @@ Added after review (finding 10) — this was simply missing, and it is adjacent 
 deliberately reads secret-bearing data: the failure classifier inspects provider error bodies (§8), and
 provider error bodies are exactly where tokens live.
 
+### Implementation (ticket 13)
+
+`core/redactor.js` — `Redactor` class with two detection mechanisms:
+
+1. **Registered exact values.** Secrets are registered by name and exact value at creation time
+   via `registerSecret(name, value)`. The redactor searches for these exact byte sequences in
+   text and replaces them with `«redacted:name»`.
+2. **Key-name pattern matching.** As a backstop, values under known credential key names are
+   automatically redacted: `authorization`, `api[-_]?key`, `token`, `secret`, `password`,
+   `bearer`, `auth.json`. Matching is case-insensitive.
+
+`redactText(text)` — plain-text replacement of registered exact values.
+`redactValue(value)` — deep-walks objects/arrays, applying both exact-value replacement and
+key-name pattern matching.
+`redactJson(value)` — alias for `redactValue`, for JSON-serializable data.
+
+**Integration.** The redactor is injected into the writer path via `core/fs-text.js`'s module-level
+`setRedactor(redactor)`. Once set, `writeTextFileAtomic`, `writeJsonFileAtomic`, and `appendJsonLine`
+automatically redact content before persistence. A call site cannot bypass it — every write goes through
+the same path.
+
+`createSanitizingRedactor()` returns a copy of the redactor for the `--sanitize` export path (ticket TBD),
+preserving the same registered secrets and key patterns.
+
 Rules:
 
-- **Redact before persistence, not on read.** Once a token is on disk it is leaked.
+- **Redact before persistence, not on read.** Redaction is in the writer path (`core/fs-text.js`),
+  transparent to every caller. Once a token is on disk it is leaked.
 - Redact in: environment snapshots, HTTP request/response bodies and headers, `backend-events.jsonl`,
   stdout/stderr logs, `debug.json`, `command.json`/`command.txt`, and the `doctor` envelope.
 - **Never write at all:** the per-job server password, provider credentials, `Authorization` headers,
-  `auth.json` contents, or any value sourced from a credential store. The per-job server secret is
-  passed through the environment and never appears on a command line or in a normal log.
-- The state root gets restrictive ACLs (owner-only). Test that, don't assume the platform default.
-- Prompts and results are user content, not secrets, but `--sanitize`-style redaction must be available
+  `auth.json` contents, or any value sourced from a credential store. These are covered by the key-name
+  pattern matcher. The per-job server secret is passed through the environment and never appears on a
+  command line or in a normal log.
+- The state root gets restrictive ACLs (owner-only) on creation via `ensureStateRoot()`. On Windows this
+  uses `icacls /inheritance:r /grant <user>:(OI)(CI)F`; on Unix `chmod 700`. Tested.
+- Prompts and results are user content, not secrets, but `createSanitizingRedactor()` is available
   for sharing a job's artifacts.
-- Maintain an explicit list of diagnostics that are never written, and test it — a redaction test that
-  plants a known token in every input channel and greps the whole job directory for it.
+- A planted-token test registers a known secret, writes through every channel, and verifies the secret
+  never reaches disk.
 
 ## 20. Open questions
 

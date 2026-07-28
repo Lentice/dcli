@@ -1,7 +1,7 @@
 const { generateJobId } = require('../job-id');
 const { buildEnvelope, isVersionInRange } = require('./index');
 
-function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, reasoningEffort, variant, effort }) {
+function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, reasoningEffort, variant, effort, admission }) {
   const jobId = generateJobId();
 
   const request = { model, reasoningEffort, variant, effort };
@@ -32,9 +32,10 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
 
   const capabilitiesSnapshot = manifest;
 
+  const backend = 'fake';
   store.createJob({
     jobId, repoKey, repoRoot,
-    backend: 'fake',
+    backend,
     backendVersion: '1.0.0',
     adapterVersion: '1.0.0',
     mode: 'submit',
@@ -43,6 +44,20 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
     hardTimeoutSec,
     capabilitiesSnapshot,
   });
+
+  if (admission) {
+    const result = admission.acquireSlot(backend);
+    if (!result.acquired) {
+      store.journalTransition(jobId, repoKey, {
+        kind: 'attempt_state_changed',
+        attempt: null,
+        from: 'created',
+        to: 'queued',
+        detail: { phase: 'queued', queue_reason: result.reason },
+      });
+      admission.enqueueJob(backend, jobId);
+    }
+  }
 
   return { jobId };
 }

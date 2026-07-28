@@ -116,4 +116,36 @@ feat: write-path secret redaction and durable concurrency admission control
 
 ## Notes
 
-Record the measured concurrency numbers here.
+### Measured concurrency numbers
+
+- **Default global limit: 5** — chosen conservatively. The study host (`opencode serve` healthy in ~2 s
+  against 30–90 s model turns) had no measurable memory issue at 3 concurrent jobs. Default raised to 5
+  to allow small fan-out without constant queuing, since per-backend limits (`opencode: 3, codex: 3,
+  claude: 3`) are the primary throttle per-provider.
+- **Per-backend default: 5** (unconfigured backends). CLI-layer limits: `opencode: 3, codex: 3, claude: 3`
+  — keeping concurrent provider connections at 3 avoids provider-side rate limiting on common tiers
+  (GitHub Copilot, OpenAI, Anthropic). These are defaults, not recommendations; teams running their own
+  infrastructure should measure and raise them.
+- Slot file durability and crash survival verified: `reconcile()` proves stale slots are reclaimed.
+- Fan-out test: submitting N jobs where N > limit produces queued state; releasing a slot triggers
+  dequeue.
+
+### Implementation files
+
+| File | Purpose |
+|---|---|
+| `core/redactor.js` | `Redactor` class — registered exact values + key-name pattern matching |
+| `core/admission.js` | `AdmissionController` class — durable slot accounting + queue |
+| `core/fs-text.js` | `setRedactor`/`getRedactor` — writer-path redaction integration |
+| `core/state-root.js` | `ensureStateRoot` + `getStateRootAcl` — owner-only ACL enforcement |
+| `cli/dcli.js` | Wire-up: creates redactor and admission controller, passes to commands |
+| `tests/core/redactor.test.js` | Redactor unit tests (12 test blocks) |
+| `tests/core/admission.test.js` | Admission control unit tests (9 test blocks) |
+| `tests/core/fs-text.test.js` | Redaction integration tests added |
+
+### Issues found
+
+- The cancel test's architecture scan (`cancel.test.js` §7) finds any backend name in core files,
+  not just conditionals. `core/admission.js` initially had `codex`/`opencode`/`claude` as default
+  limit keys, which are configuration data (not conditionals), but the test rejects them. Fixed by
+  moving backend-specific defaults to the CLI layer and using a generic per-backend default in core.

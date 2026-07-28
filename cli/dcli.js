@@ -57,8 +57,11 @@ if (process.argv.includes('--help')) {
 
 const { parseArgs, buildEnvelope, resolvePrompt } = require('../core/commands/index');
 const { JobStore } = require('../core/job-store');
-const { getStateRoot } = require('../core/state-root');
+const { getStateRoot, ensureStateRoot } = require('../core/state-root');
 const { computeRepoKeyWithPath } = require('../core/repo-key');
+const { Redactor } = require('../core/redactor');
+const { setRedactor } = require('../core/fs-text');
+const { AdmissionController } = require('../core/admission');
 
 async function main() {
   const parsed = parseArgs(process.argv);
@@ -90,6 +93,18 @@ async function main() {
   const stateRoot = parsed.repo
     ? path.resolve(parsed.repo, '.dcli-state')
     : (process.env.DCLI_STATE_ROOT || path.join(getStateRoot(), 'test'));
+
+  ensureStateRoot(stateRoot);
+
+  const redactor = new Redactor();
+  setRedactor(redactor);
+
+  const admissionController = new AdmissionController({
+    stateRoot,
+    backendLimits: { opencode: 3, codex: 3, claude: 3 },
+  });
+  admissionController.reconcile();
+
   const store = new JobStore({ stateRoot });
 
   const repoPath = parsed.repo || process.cwd();
@@ -113,6 +128,7 @@ async function main() {
         reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
+        admission: admissionController,
       });
 
       if (parsed.json) {
@@ -140,6 +156,7 @@ async function main() {
         reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
+        admission: admissionController,
       });
 
       if (parsed.json) {

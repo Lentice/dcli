@@ -6,6 +6,7 @@ const ENCODING = 'utf8';
 const BOM = '\uFEFF';
 
 let atomicRenameSupported = null;
+let _redactor = null;
 
 /**
  * @returns {boolean}
@@ -41,13 +42,22 @@ function tmpPath(filePath) {
   return path.join(dir, `${base}.tmp-${rnd}`);
 }
 
+function setRedactor(redactor) {
+  _redactor = redactor;
+}
+
+function getRedactor() {
+  return _redactor;
+}
+
 /**
  * @param {string} filePath
  * @param {string} content - UTF-8 text
  */
 function writeTextFileAtomic(filePath, content) {
   const tmp = tmpPath(filePath);
-  const buf = Buffer.from(content, ENCODING);
+  const toWrite = _redactor ? _redactor.redactText(content) : content;
+  const buf = Buffer.from(toWrite, ENCODING);
   fs.writeFileSync(tmp, buf);
   try {
     const fd = fs.openSync(tmp, 'r+');
@@ -66,7 +76,8 @@ function writeTextFileAtomic(filePath, content) {
  * @param {unknown} value
  */
 function writeJsonFileAtomic(filePath, value) {
-  const json = JSON.stringify(value, stableKeyReplacer, 2) + '\n';
+  const toWrite = _redactor ? _redactor.redactJson(value) : value;
+  const json = JSON.stringify(toWrite, stableKeyReplacer, 2) + '\n';
   writeTextFileAtomic(filePath, json);
 }
 
@@ -75,7 +86,8 @@ function writeJsonFileAtomic(filePath, value) {
  * @param {unknown} value
  */
 function appendJsonLine(filePath, value) {
-  const line = JSON.stringify(value) + '\n';
+  const toWrite = _redactor ? _redactor.redactJson(value) : value;
+  const line = JSON.stringify(toWrite) + '\n';
   fs.appendFileSync(filePath, line, ENCODING);
 }
 
@@ -99,5 +111,7 @@ module.exports = {
   writeTextFileAtomic,
   writeJsonFileAtomic,
   appendJsonLine,
+  setRedactor,
+  getRedactor,
   __detect: detectAtomicRename,
 };
