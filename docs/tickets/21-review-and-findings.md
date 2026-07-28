@@ -151,3 +151,41 @@ feat: scoped review with wrapper-generated diff and hardened findings contract
 ```
 
 ## Notes
+
+### Implementation summary
+
+Built both the findings parser and the review command:
+
+**`core/findings.js`** — Finds `<!-- dcli:findings -->` marker in markdown text and
+parses the JSON appendix. Returns `{ status: 'ok' | 'absent' | 'malformed', data, items, proseBefore, error }`.
+Validates all contract rules (severity enum, non-empty verdict/claim, absolute/traversal path rejection,
+item count cap at 100, appendix size cap at 100 KB). Prose before the marker is always preserved.
+
+**`core/commands/review.js`** — Generates a git diff (staged/working/range scoping), builds a
+review prompt with framing text, runs it through the adapter (via `executeRun`), and parses findings
+from the result. Supports `--path` (repeatable), `--include-untracked`, `--embed-diff` (default),
+`--intent`, `--focus`. Diff truncated at 100 KB with explicit reporting. Access forced to `read-only`.
+
+**Tests:**
+- `tests/core/findings.test.js` — 18 regression tests covering all edge cases
+- `tests/core/findings-corpus.test.js` — 6 corpus fixture tests
+- `tests/core/review.test.js` — 14 tests for prompt building, diff generation, untracked handling, full execution
+
+**Fixtures:** `tests/fixtures/findings-corpus/` — 6 synthetic model outputs covering clean, preamble,
+truncated, and duplicate-marker scenarios across all three backends.
+
+### Discoveries
+
+- The `--embed-diff` flag from the spec is the default (boolean true). The implementation
+  treats it as a boolean; when explicitly `--no-embed-diff` would be needed to disable, but
+  the spec doesn't define a disable mechanism. I used `--embed-diff false` in tests but the
+  CLI currently only supports `--embed-diff` as a presence flag (always true). This matches
+  the design intent since it's the default.
+- The design spec §11 says "Parse only the final exact marker" which could be read as "take
+  the last one if there are multiple". But §11 also says "A duplicate marker is malformed".
+  The implementation follows the latter (duplicate = malformed), consistent with the ticket
+  checklist and regression tests.
+- `executeReview` wraps `executeRun` rather than duplicating the lifecycle, which keeps the
+  core run logic in one place. Findings are parsed from the result text and set on the
+  envelope post-execution. The `findings_status` is exposed in `--json` output but not
+  persisted to `status.json` (it can be re-derived from `result.md`).

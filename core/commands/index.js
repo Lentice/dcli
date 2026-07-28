@@ -7,6 +7,8 @@ const KNOWN_FLAGS = new Set([
   '--older-than', '--dry-run', '--scrub-session-ids', '--max-bytes',
   '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
   '--access',
+  '--staged', '--working', '--range', '--path', '--include-untracked',
+  '--embed-diff', '--intent', '--focus',
 ]);
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor']);
@@ -80,11 +82,31 @@ function parseArgs(argv) {
         i++;
         continue;
       }
+      if (arg === '--staged') {
+        result.staged = true;
+        i++;
+        continue;
+      }
+      if (arg === '--working') {
+        result.working = true;
+        i++;
+        continue;
+      }
+      if (arg === '--include-untracked') {
+        result.includeUntracked = true;
+        i++;
+        continue;
+      }
+      if (arg === '--embed-diff') {
+        result.embedDiff = true;
+        i++;
+        continue;
+      }
 
       const valueFlag = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
         '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
         '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
-        '--access']);
+        '--access', '--range', '--path', '--intent', '--focus']);
 
       if (valueFlag.has(arg)) {
         i++;
@@ -158,6 +180,13 @@ function parseArgs(argv) {
               throw err;
             }
             break;
+          case '--range': result.range = val; break;
+          case '--path':
+            if (!result.paths) result.paths = [];
+            result.paths.push(val);
+            break;
+          case '--intent': result.intent = val; break;
+          case '--focus': result.focus = val; break;
         }
         i++;
         continue;
@@ -189,7 +218,7 @@ function validatePositionals(parsed) {
   const cmd = parsed.command;
   if (!cmd) return;
 
-  const freeText = new Set(['run', 'submit']);
+  const freeText = new Set(['run', 'submit', 'review']);
   const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug']);
   const zeroPos = new Set(['list', 'cleanup']);
 

@@ -39,6 +39,14 @@ Options:
   --effort <s>              Codex/Claude effort level
   --access <s>              Access mode: read-only (default), workspace, full
   --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: 120)
+  --staged                      Review staged changes (git diff --staged)
+  --working                     Review working tree changes (default)
+  --range <base>..<head>        Review changes between base and head
+  --path <p>                    Limit to specific path(s) (repeatable)
+  --include-untracked           Include untracked files in review
+  --embed-diff                  Embed the diff in the prompt (default)
+  --intent <s>                  One-line description of review intent
+  --focus <s>                   Specific aspect to focus on
 
 Every recipe with a wait carries an explicit budget: set --timeout-sec and --hard-timeout-sec.
 
@@ -288,6 +296,73 @@ async function main() {
         }
       }
       process.exit(0);
+    }
+
+    case 'review': {
+      const { executeReview } = require('../core/commands/review');
+
+      const stdinPipeActive = !process.stdin.isTTY && parsed.positionals.length === 0 && !parsed.promptFile;
+      const prompt = await resolvePrompt({
+        promptFile: parsed.promptFile,
+        stdinPipeActive,
+        positionals: parsed.positionals,
+      });
+
+      if (parsed.access && parsed.access !== 'read-only') {
+        console.error('--access must be "read-only" for review. Got: ' + parsed.access);
+        process.exit(2);
+      }
+
+      let reviewScope = 'working';
+      if (parsed.staged && parsed.working) {
+        console.error('Cannot specify both --staged and --working');
+        process.exit(2);
+      }
+      if (parsed.staged) reviewScope = 'staged';
+      if (parsed.range) reviewScope = 'range';
+
+      let rangeBase = null;
+      let rangeHead = null;
+      if (parsed.range) {
+        const parts = parsed.range.split('..');
+        if (parts.length !== 2 || !parts[0] || !parts[1]) {
+          console.error('--range must be in format <base>..<head>');
+          process.exit(2);
+        }
+        rangeBase = parts[0];
+        rangeHead = parts[1];
+      }
+
+      const output = await executeReview({
+        store, adapter, repoKey, repoRoot: fullPath,
+        prompt,
+        hardTimeoutSec: parsed.hardTimeoutSec,
+        group: parsed.group, label: parsed.label, model: parsed.model,
+        access: 'read-only',
+        reasoningEffort: parsed.reasoningEffort,
+        variant: parsed.variant,
+        effort: parsed.effort,
+        admission: admissionController,
+        reviewScope,
+        rangeBase,
+        rangeHead,
+        paths: parsed.paths || null,
+        includeUntracked: parsed.includeUntracked || false,
+        embedDiff: parsed.embedDiff !== false,
+        intent: parsed.intent || null,
+        focus: parsed.focus || null,
+      });
+
+      if (parsed.json) {
+        console.log(JSON.stringify(output.envelope));
+      } else {
+        if (output.text) console.log(output.text);
+        if (output.findings) {
+          console.log(`\nFindings: ${output.findings.status}`);
+          if (output.findings.error) console.log(`Findings error: ${output.findings.error}`);
+        }
+      }
+      process.exit(output.exitCode || 0);
     }
 
     case 'tail': {
