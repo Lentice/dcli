@@ -11,6 +11,7 @@ const PORT_RESERVE_TIMEOUT_MS = 5000;
 const STARTUP_TIMEOUT_MS = 30000;
 const HEALTH_TIMEOUT_MS = 10000;
 const SESSION_TIMEOUT_MS = 10000;
+const PROJECT_CHECK_TIMEOUT_MS = 10000;
 const MESSAGE_TIMEOUT_MS = 600000;
 const DISPOSE_TIMEOUT_MS = 5000;
 const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
@@ -88,6 +89,12 @@ function httpGet(url, opts = {}) {
 function httpPost(url, body, opts = {}) {
   return httpRequest('POST', url, body, opts.responseTimeout, opts.password);
 }
+
+const ENDPOINTS_WITHOUT_DIR_PREFIXES = [
+  '/global/', '/instance/', '/event', '/doc',
+  '/agent', '/skill', '/command', '/lsp',
+  '/provider',
+];
 
 function resolvePastBunShim(shimPath) {
   function checkBunPrefix(prefix) {
@@ -178,6 +185,12 @@ class OpencodeAdapter {
     this._creationTime = null;
     this._imagePath = null;
     this._executionToken = null;
+
+    this._canonicalDir = null;
+    this._accessMode = null;
+    this._lastPermissionRuleset = null;
+    this._modelObj = null;
+    this._variant = null;
 
     this._startupTimeoutMs = STARTUP_TIMEOUT_MS;
     this._healthTimeoutMs = HEALTH_TIMEOUT_MS;
@@ -324,6 +337,109 @@ class OpencodeAdapter {
     }
   }
 
+  _buildPermissionRuleset(access) {
+    switch (access) {
+      case 'full':
+        return [{ permission: '*', pattern: '*', action: 'allow' }];
+
+      case 'workspace':
+        return [
+          { permission: '*', pattern: '*', action: 'allow' },
+          { permission: 'external_directory', pattern: '*', action: 'deny' },
+        ];
+
+      case 'read-only':
+      default:
+        return [
+          { permission: 'read', pattern: '*', action: 'allow' },
+          { permission: 'glob', pattern: '*', action: 'allow' },
+          { permission: 'grep', pattern: '*', action: 'allow' },
+          { permission: 'lsp', pattern: '*', action: 'allow' },
+          { permission: 'bash', pattern: '*', action: 'allow' },
+          { permission: 'task', pattern: '*', action: 'allow' },
+          { permission: 'edit', pattern: '*', action: 'deny' },
+          { permission: 'todowrite', pattern: '*', action: 'deny' },
+          { permission: 'skill', pattern: '*', action: 'deny' },
+          { permission: 'external_directory', pattern: '*', action: 'deny' },
+          { permission: 'webfetch', pattern: '*', action: 'deny' },
+          { permission: 'websearch', pattern: '*', action: 'deny' },
+        ];
+    }
+  }
+
+  _parseModelString(modelStr) {
+    if (!modelStr || typeof modelStr !== 'string') {
+      return { providerID: 'opencode-go', id: 'deepseek-v4-flash' };
+    }
+    const firstSlash = modelStr.indexOf('/');
+    if (firstSlash === -1) {
+      return { providerID: modelStr, id: modelStr };
+    }
+    return {
+      providerID: modelStr.slice(0, firstSlash),
+      id: modelStr.slice(firstSlash + 1),
+    };
+  }
+
+  _buildUrl(endpoint) {
+    const base = this._serverBaseUrl || 'http://127.0.0.1:0';
+    const url = new URL(endpoint, base);
+
+    if (this._canonicalDir) {
+      const needsDir = !ENDPOINTS_WITHOUT_DIR_PREFIXES.some(p => endpoint.startsWith(p));
+      if (needsDir) {
+        url.searchParams.set('directory', this._canonicalDir);
+      }
+    }
+
+    return url.toString();
+  }
+
+  _buildSessionBody(prompt) {
+    const model = this._modelObj || { providerID: 'opencode-go', id: 'deepseek-v4-flash' };
+    const body = {
+      title: 'dcli job',
+      model,
+      permission: this._lastPermissionRuleset || this._buildPermissionRuleset(this._accessMode || 'read-only'),
+    };
+
+    if (this._variant) {
+      body.model = { ...body.model, variant: this._variant };
+    }
+
+    return body;
+  }
+
+  async _verifyProjectIdentity() {
+    if (this._testMode) return;
+    if (!this._serverBaseUrl || !this._canonicalDir) return;
+
+    const projectUrl = this._buildUrl('/project/current');
+    const project = await httpGet(projectUrl, {
+      responseTimeout: PROJECT_CHECK_TIMEOUT_MS,
+      password: this._password,
+    });
+
+    if (!project) {
+      throw new Error('Project identity check failed: no response from /project/current');
+    }
+
+    const effectiveDir = project.directory || project.path || null;
+    if (!effectiveDir) {
+      throw new Error('Project identity check failed: /project/current returned no directory');
+    }
+
+    const normalizedEffective = path.resolve(effectiveDir).toLowerCase();
+    const normalizedCanonical = path.resolve(this._canonicalDir).toLowerCase();
+
+    if (normalizedEffective !== normalizedCanonical) {
+      throw new Error(
+        `Project identity mismatch: server reports "${effectiveDir}" but canonical job directory is "${this._canonicalDir}". ` +
+        'Refusing to send prompt to the wrong repository.'
+      );
+    }
+  }
+
   GetResourceCost() {
     return {
       concurrencySlots: 1,
@@ -411,6 +527,26 @@ class OpencodeAdapter {
   }
 
   PrepareInvocation(attempt, request) {
+    if (!request) return;
+
+    if (request.canonicalDir) {
+      this._canonicalDir = request.canonicalDir;
+    }
+    if (request.access) {
+      this._accessMode = request.access;
+    }
+    if (!this._accessMode) {
+      this._accessMode = 'read-only';
+    }
+
+    this._lastPermissionRuleset = this._buildPermissionRuleset(this._accessMode);
+
+    if (request.model) {
+      this._modelObj = this._parseModelString(request.model);
+    }
+    if (request.variant) {
+      this._variant = request.variant;
+    }
   }
 
   async Start(attempt) {
@@ -521,16 +657,20 @@ class OpencodeAdapter {
   async SendPrompt(attempt, prompt) {
     if (this._testMode) return;
 
-    const sessionBody = {
-      title: 'dcli job',
-      model: {
-        providerID: 'opencode-go',
-        id: 'deepseek-v4-flash',
-      },
-      permission: [{ permission: '*', pattern: '*', action: 'allow' }],
-    };
+    if (!this._canonicalDir) {
+      throw new Error('Cannot send prompt: no canonical job directory set. Call PrepareInvocation first.');
+    }
 
-    const session = await httpPost(`${this._serverBaseUrl}/session`, sessionBody, { responseTimeout: SESSION_TIMEOUT_MS, password: this._password });
+    if (!this._lastPermissionRuleset) {
+      this._lastPermissionRuleset = this._buildPermissionRuleset(this._accessMode || 'read-only');
+    }
+
+    await this._verifyProjectIdentity();
+
+    const sessionBody = this._buildSessionBody(prompt);
+
+    const sessionUrl = this._buildUrl('/session');
+    const session = await httpPost(sessionUrl, sessionBody, { responseTimeout: SESSION_TIMEOUT_MS, password: this._password });
     this._sessionId = session.id;
     this._backendSessionId = session.id;
 
@@ -538,8 +678,9 @@ class OpencodeAdapter {
       parts: [{ type: 'text', text: prompt }],
     };
 
+    const messageUrl = this._buildUrl(`/session/${session.id}/message`);
     const response = await httpPost(
-      `${this._serverBaseUrl}/session/${session.id}/message`,
+      messageUrl,
       messageBody,
       { responseTimeout: MESSAGE_TIMEOUT_MS, password: this._password }
     );
@@ -604,7 +745,8 @@ class OpencodeAdapter {
       case 'session_abort':
         if (this._sessionId && this._serverBaseUrl) {
           try {
-            httpPost(`${this._serverBaseUrl}/session/${this._sessionId}/abort`, {}, { responseTimeout: 5000, password: this._password });
+            const abortUrl = this._buildUrl(`/session/${this._sessionId}/abort`);
+            httpPost(abortUrl, {}, { responseTimeout: 5000, password: this._password });
           } catch {}
         }
         this._cancelRungReached = 'session_abort';

@@ -223,7 +223,7 @@ runs opencode. Not used by the wrapper.
 | model | `POST /session` `model: {providerID, id, variant?}` |
 | reasoning effort | `variant` — **surfaced as `dcli-opencode --variant`, never `--effort`** (ADR-004) |
 | agent | `POST /session` `agent` |
-| access / isolation | per-session `permission: PermissionRuleset` (`allow`\|`deny`\|`ask`) |
+| access / isolation | per-session `permission: PermissionRuleset` — `read-only` denies mutation (edit, webfetch, external_directory) and allows read tools; `workspace` allows everything except `external_directory`; `full` is `* → allow` (explicit named opt-in, never default). See ticket 18. |
 | resume | `POST /session` `parentID`, or reuse the recorded session id |
 | fork | `POST /session/{id}/fork` |
 | working directory | canonical job dir: launch cwd **and** `directory` query param on every request |

@@ -6,6 +6,7 @@ const KNOWN_FLAGS = new Set([
   '--model', '--json', '--timeout-sec', '--all', '--help',
   '--older-than', '--dry-run', '--scrub-session-ids', '--max-bytes',
   '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
+  '--access',
 ]);
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor']);
@@ -38,6 +39,7 @@ function parseArgs(argv) {
     group: null,
     label: null,
     model: null,
+    access: null,
     json: false,
     timeoutSec: null,
     waitAll: false,
@@ -81,7 +83,8 @@ function parseArgs(argv) {
 
       const valueFlag = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
         '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
-        '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec']);
+        '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
+        '--access']);
 
       if (valueFlag.has(arg)) {
         i++;
@@ -135,6 +138,14 @@ function parseArgs(argv) {
               err.exitCode = 2;
               throw err;
             }
+            break;
+          case '--access':
+            if (!['read-only', 'workspace', 'full'].includes(val)) {
+              const err = new Error(`Invalid --access "${val}": must be "read-only", "workspace", or "full"`);
+              err.exitCode = 2;
+              throw err;
+            }
+            result.access = val;
             break;
           case '--reasoning-effort': result.reasoningEffort = val; break;
           case '--variant': result.variant = val; break;

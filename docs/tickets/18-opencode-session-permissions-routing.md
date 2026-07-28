@@ -134,4 +134,23 @@ feat(opencode): per-session permission rulesets and verified directory routing
 
 ## Notes
 
-Record the permission-semantics findings here — later tickets depend on them.
+### Permission-semantics findings (2026-07-29, from implementation)
+
+The per-session ruleset generation as specified in the design table was implemented. Key decisions and findings:
+
+1. **Default is `read-only`** — the engine sets `access: 'read-only'` when none is specified. No code path produces `* → allow` without an explicit `--access full`.
+
+2. **Endpoint directory routing** — implemented via `_buildUrl()` which checks the endpoint path against a set of global/instance/doc prefixes that should NOT receive `directory`. All other endpoints (session, permission, question, project, vcs, etc.) automatically receive the canonical job directory as a query parameter.
+
+3. **`external_directory` handling** — both `read-only` and `workspace` modes explicitly deny `external_directory`. In `read-only` this prevents the backend from reading outside the canonical directory. In `workspace` it contains mutations.
+
+4. **Model/variant propagation** — the model string is parsed as `providerID/id` from the CLI `--model` flag. The `--variant` flag is forwarded as the model's `variant` field in the session body. This is consistent with the unbounded-string semantics documented in the study.
+
+5. **Unverified permission semantics** (re: ticket §80-87):
+   - Rule precedence, ordering, and pattern-specificity in opencode's PermissionRuleset remain unverified on this host. The implementation uses a flat list of specific rules for `read-only` and a catch-all wildcard for `workspace`/`full`. A future ticket should test whether opencode evaluates rules first-match or most-specific-first.
+   - `deny` blocking behavior is assumed from the study's §7 observation (where `* → allow` overrode the config's `ask` for `external_directory`), but not independently verified with `deny`.
+   - `ask` with no responder reproducing the silent hang is assumed from study §5.
+
+6. **`GET /project/current`** — implemented as `_verifyProjectIdentity()` which calls the endpoint and compares the returned directory against the canonical job directory. Throws on mismatch. Not tested end-to-end with a live server (requires a scenario where the server's directory differs from the canonical dir).
+
+7. **No user config writes** — the adapter never reads or writes `~/.config/opencode` or any user opencode configuration file. The per-session ruleset is passed inline in `POST /session`, not written to disk.

@@ -1,10 +1,10 @@
 const { generateJobId } = require('../job-id');
 const { buildEnvelope, isVersionInRange } = require('./index');
 
-function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, reasoningEffort, variant, effort, admission }) {
+function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission }) {
   const jobId = generateJobId();
 
-  const request = { model, reasoningEffort, variant, effort };
+  const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
   try {
     adapter.ValidateRequest(request);
   } catch (err) {
@@ -36,13 +36,15 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   const backend = identity.backend || 'fake';
   const backendVersion = detectedVersion || '1.0.0';
   const adapterVersion = identity.adapter_version || '1.0.0';
+  const effectiveAccess = access || 'read-only';
+
   store.createJob({
     jobId, repoKey, repoRoot,
     backend,
     backendVersion,
     adapterVersion,
     mode: 'submit',
-    access: 'read-only',
+    access: effectiveAccess,
     group, label, model,
     hardTimeoutSec,
     capabilitiesSnapshot,

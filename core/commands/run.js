@@ -6,13 +6,13 @@ const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
-async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, reasoningEffort, variant, effort, admission }) {
+async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission }) {
   const jobId = generateJobId();
   const now = new Date();
   const isoNow = now.toISOString();
   let acquiredSlotId = null;
 
-  const request = { model, reasoningEffort, variant, effort };
+  const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
   try {
     adapter.ValidateRequest(request);
   } catch (err) {
@@ -54,13 +54,15 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     acquiredSlotId = result.slotId;
   }
 
+  const effectiveAccess = access || 'read-only';
+
   store.createJob({
     jobId, repoKey, repoRoot,
     backend,
     backendVersion,
     adapterVersion,
     mode: 'run',
-    access: 'read-only',
+    access: effectiveAccess,
     group, label, model,
     hardTimeoutSec,
     capabilitiesSnapshot,

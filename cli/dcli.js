@@ -37,6 +37,7 @@ Options:
   --reasoning-effort <s>    Reasoning effort level (backend-specific)
   --variant <s>             opencode-specific reasoning variant
   --effort <s>              Codex/Claude effort level
+  --access <s>              Access mode: read-only (default), workspace, full
   --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: 120)
 
 Every recipe with a wait carries an explicit budget: set --timeout-sec and --hard-timeout-sec.
@@ -131,6 +132,7 @@ async function main() {
         prompt,
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
+        access: parsed.access,
         reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
@@ -165,6 +167,7 @@ async function main() {
         prompt,
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
+        access: parsed.access,
         reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
