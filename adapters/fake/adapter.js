@@ -78,6 +78,9 @@ class FakeAdapter {
   }
 
   PrepareInvocation(attempt, request) {
+    if (this._script.behaviors && typeof this._script.behaviors.onStart === 'function') {
+      this._script.behaviors.onStart(attempt, request);
+    }
   }
 
   Start(attempt) {

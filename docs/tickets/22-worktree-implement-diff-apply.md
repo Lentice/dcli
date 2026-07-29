@@ -132,3 +132,52 @@ feat: worktree-isolated implementation with verified-restoration apply
 ```
 
 ## Notes
+
+Real bugs found during verification, beyond the delivered test suite (fixed before acceptance):
+
+1. **The core `implement` orchestration was never actually wired into `run`/`submit`.** The delivered work
+   built and tested `core/worktree.js`, `diff.js`, and `apply.js` as standalone primitives, but
+   `cli/dcli.js` had no `--mode` flag and `core/commands/run.js` never created a worktree or ran the
+   backend inside one — exactly what this ticket's own "How to verify" section assumes exists. All tests
+   passed while the feature was completely unreachable from the CLI. Fixed by adding `--mode implement` to
+   arg parsing, and wiring worktree creation (before `Start`), worktree teardown on setup-time failure, and
+   bounded snapshot finalization (`finalizeSnapshot`, new `SNAPSHOT_FINALIZE_MS` deadline) into every
+   terminal exit path of `executeRun`. This is the single most important lesson from this ticket: **a green
+   test suite built entirely from direct function calls does not prove the CLI path exists.** Live end-to-end
+   verification (per AGENTS.md's standing rule) is what caught it.
+
+2. **`--allow-untracked` was a dead flag.** `executeApply` accepted it but never referenced it — untracked
+   files never blocked `apply` regardless of the flag, contradicting the ticket's own precondition
+   ("a clean main working tree"). Fixed by checking `preUntracked.length > 0` unless `allowUntracked` is
+   set. This is the same "accepted a flag, never enforced it" class of bug AGENTS.md already warns about.
+
+3. **`isNestedRepo()`'s test was checking the wrong scenario, masked by a Windows path bug.** The delivered
+   test independently `git init`'d a subdirectory and expected `isNestedRepo(subdir)` to be true. But
+   `isNestedRepo(p)` can only ever detect "`p` is itself a subdirectory of some *outer*, already-registered
+   repo" (via `rev-parse --show-toplevel` from `p` returning something other than `p`) — a self-contained
+   nested `.git` is legitimately its own toplevel from git's perspective, so the original test's premise was
+   backwards. It "passed" only because of an unrelated short/long Windows path string mismatch
+   (`LENTIC~1` vs `lenticetsai`) that happened to make the comparison fail for the wrong reason. Fixing the
+   real path bug (`fs.realpathSync.native()` + case-insensitive compare, matching the same class of bug
+   already documented elsewhere in this project) correctly exposed the test's flawed premise. Rewrote the
+   test to construct the actual scenario `isNestedRepo(repoRoot)` guards against in `apply.js`: `repoRoot`
+   being a subdirectory of a larger enclosing repo with no `.git` of its own.
+
+4. **opencode server was spawned with no `cwd`**, silently inheriting the wrapper's own working directory
+   instead of `canonicalDir`. This had been latent since ticket 14/18 — every prior test and live run
+   happened to invoke the CLI from the same directory as `canonicalDir`, so the gap was never exercised
+   until ticket 22 introduced the first real scenario (`canonicalDir` = a worktree elsewhere on disk).
+   Fixed by passing `cwd: this._canonicalDir` to `spawn()`.
+
+5. **Ticket 18's project-identity guard doesn't understand opencode's own worktree/"sandboxes" model.**
+   Even after fix #4, every real implement-mode job against opencode failed with "Project identity
+   mismatch." Live reproduction showed: when a git worktree is opened for a project opencode already knows
+   about (i.e. the dcli repo itself, used continuously across this whole build), `/project/current` keeps
+   returning the *original* registered project directory in its `worktree` field and instead lists every
+   known worktree path — including the new one — under a `sandboxes` array. `_verifyProjectIdentity()` only
+   ever compared against `project.worktree`, so it rejected every worktree-isolated job as a mismatch, even
+   though the server was genuinely running against the correct directory. This is a real gap in ticket 18's
+   implementation that could not surface until ticket 22 introduced actual worktree usage. Fixed by also
+   accepting a `canonicalDir` match against any entry in `project.sandboxes`. Verified against the real
+   opencode 1.18.9 install: a full `run --mode implement` → `diff` → `apply --reset-author --message` cycle
+   against a genuine backend now lands cleanly.

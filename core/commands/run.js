@@ -1,41 +1,62 @@
 const crypto = require('crypto');
+const path = require('path');
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
 const { buildEnvelope, isVersionInRange } = require('./index');
 const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
+const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
-async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission }) {
+async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, mode, stateRoot }) {
   const jobId = generateJobId();
   const now = new Date();
   const isoNow = now.toISOString();
   let acquiredSlotId = null;
+  const effectiveMode = mode === 'implement' ? 'implement' : 'run';
 
-  const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
+  let canonicalDir = repoRoot;
+  let worktreePath = null;
+  let worktreeBaseCommit = null;
+  if (effectiveMode === 'implement') {
+    if (!stateRoot) {
+      const err = new Error('implement mode requires a state root');
+      err.exitCode = 2;
+      throw err;
+    }
+    worktreePath = path.join(stateRoot, 'worktrees', jobId);
+    const wt = createDetachedWorktree(repoRoot, worktreePath, undefined, stateRoot);
+    worktreeBaseCommit = wt.baseCommit;
+    canonicalDir = worktreePath;
+  }
+
+  const request = { model, canonicalDir, reasoningEffort, variant, effort, access };
+  let detectedVersion;
+  let manifest;
   try {
     adapter.ValidateRequest(request);
+
+    detectedVersion = adapter.DetectVersion();
+    manifest = adapter.ProbeCapabilities();
+    if (manifest.supported_version_range) {
+      if (!isVersionInRange(detectedVersion, manifest.supported_version_range)) {
+        const range = manifest.supported_version_range;
+        const err = new Error(
+          `Backend version ${detectedVersion} is outside supported range ` +
+          `${range.min || 'any'} - ${range.max || 'any'}. Cannot create job.`
+        );
+        err.code = 'VERSION_OUT_OF_RANGE';
+        err.exitCode = 12;
+        throw err;
+      }
+    }
   } catch (err) {
+    if (worktreePath) removeWorktree(repoRoot, worktreePath);
     if (err.code === 'VALIDATION_FAILED') {
       err.exitCode = 2;
       throw err;
     }
     throw err;
-  }
-
-  const detectedVersion = adapter.DetectVersion();
-  const manifest = adapter.ProbeCapabilities();
-  if (manifest.supported_version_range) {
-    if (!isVersionInRange(detectedVersion, manifest.supported_version_range)) {
-      const range = manifest.supported_version_range;
-      const err = new Error(
-        `Backend version ${detectedVersion} is outside supported range ` +
-        `${range.min || 'any'} - ${range.max || 'any'}. Cannot create job.`
-      );
-      err.code = 'VERSION_OUT_OF_RANGE';
-      err.exitCode = 12;
-      throw err;
-    }
   }
 
   const capabilitiesSnapshot = manifest;
@@ -47,6 +68,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   if (admission) {
     const result = admission.acquireSlot(backend);
     if (!result.acquired) {
+      if (worktreePath) removeWorktree(repoRoot, worktreePath);
       const err = new Error(`System at capacity (global: ${result.active}/${result.limit}). Try again later or use "submit" instead.`);
       err.exitCode = 14;
       throw err;
@@ -61,7 +83,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     backend,
     backendVersion,
     adapterVersion,
-    mode: 'run',
+    mode: effectiveMode,
     access: effectiveAccess,
     group, label, model,
     hardTimeoutSec,
@@ -83,8 +105,20 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     attempt: attemptNum,
     from: 'created',
     to: 'running',
-    detail: { started_at: isoNow, phase: 'agent_running' },
+    detail: worktreePath
+      ? { started_at: isoNow, phase: 'agent_running', worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit }
+      : { started_at: isoNow, phase: 'agent_running' },
   });
+
+  function finalizeWorktreeSnapshot() {
+    if (!worktreePath) return {};
+    try {
+      const { resultCommit } = finalizeSnapshot(worktreePath, resolveDeadline('SNAPSHOT_FINALIZE_MS'));
+      return { worktree_result_commit: resultCommit || worktreeBaseCommit };
+    } catch (err) {
+      return { worktree_finalize_error: err.message };
+    }
+  }
 
   const attempt = {};
 
@@ -133,12 +167,14 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           command_exit_code: null,
           phase: 'terminal',
           failure_reason: 'hard_timeout',
+          ...finalizeWorktreeSnapshot(),
         },
       });
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
       return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
+    if (worktreePath) removeWorktree(repoRoot, worktreePath);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
   }
@@ -166,6 +202,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
             phase: 'terminal',
             ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
             ...(collected.usage ? { tokens: collected.usage } : {}),
+            ...finalizeWorktreeSnapshot(),
           },
         });
 
@@ -187,12 +224,14 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           command_exit_code: null,
           phase: 'terminal',
           failure_reason: 'hard_timeout',
+          ...finalizeWorktreeSnapshot(),
         },
       });
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
       return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
+    if (worktreePath) removeWorktree(repoRoot, worktreePath);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
   }
@@ -210,6 +249,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
         command_exit_code: null,
         phase: 'terminal',
         failure_reason: 'hard_timeout',
+        ...finalizeWorktreeSnapshot(),
       },
     });
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
@@ -227,6 +267,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
       finished_at: new Date().toISOString(),
       command_exit_code: 1,
       phase: 'terminal',
+      ...finalizeWorktreeSnapshot(),
     },
   });
 

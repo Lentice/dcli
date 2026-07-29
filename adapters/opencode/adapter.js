@@ -483,15 +483,31 @@ class OpencodeAdapter {
       throw new Error('Project identity check failed: /project/current returned no directory');
     }
 
-    const normalizedEffective = fs.realpathSync.native(path.resolve(effectiveDir)).toLowerCase();
     const normalizedCanonical = fs.realpathSync.native(path.resolve(this._canonicalDir)).toLowerCase();
+    const normalizedEffective = fs.realpathSync.native(path.resolve(effectiveDir)).toLowerCase();
 
-    if (normalizedEffective !== normalizedCanonical) {
-      throw new Error(
-        `Project identity mismatch: server reports "${effectiveDir}" but canonical job directory is "${this._canonicalDir}". ` +
-        'Refusing to send prompt to the wrong repository.'
-      );
+    if (normalizedEffective === normalizedCanonical) return;
+
+    // A git worktree of a project opencode already knows about is not
+    // reported as its own project: /project/current keeps returning the
+    // original registered project's directory (confusingly, in its own
+    // "worktree" field) and instead lists every known worktree path under
+    // "sandboxes". Accept the canonical directory if it shows up there.
+    const sandboxes = Array.isArray(project.sandboxes) ? project.sandboxes : [];
+    for (const sandbox of sandboxes) {
+      let normalizedSandbox;
+      try {
+        normalizedSandbox = fs.realpathSync.native(path.resolve(sandbox)).toLowerCase();
+      } catch {
+        continue;
+      }
+      if (normalizedSandbox === normalizedCanonical) return;
     }
+
+    throw new Error(
+      `Project identity mismatch: server reports "${effectiveDir}" but canonical job directory is "${this._canonicalDir}". ` +
+      'Refusing to send prompt to the wrong repository.'
+    );
   }
 
   _processSseEvents(events) {
@@ -802,6 +818,7 @@ class OpencodeAdapter {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, OPENCODE_SERVER_PASSWORD: this._password },
       windowsHide: true,
+      cwd: this._canonicalDir || undefined,
     });
 
     this._serverProcess = server;

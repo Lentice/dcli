@@ -6,12 +6,14 @@ const KNOWN_FLAGS = new Set([
   '--model', '--json', '--timeout-sec', '--all', '--help',
   '--older-than', '--dry-run', '--scrub-session-ids', '--max-bytes',
   '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
-  '--access',
+  '--access', '--mode',
   '--staged', '--working', '--range', '--path', '--include-untracked',
   '--embed-diff', '--intent', '--focus',
+  '--stat', '--name-only',
+  '--reset-author', '--message', '--allow-untracked',
 ]);
 
-const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor']);
+const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
 
 function buildEnvelope(status) {
   return {
@@ -104,11 +106,32 @@ function parseArgs(argv) {
         i++;
         continue;
       }
+      if (arg === '--stat') {
+        result.stat = true;
+        i++;
+        continue;
+      }
+      if (arg === '--name-only') {
+        result.nameOnly = true;
+        i++;
+        continue;
+      }
+      if (arg === '--reset-author') {
+        result.resetAuthor = true;
+        i++;
+        continue;
+      }
+      if (arg === '--allow-untracked') {
+        result.allowUntracked = true;
+        i++;
+        continue;
+      }
 
       const valueFlag = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
         '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
         '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
-        '--access', '--range', '--path', '--intent', '--focus']);
+        '--access', '--range', '--path', '--intent', '--focus',
+        '--message', '--mode']);
 
       if (valueFlag.has(arg)) {
         i++;
@@ -189,6 +212,15 @@ function parseArgs(argv) {
             break;
           case '--intent': result.intent = val; break;
           case '--focus': result.focus = val; break;
+          case '--message': result.message = val; break;
+          case '--mode':
+            if (!['run', 'implement'].includes(val)) {
+              const err = new Error(`Invalid --mode "${val}": must be "run" or "implement"`);
+              err.exitCode = 2;
+              throw err;
+            }
+            result.mode = val;
+            break;
         }
         i++;
         continue;
@@ -221,7 +253,7 @@ function validatePositionals(parsed) {
   if (!cmd) return;
 
   const freeText = new Set(['run', 'submit', 'review']);
-  const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug']);
+  const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug', 'diff', 'apply']);
   const zeroPos = new Set(['list', 'cleanup']);
 
   if (freeText.has(cmd)) return;

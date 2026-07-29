@@ -566,6 +566,76 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
 }
 
 // ===========================================================================
+// 12c. _verifyProjectIdentity accepts a "sandboxes" match — opencode
+// recognizes a git worktree of an already-known project by keeping
+// /project/current pointed at the ORIGINAL project directory and listing
+// every known worktree under "sandboxes" instead. Discovered via live
+// reproduction: a worktree of an already-open project reported the original
+// repo dir, not the worktree, causing every real implement-mode job to fail
+// this check even though the server was talking to the right directory all
+// along. Uses an in-process fake HTTP server, not a real opencode install.
+// ===========================================================================
+await (async () => {
+  const http = require('node:http');
+  const canonicalDir = tmpDir();
+  const originalProjectDir = tmpDir();
+
+  function startFakeServer(body) {
+    return new Promise((resolve) => {
+      const server = http.createServer((req, res) => {
+        if (req.url.startsWith('/project/current')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        } else {
+          res.writeHead(404);
+          res.end();
+        }
+      });
+      server.listen(0, '127.0.0.1', () => resolve(server));
+    });
+  }
+
+  // Case 1: server reports the original project dir, canonicalDir is listed
+  // in "sandboxes" — must be accepted, not rejected.
+  {
+    const server = await startFakeServer({
+      worktree: originalProjectDir,
+      sandboxes: [canonicalDir],
+    });
+    const port = server.address().port;
+    const adapter = new OpencodeAdapter({});
+    adapter._serverBaseUrl = `http://127.0.0.1:${port}`;
+    adapter._canonicalDir = canonicalDir;
+    adapter._password = null;
+    await adapter._verifyProjectIdentity();
+    server.close();
+    console.log('PASS: _verifyProjectIdentity accepts canonicalDir listed in sandboxes');
+  }
+
+  // Case 2: canonicalDir is neither the reported directory nor in sandboxes
+  // — must still reject.
+  {
+    const unrelatedDir = tmpDir();
+    const server = await startFakeServer({
+      worktree: originalProjectDir,
+      sandboxes: [unrelatedDir],
+    });
+    const port = server.address().port;
+    const adapter = new OpencodeAdapter({});
+    adapter._serverBaseUrl = `http://127.0.0.1:${port}`;
+    adapter._canonicalDir = canonicalDir;
+    adapter._password = null;
+    await assert.rejects(
+      () => adapter._verifyProjectIdentity(),
+      /Project identity mismatch/,
+      'must still reject when canonicalDir is absent from sandboxes'
+    );
+    server.close();
+    console.log('PASS: _verifyProjectIdentity rejects when canonicalDir is absent from sandboxes');
+  }
+})();
+
+// ===========================================================================
 // 13. No writes to user opencode config path
 // ===========================================================================
 {

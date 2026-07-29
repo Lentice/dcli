@@ -14,6 +14,8 @@ Commands:
   review    Run a code review
   tail      Show tail of job logs
   debug     Compact job diagnosis
+  diff      Show diff of an implement-mode job
+  apply     Apply changes from an implement-mode job to the main repository
   cleanup   Remove aged terminal jobs
   capabilities  Show effective capability manifest
   doctor    Run system and backend health checks
@@ -38,6 +40,7 @@ Options:
   --variant <s>             opencode-specific reasoning variant
   --effort <s>              Codex/Claude effort level
   --access <s>              Access mode: read-only (default), workspace, full
+  --mode <s>                run mode: run (default), implement (worktree-isolated)
   --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: 120)
   --staged                      Review staged changes (git diff --staged)
   --working                     Review working tree changes (default)
@@ -47,6 +50,11 @@ Options:
   --embed-diff                  Embed the diff in the prompt (default)
   --intent <s>                  One-line description of review intent
   --focus <s>                   Specific aspect to focus on
+  --stat                        Show diffstat (diff command)
+  --name-only                   Show filenames only (diff command)
+  --reset-author                Reauthor the landed commit (apply command)
+  --message <s>                 Retitle the landed commit (apply command)
+  --allow-untracked             Allow unrelated untracked files in working tree (apply command)
 
 Every recipe with a wait carries an explicit budget: set --timeout-sec and --hard-timeout-sec.
 
@@ -145,6 +153,8 @@ async function main() {
         variant: parsed.variant,
         effort: parsed.effort,
         admission: admissionController,
+        mode: parsed.mode || 'run',
+        stateRoot,
       });
 
       if (parsed.json) {
@@ -453,6 +463,51 @@ async function main() {
       const result = await executeCapabilities({ adapter, json: parsed.json });
       console.log(JSON.stringify(result.manifest, null, 2));
       process.exit(0);
+    }
+
+    case 'diff': {
+      const { executeDiff } = require('../core/commands/diff');
+      const jobId = parsed.positionals[0];
+      if (!jobId) {
+        console.error('diff requires a job ID');
+        process.exit(2);
+      }
+
+      const result = executeDiff({
+        store, repoKey, jobId,
+        stat: parsed.stat || false,
+        nameOnly: parsed.nameOnly || false,
+      });
+
+      if (parsed.json) {
+        console.log(JSON.stringify({ text: result.text, exit_code: result.exitCode }));
+      } else {
+        console.log(result.text);
+      }
+      process.exit(result.exitCode);
+    }
+
+    case 'apply': {
+      const { executeApply } = require('../core/commands/apply');
+      const jobId = parsed.positionals[0];
+      if (!jobId) {
+        console.error('apply requires a job ID');
+        process.exit(2);
+      }
+
+      const result = executeApply({
+        store, repoKey, jobId,
+        resetAuthor: parsed.resetAuthor || false,
+        message: parsed.message || null,
+        allowUntracked: parsed.allowUntracked || false,
+      });
+
+      if (parsed.json) {
+        console.log(JSON.stringify(result));
+      } else {
+        console.log(`Applied. Landed commit: ${result.landedCommit}`);
+      }
+      process.exit(result.exitCode);
     }
 
     case 'doctor': {

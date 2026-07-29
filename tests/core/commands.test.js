@@ -667,6 +667,72 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
+// implement mode: executeRun creates a worktree, runs the backend inside it,
+// finalizes a snapshot, and the job's worktree info is then usable by
+// diff/apply — this is the real orchestration path ticket 22 requires,
+// not just the standalone worktree.js primitives.
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { execFileSync } = require('child_process');
+  const repoRoot = path.join(dir, 'repo');
+  fs.mkdirSync(repoRoot, { recursive: true });
+  const git = (args) => spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
+  git(['init', '-b', 'main']);
+  git(['config', 'user.email', 't@t.com']);
+  git(['config', 'user.name', 'T']);
+  fs.writeFileSync(path.join(repoRoot, 'README.md'), '# x\n', 'utf8');
+  git(['add', '-A']);
+  git(['commit', '-m', 'init']);
+
+  const stateRoot = path.join(dir, 'state');
+  const { executeRun } = require('../../core/commands/run');
+  const store = new JobStore({ stateRoot });
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_1' },
+      { type: 'assistant_text', message_id: 'm1', text: 'done' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+    behaviors: {
+      onStart: (attempt, request) => {
+        // The backend writes into its canonical directory, exactly as a
+        // real implement-mode job would.
+        fs.writeFileSync(path.join(request.canonicalDir, 'feature.txt'), 'new feature\n', 'utf8');
+      },
+    },
+  });
+
+  const output = await executeRun({
+    store, adapter, repoKey: 'impl-repo', repoRoot,
+    prompt: 'add a feature', hardTimeoutSec: 60,
+    mode: 'implement', stateRoot,
+  });
+  assert.strictEqual(output.text, 'done');
+
+  const status = store.readStatus({ repoKey: 'impl-repo', jobId: output.jobId });
+  assert.ok(status.worktree, 'implement-mode job must record worktree info');
+  assert.ok(status.worktree.path, 'worktree path must be recorded');
+  assert.ok(status.worktree.base_commit, 'base_commit must be recorded');
+  assert.ok(status.worktree.result_commit, 'result_commit must be recorded after finalize');
+  assert.ok(!status.worktree.finalize_error, 'finalize must succeed for a clean backend run');
+
+  const { executeDiff } = require('../../core/commands/diff');
+  const diffResult = executeDiff({ store, repoKey: 'impl-repo', jobId: output.jobId, nameOnly: true });
+  assert.strictEqual(diffResult.exitCode, 0);
+  assert.ok(diffResult.text.includes('feature.txt'), 'diff must show the file the backend wrote');
+
+  const { executeApply } = require('../../core/commands/apply');
+  const applyResult = executeApply({ store, repoKey: 'impl-repo', jobId: output.jobId });
+  assert.strictEqual(applyResult.exitCode, 0);
+  assert.ok(fs.existsSync(path.join(repoRoot, 'feature.txt')), 'apply must land the change into the main repo');
+
+  console.log('PASS: implement mode — real run -> diff -> apply through executeRun (not just worktree.js primitives)');
+});
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll core command tests passed.');
