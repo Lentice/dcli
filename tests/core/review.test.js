@@ -1,3 +1,4 @@
+// @timeout-ms 120000  isolated git repositories are load-sensitive under the full pool
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');

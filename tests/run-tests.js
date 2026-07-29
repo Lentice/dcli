@@ -5,9 +5,12 @@ const { spawn } = require('child_process');
 
 const SENTINEL_FULL = '// @suite full';
 const SENTINEL_SERIAL = '// @serial';
+const SENTINEL_TIMEOUT = '// @timeout-ms ';
 const DEFAULT_TIMEOUT = 120_000;
+const MAX_CONCURRENCY = 64;
 const MAX_OUTPUT = 256 * 1024;
 const CLOSE_GUARD_MS = 50;
+const HEADER_LINE_COUNT = 8;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -21,11 +24,15 @@ const CLOSE_GUARD_MS = 50;
  * @param {'quick'|'full'} [opts.suite]  defaults to 'quick'
  * @returns {Promise<{output: string, anyFailed: boolean}>}
  */
-async function runTests(opts) {
+async function runTests(opts = {}) {
   const root = opts.root || __dirname;
-  const suite = opts.suite || 'quick';
-  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT;
-  const concurrency = opts.concurrency != null ? opts.concurrency : Math.max(1, os.cpus().length - 2);
+  const suite = opts.suite === undefined ? 'quick' : opts.suite;
+  const timeoutMs = opts.timeoutMs === undefined ? DEFAULT_TIMEOUT : opts.timeoutMs;
+  const concurrency = opts.concurrency === undefined
+    ? Math.min(MAX_CONCURRENCY, Math.max(1, os.cpus().length - 2))
+    : opts.concurrency;
+
+  validateRunOptions({ suite, timeoutMs, concurrency });
 
   const allFiles = discoverTests(root);
   const fileMeta = allFiles.map(f => ({
@@ -34,6 +41,7 @@ async function runTests(opts) {
     group: getGroup(root, f),
     isFull: hasSentinel(f, SENTINEL_FULL),
     isSerial: hasSentinel(f, SENTINEL_SERIAL),
+    timeoutMs: getFileTimeout(f, timeoutMs),
   }));
 
   const toRun = suite === 'full' ? fileMeta : fileMeta.filter(f => !f.isFull);
@@ -45,25 +53,25 @@ async function runTests(opts) {
   for (const f of sorted) {
     if (f.isSerial) {
       if (parallelBatch.length > 0) {
-        const batch = await runParallelBatch(parallelBatch, concurrency, timeoutMs);
+        const batch = await runParallelBatch(parallelBatch, concurrency);
         allResults.push(...batch);
         parallelBatch = [];
       }
-      const r = await runSingle(f, timeoutMs);
+      const r = await runSingle(f, f.timeoutMs);
       allResults.push(r);
     } else {
       parallelBatch.push(f);
     }
   }
   if (parallelBatch.length > 0) {
-    const batch = await runParallelBatch(parallelBatch, concurrency, timeoutMs);
+    const batch = await runParallelBatch(parallelBatch, concurrency);
     allResults.push(...batch);
   }
 
   return formatResults(fileMeta, allResults, suite);
 }
 
-module.exports = { runTests };
+module.exports = { runTests, createOutputCapture };
 
 // ---------------------------------------------------------------------------
 // CLI entry point
@@ -207,15 +215,45 @@ function lineMatchesSentinel(line, sentinel) {
 }
 
 /**
- * Check if a file carries a @-sentinel on line 1 or 2.
+ * Check whether a file carries a @-sentinel in its leading comment header.
  * @param {string} filePath
  * @param {string} sentinel
  * @returns {boolean}
  */
 function hasSentinel(filePath, sentinel) {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const lines = content.split('\n');
-  return lineMatchesSentinel(lines[0], sentinel) || lineMatchesSentinel(lines[1], sentinel);
+  return readHeaderLines(filePath).some(line => lineMatchesSentinel(line, sentinel));
+}
+
+/**
+ * Read a bounded per-file timeout override from the leading comment header. A test may need
+ * a larger budget for a deliberately slow integration path, but it may never
+ * opt out of the runner's finite timeout guarantee.
+ */
+function getFileTimeout(filePath, defaultTimeoutMs) {
+  for (const line of readHeaderLines(filePath)) {
+    const match = line.trim().match(/^\/\/ @timeout-ms ([1-9]\d*)(?:\s.*)?$/);
+    if (match) {
+      const timeoutMs = Number(match[1]);
+      if (timeoutMs >= 1000 && timeoutMs <= 600000) return timeoutMs;
+    }
+  }
+  return defaultTimeoutMs;
+}
+
+function readHeaderLines(filePath) {
+  return fs.readFileSync(filePath, 'utf8').split('\n').slice(0, HEADER_LINE_COUNT);
+}
+
+function validateRunOptions({ suite, timeoutMs, concurrency }) {
+  if (suite !== 'quick' && suite !== 'full') {
+    throw new RangeError(`suite must be "quick" or "full", got "${suite}"`);
+  }
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
+    throw new RangeError(`concurrency must be an integer between 1 and ${MAX_CONCURRENCY}`);
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) {
+    throw new RangeError('timeoutMs must be an integer between 1000 and 600000');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -225,10 +263,9 @@ function hasSentinel(filePath, sentinel) {
 /**
  * @param {{ path: string, rel: string, group: string }[]} files
  * @param {number} concurrency
- * @param {number} timeoutMs
  * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, stdout: string, stderr: string }[]>}
  */
-function runParallelBatch(files, concurrency, timeoutMs) {
+function runParallelBatch(files, concurrency) {
   return new Promise((resolve) => {
     const results = new Array(files.length);
     let next = 0;
@@ -239,7 +276,7 @@ function runParallelBatch(files, concurrency, timeoutMs) {
       while (active < concurrency && next < files.length) {
         const i = next++;
         active++;
-        runSingle(files[i], timeoutMs).then(r => {
+        runSingle(files[i], files[i].timeoutMs).then(r => {
           results[i] = r;
           active--;
           done++;
@@ -275,8 +312,8 @@ function runSingle(fileMeta, timeoutMs) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    let stdout = '';
-    let stderr = '';
+    const stdout = createOutputCapture(MAX_OUTPUT);
+    const stderr = createOutputCapture(MAX_OUTPUT);
     let timedOut = false;
     let exitCode = null;
     let resolved = false;
@@ -293,8 +330,8 @@ function runSingle(fileMeta, timeoutMs) {
         exitCode: exitCode != null ? exitCode : -1,
         timedOut,
         timeoutMs,
-        stdout: truncateOutput(stdout),
-        stderr: truncateOutput(stderr),
+        stdout: stdout.render(),
+        stderr: stderr.render(),
       });
     }
 
@@ -314,8 +351,8 @@ function runSingle(fileMeta, timeoutMs) {
       onExit(-1); // start drain after kill
     }, timeoutMs);
 
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+    child.stdout.on('data', (chunk) => { stdout.append(chunk); });
+    child.stderr.on('data', (chunk) => { stderr.append(chunk); });
 
     // 'close' fires after streams flush — prefer this over exit
     child.on('close', (code) => {
@@ -429,14 +466,40 @@ function formatResults(active, results, suite) {
 // ---------------------------------------------------------------------------
 
 /**
- * @param {string} s
- * @returns {string}
+ * Capture a stream without retaining more than its configured head and tail.
+ * @param {number} maxBytes
+ * @returns {{ append: (chunk: Buffer|string) => void, render: () => string }}
  */
-function truncateOutput(s) {
-  if (s.length <= MAX_OUTPUT) return s;
-  const half = Math.floor(MAX_OUTPUT / 2);
-  const head = s.slice(0, half);
-  const tail = s.slice(-half);
-  const note = `\n... [output truncated at ${MAX_OUTPUT} bytes; ${s.length - MAX_OUTPUT} bytes dropped] ...\n`;
-  return head + note + tail;
+function createOutputCapture(maxBytes) {
+  const half = Math.floor(maxBytes / 2);
+  let complete = Buffer.alloc(0);
+  let head = null;
+  let tail = null;
+  let totalBytes = 0;
+
+  function append(chunk) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
+    totalBytes += buffer.length;
+    if (head === null && complete.length + buffer.length <= maxBytes) {
+      complete = Buffer.concat([complete, buffer]);
+      return;
+    }
+    if (head === null) {
+      const combined = Buffer.concat([complete, buffer]);
+      head = combined.subarray(0, half);
+      tail = combined.subarray(Math.max(0, combined.length - half));
+      complete = Buffer.alloc(0);
+      return;
+    }
+    tail = Buffer.concat([tail, buffer]).subarray(Math.max(0, tail.length + buffer.length - half));
+  }
+
+  function render() {
+    if (head === null) return complete.toString('utf8');
+    const dropped = totalBytes - head.length - tail.length;
+    const note = Buffer.from(`\n... [output truncated at ${maxBytes} bytes; ${dropped} bytes dropped] ...\n`, 'utf8');
+    return Buffer.concat([head, note, tail]).toString('utf8');
+  }
+
+  return { append, render };
 }

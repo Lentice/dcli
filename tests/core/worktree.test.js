@@ -1,5 +1,6 @@
 // @suite full
 // @serial  runs git against the real repository
+// @timeout-ms 180000  Git worktree/apply coverage is intentionally comprehensive
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');

@@ -1,3 +1,4 @@
+// @serial  owns fixed temp markers and creates a nested fixture process pool
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
@@ -6,14 +7,16 @@ const { spawnSync } = require('child_process');
 
 const RUNNER = path.resolve(__dirname, '..', 'run-tests.js');
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
-const FIXTURE_TIMEOUT = 1500;
+// The nested runner starts several child Node processes; 5 s flakes when the
+// outer full suite is concurrently creating git and backend fixtures.
+const FIXTURE_TIMEOUT = 10000;
 const MARKER = path.join(os.tmpdir(), 'dcli-serial-marker-test');
 const HANG_PID = path.join(os.tmpdir(), 'dcli-hang-pid.txt');
 
 const RUNNER_BIN = process.execPath;
 
 async function main() {
-  const { runTests } = require(RUNNER);
+  const { runTests, createOutputCapture } = require(RUNNER);
 
   try { fs.unlinkSync(MARKER); } catch {}
   try { fs.unlinkSync(HANG_PID); } catch {}
@@ -46,7 +49,39 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
-    // 3. Hang fixture is terminated and reported as timeout, distinctly from failure
+    // 3. A file-level timeout overrides the suite default without making it unbounded
+    // -----------------------------------------------------------------------
+    {
+      const r = await runTests({ root: FIXTURES_DIR, concurrency: 1, timeoutMs: 1000, suite: 'full' });
+      assert.ok(r.output.includes('5 passed, 2 failed'), 'file-level timeout must let the slow fixture finish');
+      assert.ok(!r.output.includes('slow-timeout.test.js  (timed out'), 'slow fixture must not use the shorter suite timeout');
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. Direct callers cannot create a zero-worker pool that never resolves
+    // -----------------------------------------------------------------------
+    {
+      await assert.rejects(
+        () => runTests({ root: FIXTURES_DIR, concurrency: 0, timeoutMs: 1000, suite: 'full' }),
+        /concurrency must be an integer between 1 and 64/,
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Output capture retains a bounded head and tail while reporting loss
+    // -----------------------------------------------------------------------
+    {
+      const capture = createOutputCapture(10);
+      capture.append(Buffer.from('abcdef'));
+      capture.append(Buffer.from('ghijklmnop'));
+      const rendered = capture.render();
+      assert.ok(rendered.startsWith('abcde'), 'bounded capture must retain the output head');
+      assert.ok(rendered.endsWith('lmnop'), 'bounded capture must retain the output tail');
+      assert.ok(rendered.includes('6 bytes dropped'), 'bounded capture must state dropped bytes');
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Hang fixture is terminated and reported as timeout, distinctly from failure
     // -----------------------------------------------------------------------
     {
       const r = await runTests({ root: FIXTURES_DIR, concurrency: 1, timeoutMs: 1000, suite: 'full' });
@@ -55,7 +90,7 @@ async function main() {
     }
 
     // -----------------------------------------------------------------------
-    // 4. Usage errors exit 2
+    // 7. Usage errors exit 2
     // -----------------------------------------------------------------------
     {
       const r1 = spawnSync(RUNNER_BIN, [RUNNER, '--concurrency', '--suite', 'quick'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });

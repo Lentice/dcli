@@ -52,8 +52,8 @@ means `quick`. Reject an unknown suite value and a missing one with exit `2`.
 
 ### 2. Serial opt-out is explicit, not inferred
 
-Add a second sentinel, `// @serial`, recognized on **either of the first two lines** of a file so it can
-coexist with `// @suite full`. Files marked `@serial` run **alone** — the pool drains before a serial file
+Add a second sentinel, `// @serial`, recognized in the leading eight-line comment header so it can
+coexist with `// @suite full` and a bounded `// @timeout-ms <n>` override. Files marked `@serial` run **alone** — the pool drains before a serial file
 starts, and no other file starts until it finishes.
 
 Do not try to infer serialness from file contents. Inference here is a guess about resource sharing, and a
@@ -178,6 +178,12 @@ Assert on observable artifacts (`AGENTS.md`: prefer exit code, byte-exact stdout
 | Full | ~123 s (estimated) | ~123 s | ~1× |
 
 The quick suite improvement is modest because the bottleneck is `test-runner.test.js` (the new self-test, ~10 s), plus existing quick tests that each take <1 s. Most quick tests are pure-computation and very fast; concurrency mainly helps the few that wait on I/O (spawn, temp dirs). The full suite speed is similar because the majority of `@suite full` files are serialized (marked `@serial`), so concurrency helps only within the parallel set. Further optimization would require reducing `test-runner.test.js`'s fixture-runs or splitting large @serial files.
+
+### Parallel-load amendments
+
+- `tests/core/test-runner.test.js` is `@serial`: it owns fixed temporary marker/PID paths and starts its own fixture pool. Running that nested scheduler inside the outer pool makes output capture and startup timing load-dependent.
+- `tests/core/worktree.test.js` uses a finite 180 s file budget; its comprehensive worktree/apply coverage exceeded a 60 s global debugging budget when the machine was busy.
+- `tests/core/review.test.js` uses a finite 120 s file budget. It completes in about 30 s alone but builds several isolated Git repositories and can exceed 60 s while the full pool is active.
 
 ### Files fixed for parallel safety
 
