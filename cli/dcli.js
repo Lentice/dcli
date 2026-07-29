@@ -110,9 +110,12 @@ async function main() {
     process.exit(12);
   }
 
-  const stateRoot = parsed.repo
-    ? path.resolve(parsed.repo, '.dcli-state')
-    : (process.env.DCLI_STATE_ROOT || path.join(getStateRoot(), 'test'));
+  // DCLI_STATE_ROOT is an explicit runtime override and must win even when a
+  // repository is supplied. This is required for callers that cannot write
+  // inside the target repository (and keeps state placement independently
+  // configurable from repository resolution).
+  const stateRoot = process.env.DCLI_STATE_ROOT
+    || (parsed.repo ? path.resolve(parsed.repo, '.dcli-state') : path.join(getStateRoot(), 'test'));
 
   ensureStateRoot(stateRoot);
 
