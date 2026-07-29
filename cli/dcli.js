@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const help = `dcli — delegate work to a coding-agent CLI
 
 Usage:
@@ -193,6 +194,8 @@ async function main() {
         effort: parsed.effort,
         admission: admissionController,
         resumeJobId: parsed.resume || null,
+        stateRoot,
+        backend,
       });
 
       if (parsed.json) {

@@ -22,6 +22,28 @@ three backends.
 Each backend also installs **its own** Claude Code skill, generated from one source — so an agent reading a skill
 sees exactly one coherent surface and never assumes a sibling backend's flag exists.
 
+## Setup
+
+Two sequenced steps, from a clone of this repo:
+
+```powershell
+# 1. Put dcli, dcli-codex, dcli-opencode, dcli-claude on PATH
+npm install -g .
+
+# 2. Install the Claude Code integration (skills, commands, rules)
+pwsh -NoProfile -File install.ps1
+```
+
+Open a **new** shell afterward — step 1 changes PATH, and an already-open shell won't pick that up. Verify with:
+
+```powershell
+dcli-opencode --help
+dcli-codex --help
+dcli-claude --help
+```
+
+For local development on this repo instead of a standalone install, use `npm link` in place of `npm install -g .`.
+
 ## What it does
 
 ```powershell
