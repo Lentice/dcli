@@ -7,7 +7,7 @@ const SENTINEL_FULL = '// @suite full';
 const SENTINEL_SERIAL = '// @serial';
 const DEFAULT_TIMEOUT = 120_000;
 const MAX_OUTPUT = 256 * 1024;
-const DRAIN_TIMEOUT = 50;
+const CLOSE_GUARD_MS = 50;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -37,16 +37,28 @@ async function runTests(opts) {
   }));
 
   const toRun = suite === 'full' ? fileMeta : fileMeta.filter(f => !f.isFull);
-  const serial = toRun.filter(f => f.isSerial);
-  const parallel = toRun.filter(f => !f.isSerial);
+  const sorted = [...toRun].sort((a, b) => a.rel.localeCompare(b.rel));
 
-  const parallelResults = await runParallelBatch(parallel, concurrency, timeoutMs);
-  const serialResults = [];
-  for (const f of serial) {
-    const r = await runSingle(f, timeoutMs);
-    serialResults.push(r);
+  const allResults = [];
+  let parallelBatch = [];
+
+  for (const f of sorted) {
+    if (f.isSerial) {
+      if (parallelBatch.length > 0) {
+        const batch = await runParallelBatch(parallelBatch, concurrency, timeoutMs);
+        allResults.push(...batch);
+        parallelBatch = [];
+      }
+      const r = await runSingle(f, timeoutMs);
+      allResults.push(r);
+    } else {
+      parallelBatch.push(f);
+    }
   }
-  const allResults = [...parallelResults, ...serialResults];
+  if (parallelBatch.length > 0) {
+    const batch = await runParallelBatch(parallelBatch, concurrency, timeoutMs);
+    allResults.push(...batch);
+  }
 
   return formatResults(fileMeta, allResults, suite);
 }
@@ -106,7 +118,7 @@ function parseArgs() {
     if (arg === '--concurrency') {
       i++;
       if (!raw[i] || raw[i].startsWith('--')) {
-        return { exitCode: 2, message: 'error: --concurrency requires an integer value (1–64)' };
+        return { exitCode: 2, message: 'error: --concurrency requires an integer value (1-64)' };
       }
       const n = parseInt(raw[i], 10);
       if (!Number.isInteger(n) || n < 1 || n > 64 || String(n) !== raw[i]) {
@@ -119,7 +131,7 @@ function parseArgs() {
     if (arg === '--timeout-ms') {
       i++;
       if (!raw[i] || raw[i].startsWith('--')) {
-        return { exitCode: 2, message: 'error: --timeout-ms requires an integer value (1000–600000)' };
+        return { exitCode: 2, message: 'error: --timeout-ms requires an integer value (1000-600000)' };
       }
       const n = parseInt(raw[i], 10);
       if (!Number.isInteger(n) || n < 1000 || n > 600000 || String(n) !== raw[i]) {
@@ -141,6 +153,9 @@ function parseArgs() {
     if (arg.startsWith('--')) {
       return { exitCode: 2, message: `error: unknown flag "${arg}"` };
     }
+
+    // Reject positional arguments (AGENTS.md: reject ignored flags and positionals)
+    return { exitCode: 2, message: `error: unexpected positional argument "${arg}"` };
   }
 
   return { opts };
@@ -158,7 +173,6 @@ function discoverTests(dir) {
   const results = [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
-    // Skip fixtures directory — it holds helper files, not real tests
     if (entry.isDirectory() && entry.name === 'fixtures') continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -181,6 +195,18 @@ function getGroup(root, testPath) {
 }
 
 /**
+ * Check if a trimmed line matches or starts-with-space-after the sentinel.
+ * @param {string} line
+ * @param {string} sentinel
+ * @returns {boolean}
+ */
+function lineMatchesSentinel(line, sentinel) {
+  if (!line) return false;
+  const t = line.trim();
+  return t === sentinel || t.startsWith(sentinel + ' ');
+}
+
+/**
  * Check if a file carries a @-sentinel on line 1 or 2.
  * @param {string} filePath
  * @param {string} sentinel
@@ -189,7 +215,7 @@ function getGroup(root, testPath) {
 function hasSentinel(filePath, sentinel) {
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
-  return (lines[0] && lines[0].includes(sentinel)) || (lines[1] && lines[1].includes(sentinel));
+  return lineMatchesSentinel(lines[0], sentinel) || lineMatchesSentinel(lines[1], sentinel);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +226,7 @@ function hasSentinel(filePath, sentinel) {
  * @param {{ path: string, rel: string, group: string }[]} files
  * @param {number} concurrency
  * @param {number} timeoutMs
- * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, stdout: string, stderr: string }[]>}
+ * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, stdout: string, stderr: string }[]>}
  */
 function runParallelBatch(files, concurrency, timeoutMs) {
   return new Promise((resolve) => {
@@ -240,7 +266,7 @@ function runParallelBatch(files, concurrency, timeoutMs) {
 /**
  * @param {{ path: string, rel: string }} fileMeta
  * @param {number} timeoutMs
- * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, stdout: string, stderr: string }>}
+ * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, stdout: string, stderr: string }>}
  */
 function runSingle(fileMeta, timeoutMs) {
   return new Promise((resolve) => {
@@ -254,41 +280,55 @@ function runSingle(fileMeta, timeoutMs) {
     let timedOut = false;
     let exitCode = null;
     let resolved = false;
+    let drainTimer = null;
 
     function finish() {
       if (resolved) return;
       resolved = true;
-      clearTimeout(timer);
-      const drainTimer = setTimeout(() => {
-        resolve({
-          rel: fileMeta.rel,
-          passed: !timedOut && exitCode === 0,
-          exitCode: exitCode != null ? exitCode : -1,
-          timedOut,
-          stdout: truncateOutput(stdout),
-          stderr: truncateOutput(stderr),
-        });
-      }, DRAIN_TIMEOUT);
+      clearTimeout(killTimer);
+      clearTimeout(drainTimer);
+      resolve({
+        rel: fileMeta.rel,
+        passed: !timedOut && exitCode === 0,
+        exitCode: exitCode != null ? exitCode : -1,
+        timedOut,
+        timeoutMs,
+        stdout: truncateOutput(stdout),
+        stderr: truncateOutput(stderr),
+      });
     }
 
-    const timer = setTimeout(() => {
+    // On process exit: save code, start bounded drain for 'close'
+    // (grandchild may hold pipe open past exit)
+    function onExit(code) {
+      exitCode = code;
+      if (!resolved) {
+        clearTimeout(drainTimer);
+        drainTimer = setTimeout(finish, CLOSE_GUARD_MS);
+      }
+    }
+
+    const killTimer = setTimeout(() => {
       timedOut = true;
       child.kill();
-      finish();
+      onExit(-1); // start drain after kill
     }, timeoutMs);
 
-    child.on('exit', (code) => {
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+
+    // 'close' fires after streams flush — prefer this over exit
+    child.on('close', (code) => {
       exitCode = code;
       finish();
     });
+
+    child.on('exit', onExit);
 
     child.on('error', () => {
       if (exitCode == null) exitCode = -1;
       finish();
     });
-
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
   });
 }
 
@@ -298,7 +338,7 @@ function runSingle(fileMeta, timeoutMs) {
 
 /**
  * @param {{ path: string, rel: string, group: string }[]} active
- * @param {{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, stdout: string, stderr: string }[]} results
+ * @param {{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, stdout: string, stderr: string }[]} results
  * @param {'quick'|'full'} suite
  * @returns {{ output: string, anyFailed: boolean }}
  */
@@ -366,7 +406,7 @@ function formatResults(active, results, suite) {
     lines.push('--- FAILURES ---');
     for (const f of failures) {
       if (f.timedOut) {
-        lines.push(`  ${f.rel}  (timed out)`);
+        lines.push(`  ${f.rel}  (timed out after ${f.timeoutMs || DEFAULT_TIMEOUT} ms)`);
       } else {
         lines.push(`  ${f.rel}  (exit code: ${f.exitCode})`);
       }

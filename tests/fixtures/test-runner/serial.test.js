@@ -1,5 +1,6 @@
 // @serial  serial marker protocol for exclusivity testing
 // Serial fixture: writes a marker, sleeps, deletes marker, exits.
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

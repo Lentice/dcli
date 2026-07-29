@@ -8,14 +8,15 @@ const RUNNER = path.resolve(__dirname, '..', 'run-tests.js');
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
 const FIXTURE_TIMEOUT = 1500;
 const MARKER = path.join(os.tmpdir(), 'dcli-serial-marker-test');
+const HANG_PID = path.join(os.tmpdir(), 'dcli-hang-pid.txt');
 
 const RUNNER_BIN = process.execPath;
 
 async function main() {
   const { runTests } = require(RUNNER);
 
-  // Ensure no stale marker
   try { fs.unlinkSync(MARKER); } catch {}
+  try { fs.unlinkSync(HANG_PID); } catch {}
 
   try {
     // -----------------------------------------------------------------------
@@ -26,7 +27,6 @@ async function main() {
       const r2 = await runTests({ root: FIXTURES_DIR, concurrency: 3, timeoutMs: FIXTURE_TIMEOUT, suite: 'full' });
       assert.strictEqual(r1.output, r2.output, 'Byte-exact output must match at different concurrency');
 
-      // Reuse r1 (full suite, concurrency=1) for serial exclusivity and failure output checks
       assert.ok(!r1.output.includes('parallel-check.test.js'), 'Serial exclusivity: parallel-check must not appear in failures');
       assert.ok(r1.output.includes('fail.test.js'), 'fail fixture should appear in failures');
       assert.ok(r1.output.includes('HANG: about to hang'), 'hang fixture stdout should appear in output');
@@ -50,12 +50,12 @@ async function main() {
     // -----------------------------------------------------------------------
     {
       const r = await runTests({ root: FIXTURES_DIR, concurrency: 1, timeoutMs: 1000, suite: 'full' });
-      assert.ok(r.output.includes('timed out'), 'Hang fixture must be reported as timed out');
+      assert.ok(r.output.includes('timed out after 1000 ms'), 'Hang fixture must be reported with duration');
       assert.ok(r.anyFailed, 'Timeout must cause anyFailed=true');
     }
 
     // -----------------------------------------------------------------------
-    // 4. Usage errors exit 2 — --concurrency, --timeout-ms, --suite
+    // 4. Usage errors exit 2
     // -----------------------------------------------------------------------
     {
       const r1 = spawnSync(RUNNER_BIN, [RUNNER, '--concurrency', '--suite', 'quick'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
@@ -72,11 +72,32 @@ async function main() {
       assert.strictEqual(r6.status, 2, 'Missing suite value must exit 2');
       const r7 = spawnSync(RUNNER_BIN, [RUNNER, '--suite', 'unknown'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
       assert.strictEqual(r7.status, 2, 'Bad suite value must exit 2');
+      // Reject positional arguments
+      const r8 = spawnSync(RUNNER_BIN, [RUNNER, 'garbage'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
+      assert.strictEqual(r8.status, 2, 'Positional argument must exit 2');
     }
 
     console.log('PASS: all test-runner tests');
   } finally {
     try { fs.unlinkSync(MARKER); } catch {}
+
+    // Verify hang fixture process tree is gone
+    let hangPid;
+    try {
+      const text = fs.readFileSync(HANG_PID, 'utf8').trim();
+      hangPid = parseInt(text, 10);
+    } catch {
+      // PID file missing — fixture may have been killed before writing
+    }
+
+    if (hangPid) {
+      try {
+        process.kill(hangPid, 0);
+        console.error('FAIL: hang fixture process still alive after timeout');
+        process.exit(1);
+      } catch {}
+      try { fs.unlinkSync(HANG_PID); } catch {}
+    }
   }
 }
 
