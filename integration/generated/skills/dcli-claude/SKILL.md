@@ -1,3 +1,8 @@
+---
+name: dcli-claude
+description: Delegate bounded work to another Claude Code session. Use for review, ask, and implement delegation through the claude backend.
+---
+
 <!-- dcli:claude skill -->
 
 # Core delegation patterns (shared by all backends)

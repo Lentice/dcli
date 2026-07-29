@@ -19,7 +19,7 @@ three backends.
 | `dcli-claude` | Claude Code 2.1.220 | `claude -p --output-format stream-json` |
 | `dcli --backend <b>` | any | umbrella, for scripting |
 
-Each backend also installs **its own** Claude Code skill, generated from one source — so an agent reading a skill
+Each backend also installs **its own** skill, generated from one source — so an agent reading a skill
 sees exactly one coherent surface and never assumes a sibling backend's flag exists.
 
 ## Setup
@@ -30,9 +30,31 @@ Two sequenced steps, from a clone of this repo:
 # 1. Put dcli, dcli-codex, dcli-opencode, dcli-claude on PATH
 npm install -g .
 
-# 2. Install the Claude Code integration (skills, commands, rules)
+# 2. Install the agent integration (skills, commands, rules)
 pwsh -NoProfile -File install.ps1
 ```
+
+Step 2 asks which targets to install, with **both selected by default**:
+
+| Target | Directory | Receives | Read by |
+|---|---|---|---|
+| `claude` | `~\.claude` | skills, commands, rules, worker prompts | Claude Code |
+| `agents` | `~\.agents` | skills only | any CLI that reads the shared skills root, including the Codex CLI |
+
+`commands\` and `rules\` are Claude Code layouts and go only to the `claude` target: the Codex CLI's
+custom-prompt directory is flat, with no `dcli-<backend>\` namespace, and its `~\.codex\rules` holds
+execpolicy rules rather than agent instructions. Installing either there would place files no host reads.
+
+To choose non-interactively, name the targets and override either directory:
+
+```powershell
+pwsh -NoProfile -File install.ps1 -Targets claude,agents -Force
+pwsh -NoProfile -File install.ps1 -Targets agents -AgentsDir D:\alt\.agents -Force
+```
+
+Reinstalling is a swap, not a merge, so a file dropped in a newer version does not survive as a ghost.
+The installer refuses to overwrite a file it did not write, and refuses any directory that collides
+with the job-state root.
 
 Open a **new** shell afterward — step 1 changes PATH, and an already-open shell won't pick that up. Verify with:
 

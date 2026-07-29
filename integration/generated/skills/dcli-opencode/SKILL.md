@@ -1,3 +1,8 @@
+---
+name: dcli-opencode
+description: Delegate bounded work to the opencode CLI, including interactive-capable runs. Use for review, ask, and implement delegation through the opencode backend.
+---
+
 <!-- dcli:opencode skill -->
 
 # Core delegation patterns (shared by all backends)

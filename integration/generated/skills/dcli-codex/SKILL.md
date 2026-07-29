@@ -1,3 +1,8 @@
+---
+name: dcli-codex
+description: Delegate bounded work to the Codex CLI as a single-shot exec run. Use for review, ask, and implement delegation through the codex backend.
+---
+
 <!-- dcli:codex skill -->
 
 # Core delegation patterns (shared by all backends)

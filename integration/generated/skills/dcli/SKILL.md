@@ -1,3 +1,8 @@
+---
+name: dcli
+description: Route bounded delegated work to a coding-agent CLI and get a durable, inspectable result back. Use when choosing which backend shim to delegate to.
+---
+
 # dcli — delegation router
 
 dcli lets you delegate bounded work to a coding-agent CLI and get a durable, inspectable result back.

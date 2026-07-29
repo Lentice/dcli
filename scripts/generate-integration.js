@@ -33,17 +33,42 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+// Every SKILL.md needs `name` and `description` YAML frontmatter. Both Claude
+// Code and the Codex CLI discover skills by reading exactly those two keys, and
+// the shared `~/.agents/skills` root is read by both. Without frontmatter the
+// host falls back to the first line of the body, which is how the backend
+// skills once advertised themselves to agents as "<!-- dcli:codex skill -->".
+const SKILL_DESCRIPTIONS = {
+  dcli: 'Route bounded delegated work to a coding-agent CLI and get a durable, '
+    + 'inspectable result back. Use when choosing which backend shim to delegate to.',
+  opencode: 'Delegate bounded work to the opencode CLI, including interactive-capable '
+    + 'runs. Use for review, ask, and implement delegation through the opencode backend.',
+  codex: 'Delegate bounded work to the Codex CLI as a single-shot exec run. Use for '
+    + 'review, ask, and implement delegation through the codex backend.',
+  claude: 'Delegate bounded work to another Claude Code session. Use for review, ask, '
+    + 'and implement delegation through the claude backend.',
+};
+
+function skillFrontmatter(name, description) {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n\n`;
+}
+
 function generateTo(dir) {
   const coreContent = readSource('core.md');
   const routerContent = readSource('router.md');
 
   // Router skill
   ensureDir(path.join(dir, 'skills', 'dcli'));
-  fs.writeFileSync(path.join(dir, 'skills', 'dcli', 'SKILL.md'), routerContent, 'utf8');
+  fs.writeFileSync(
+    path.join(dir, 'skills', 'dcli', 'SKILL.md'),
+    skillFrontmatter('dcli', SKILL_DESCRIPTIONS.dcli) + routerContent,
+    'utf8'
+  );
 
   for (const backend of BACKENDS) {
     const backendContent = readSource(`backend-${backend}.md`);
-    const combined = `<!-- dcli:${backend} skill -->\n\n${coreContent}\n\n${backendContent}`;
+    const combined = skillFrontmatter(`dcli-${backend}`, SKILL_DESCRIPTIONS[backend])
+      + `<!-- dcli:${backend} skill -->\n\n${coreContent}\n\n${backendContent}`;
     ensureDir(path.join(dir, 'skills', `dcli-${backend}`));
     fs.writeFileSync(path.join(dir, 'skills', `dcli-${backend}`, 'SKILL.md'), combined, 'utf8');
   }
@@ -317,6 +342,34 @@ function check() {
   if (!fs.existsSync(routerPath)) {
     console.error('STALE: skills/dcli/SKILL.md is missing');
     stale = true;
+  }
+
+  // Every skill must carry discoverable `name` and `description` frontmatter,
+  // with a name matching its directory. Both Claude Code and the Codex CLI read
+  // these keys from the shared skills root; a skill without them is installed
+  // but effectively undiscoverable.
+  for (const skill of ['dcli', ...BACKENDS.map((b) => `dcli-${b}`)]) {
+    const p = path.join(GENERATED_DIR, 'skills', skill, 'SKILL.md');
+    if (!fs.existsSync(p)) continue;
+    const content = fs.readFileSync(p, 'utf8');
+    const fm = /^---\n([\s\S]*?)\n---\n/.exec(content);
+    if (!fm) {
+      console.error(`STALE: skills/${skill}/SKILL.md has no YAML frontmatter`);
+      stale = true;
+      continue;
+    }
+    const nameMatch = /^name:[ \t]*(\S.*)$/m.exec(fm[1]);
+    if (!nameMatch) {
+      console.error(`STALE: skills/${skill}/SKILL.md frontmatter has no name`);
+      stale = true;
+    } else if (nameMatch[1].trim() !== skill) {
+      console.error(`STALE: skills/${skill}/SKILL.md frontmatter name is "${nameMatch[1].trim()}", expected "${skill}"`);
+      stale = true;
+    }
+    if (!/^description:[ \t]*\S/m.test(fm[1])) {
+      console.error(`STALE: skills/${skill}/SKILL.md frontmatter has no description`);
+      stale = true;
+    }
   }
 
   // Check commands exist for each backend

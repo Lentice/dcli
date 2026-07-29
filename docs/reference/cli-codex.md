@@ -226,6 +226,26 @@ runtime permission reply, while opencode has both. A shared `--approval ask` or 
 - **Quota exhaustion is a real observed event**: wrapper exit `10` with
   `failure_reason = quota_or_rate_limit`. Report and continue; never retry-loop.
 
+## Amendment 2026-07-29 — where Codex reads integration files from
+
+Asked of the running Codex CLI itself and cross-checked against its own docs. This is why the
+installer's `agents` target ships **skills only**, and why `commands\` and `rules\` stay Claude-only.
+
+| Surface | Codex reads | dcli ships there? |
+|---|---|---|
+| Skills | `~\.agents\skills\<name>\SKILL.md` (the standardized cross-agent root; `~\.codex\skills` also works on this host) | **yes** — the installer's `agents` target |
+| Custom prompts | `$CODEX_HOME\prompts\*.md`, **top level only**, invoked as `/prompts:<file>`; deprecated in favor of skills | **no** — dcli's commands are namespaced `commands\dcli-<backend>\*.md`, and nested directories are not scanned |
+| Rules | `~\.codex\rules\*.rules` — Starlark **execpolicy** (`prefix_rule(...)` → allow/prompt/forbidden), experimental | **no** — `rules\dcli-delegation.md` is agent instructions, not an execution policy, and `.md` is not an accepted extension there |
+| Agent instructions | `$CODEX_HOME\AGENTS.override.md` else `$CODEX_HOME\AGENTS.md`, plus project `AGENTS.md` walking root→cwd | **no** — appending to a user's own instruction file is foreign-content mutation |
+
+Skill discovery reads `name` and `description` from `SKILL.md` YAML frontmatter — the same two keys
+Claude Code reads. Since both hosts share `~\.agents\skills`, a generated skill missing frontmatter is
+installed but effectively invisible; `generate-integration.js --check` now enforces both keys.
+
+Prompt input, confirming the stdin path already in use: `codex exec -` reads the prompt from stdin, and
+that is the documented way to pass a large prompt. There is **no** `--prompt-file`-style flag, and the
+argv positional form is subject to OS command-line length limits. `--output-last-message` is output only.
+
 ## Observed exit codes
 
 Codex's own exit codes are not a granular contract; `ccodex` translates them. Notable: the wrapper's
