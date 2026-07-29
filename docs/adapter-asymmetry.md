@@ -94,9 +94,24 @@ contract violations.
 
 ### Resume support
 
-All three adapters declare `core.resume: false` in their capabilities. The `Resume()` method exists as a
-no-op stub. Resume semantics differ per backend (session resume, fork from artifacts, retry) and are
-not implemented in the thin slice.
+All three adapters declare `core.resume: true` and implement the `Resume()` method. The engine has a
+`dcli <shim> resume <job-id> --kind <kind>` command supporting three explicit kinds:
+
+| Kind | Meaning | Precondition |
+|---|---|---|
+| `continue_backend_session` | Continue the same backend conversation | Parent job has a live, resumable backend session id |
+| `fork_from_artifacts` | Branch from a recorded result — new backend session, seeded from the parent's artifacts / worktree commit | Always available |
+| `retry_attempt` | Re-run the *same* request as a new attempt, after an `interrupted` or transient failure | Always available |
+
+- `resume` never silently substitutes one kind for another. A missing or expired session with
+  `continue_backend_session` is exit `22` (`session_expired`), never a silent fork.
+- Every continuation creates a **new job** with `parent_job_id`, `root_job_id`, `backend_session_id`,
+  and `session_strategy` recorded. `status` surfaces lineage.
+- A resumed run with no session identity of its own falls back to the parent's recorded id.
+- An `implement` continuation gets a **new** worktree seeded from the parent's snapshot commit.
+- Codex backend supports `continue_backend_session` via `codex exec resume <SESSION_ID>`.
+- A resumed review does not re-compose the review prompt or findings appendix — if structured findings
+  are wanted from a follow-up, the appendix instruction must be restated in the follow-up text.
 
 ## Allowable differences that are NOT asymmetries
 

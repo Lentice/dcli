@@ -7,6 +7,7 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 
 const CLI = path.resolve(__dirname, '../../cli/dcli.js');
+const { executeApply } = require('../../core/commands/apply');
 const { JobStore } = require('../../core/job-store');
 const {
   SNAPSHOT_COMMIT_MESSAGE,
@@ -656,6 +657,47 @@ async function main() {
       assert.ok(!fs.existsSync(path.join(root, 'locks')), 'sanity: locks dir must not pre-exist');
       executeDiff({ store, repoKey: 'rk', jobId });
       assert.ok(fs.existsSync(path.join(root, 'locks')), 'diff must create its lock directory under the job store\'s own state root');
+    } finally {
+      try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  // ===========================================================================
+  // 26. apply refuses an ancestor if a descendant has already been applied
+  // ===========================================================================
+  await testAsync('26. apply refuses ancestor when descendant exists', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-applydesc-'));
+    try {
+      const repoRoot = path.join(root, 'repo');
+      initRepo(repoRoot);
+      const stateRoot = path.join(root, 'state');
+      const store = new JobStore({ stateRoot });
+      const repoKey = 'rk';
+
+      // Create ancestor job with worktree info
+      const ancestorId = 'ancestor-job';
+      store.createJob({ jobId: ancestorId, repoKey, repoRoot, backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0', mode: 'implement', access: 'workspace', capabilitiesSnapshot: {} });
+      store.createAttemptDir({ repoKey, jobId: ancestorId, attemptNum: 1 });
+      const ancCommit = getHeadCommit(repoRoot);
+      store.journalTransition(ancestorId, repoKey, { kind: 'attempt_created', attempt: 1, from: null, to: 'created', detail: { attempt_id: 'a1', execution_token: 't1' } });
+      store.journalTransition(ancestorId, repoKey, { kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'done', detail: {
+        finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal',
+        worktree_path: '/tmp/fake-wt', worktree_base_commit: ancCommit, worktree_result_commit: ancCommit,
+      } });
+
+      // Create descendant job referencing ancestor
+      const descendantId = 'descendant-job';
+      store.createJob({ jobId: descendantId, repoKey, repoRoot, backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0', mode: 'implement', access: 'workspace', parentJobId: ancestorId, rootJobId: ancestorId, capabilitiesSnapshot: {} });
+      store.createAttemptDir({ repoKey, jobId: descendantId, attemptNum: 1 });
+      const descCommit = getHeadCommit(repoRoot);
+      store.journalTransition(descendantId, repoKey, { kind: 'attempt_created', attempt: 1, from: null, to: 'created', detail: { attempt_id: 'a1', execution_token: 't1' } });
+      store.journalTransition(descendantId, repoKey, { kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'done', detail: {
+        finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal',
+        worktree_path: '/tmp/fake-wt2', worktree_base_commit: descCommit, worktree_result_commit: descCommit,
+      } });
+
+      // Trying to apply ancestor should fail with a meaningful error
+      assert.throws(() => executeApply({ store, repoKey, jobId: ancestorId }), /descendant/);
     } finally {
       try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
     }

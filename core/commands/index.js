@@ -11,9 +11,10 @@ const KNOWN_FLAGS = new Set([
   '--embed-diff', '--intent', '--focus',
   '--stat', '--name-only',
   '--reset-author', '--message', '--allow-untracked',
+  '--kind', '--resume',
 ]);
 
-const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
+const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'resume', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
 
 function buildEnvelope(status) {
   return {
@@ -131,7 +132,7 @@ function parseArgs(argv) {
         '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
         '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
         '--access', '--range', '--path', '--intent', '--focus',
-        '--message', '--mode']);
+        '--message', '--mode', '--kind', '--resume']);
 
       if (valueFlag.has(arg)) {
         i++;
@@ -213,6 +214,9 @@ function parseArgs(argv) {
           case '--intent': result.intent = val; break;
           case '--focus': result.focus = val; break;
           case '--message': result.message = val; break;
+          case '--resume':
+            result.resume = val;
+            break;
           case '--mode':
             if (!['run', 'implement'].includes(val)) {
               const err = new Error(`Invalid --mode "${val}": must be "run" or "implement"`);
@@ -220,6 +224,14 @@ function parseArgs(argv) {
               throw err;
             }
             result.mode = val;
+            break;
+          case '--kind':
+            if (!['continue_backend_session', 'fork_from_artifacts', 'retry_attempt'].includes(val)) {
+              const err = new Error(`Invalid --kind "${val}": must be "continue_backend_session", "fork_from_artifacts", or "retry_attempt"`);
+              err.exitCode = 2;
+              throw err;
+            }
+            result.kind = val;
             break;
         }
         i++;
@@ -252,7 +264,7 @@ function validatePositionals(parsed) {
   const cmd = parsed.command;
   if (!cmd) return;
 
-  const freeText = new Set(['run', 'submit', 'review']);
+  const freeText = new Set(['run', 'submit', 'review', 'resume']);
   const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug', 'diff', 'apply']);
   const zeroPos = new Set(['list', 'cleanup']);
 

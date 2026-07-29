@@ -95,6 +95,7 @@ class JobStore {
         updated.agent = d.agent !== undefined ? d.agent : null;
         updated.parent_job_id = d.parent_job_id !== undefined ? d.parent_job_id : null;
         updated.root_job_id = d.root_job_id || null;
+        updated.session_strategy = d.session_strategy !== undefined ? d.session_strategy : null;
         updated.group = d.group !== undefined ? d.group : null;
         updated.label = d.label !== undefined ? d.label : null;
         updated.hard_timeout_sec = d.hard_timeout_sec !== undefined ? d.hard_timeout_sec : null;
@@ -212,7 +213,7 @@ class JobStore {
     capabilitiesSnapshot,
     executionOwner,
     model, agent,
-    parentJobId, rootJobId,
+    parentJobId, rootJobId, sessionStrategy,
     group, label,
     hardTimeoutSec,
   }) {
@@ -249,6 +250,7 @@ class JobStore {
         agent: agent || null,
         parent_job_id: parentJobId || null,
         root_job_id: rootId,
+        session_strategy: sessionStrategy || null,
         group: group || null,
         label: label || null,
         hard_timeout_sec: hardTimeoutSec || null,

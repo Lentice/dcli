@@ -725,7 +725,7 @@ class OpencodeAdapter {
       schema_version: 1,
       backend: 'opencode',
       backend_version: this._detectedVersion || 'unknown',
-      core: { run: true, submit: true, resume: false, cancel: true, wrapper_worktree: true },
+      core: { run: true, submit: true, resume: true, cancel: true, wrapper_worktree: true },
       extensions: {
         interactive_permissions: { supported: true, transport: 'http' },
         answerable_questions: { supported: true, transport: 'http' },

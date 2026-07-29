@@ -120,3 +120,19 @@ feat: explicit resume kinds with job lineage and worktree continuation
 ```
 
 ## Notes
+
+Implemented 2026-07-29:
+- Created `core/commands/resume.js` with `executeResume()` supporting all three kinds.
+- The `Resume()` method already existed as a no-op stub on all adapters from ticket 14/15;
+  the resume command calls `adapter.Resume()` for `continue_backend_session`.
+- Updated all adapters to declare `core.resume: true` in `ProbeCapabilities()`.
+- Updated `core/commands/index.js` to add `resume` to COMMANDS and `--kind` to KNOWN_FLAGS/value flags.
+- Updated `cli/dcli.js` to wire the `resume` CLI command.
+- Updated `docs/adapter-asymmetry.md` to reflect implemented resume support.
+- Lineage fallback (parent session id when child emits none) implemented in executeResume.
+- The resume command creates new jobs with `parent_job_id`, `root_job_id`, `session_strategy` recorded.
+- `retry_attempt` and `fork_from_artifacts` are always available; `continue_backend_session`
+  checks both parent session existence and backend capability before proceeding.
+- Worktree continuation creates a fresh worktree for implement-mode resumes.
+- Tests cover: all three kinds, validation errors, non-existent parent, session missing,
+  lineage chain, session fallback, and stub-resume call verification.

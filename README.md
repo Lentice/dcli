@@ -3,7 +3,7 @@
 Delegate bounded work from Claude Code to a *different* coding-agent CLI, and get a durable, inspectable result
 back.
 
-**Status: core commands implemented (run, submit, status, wait, read, list, tail, debug, cleanup).** Start at [`docs/tickets/`](docs/tickets/).
+**Status: core commands implemented (run, submit, status, wait, read, list, resume, tail, debug, cleanup).** Start at [`docs/tickets/`](docs/tickets/).
 
 ## Why
 
@@ -40,6 +40,15 @@ dcli-codex run --mode implement --access workspace --hard-timeout-sec 1800 "Add 
 dcli-codex diff <job-id> --stat
 dcli-codex diff <job-id>
 dcli-codex apply --reset-author --message "feat: add retry logic" <job-id>
+
+# resume — continue a backend conversation
+"Now critique your own plan." | dcli-opencode resume <job-id> --kind continue_backend_session --hard-timeout-sec 600
+
+# resume — retry after a transient failure
+dcli-opencode resume <job-id> --kind retry_attempt --hard-timeout-sec 600 "Re-run the same analysis"
+
+# resume — fork from a completed result
+dcli-opencode resume <job-id> --kind fork_from_artifacts --hard-timeout-sec 600 "Build on what you found"
 ```
 
 Every recipe carries an execution budget and a wait budget. That is not decoration — an unbounded wait once cost a

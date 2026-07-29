@@ -106,7 +106,7 @@ function validateNoPathEscape(worktreePath, stateRoot) {
   }
 }
 
-function createDetachedWorktree(repoRoot, worktreePath, timeoutMs, stateRoot) {
+function createDetachedWorktree(repoRoot, worktreePath, timeoutMs, stateRoot, baseRef) {
   validateTree(repoRoot);
   if (stateRoot) {
     validateNoPathEscape(worktreePath, stateRoot);
@@ -120,9 +120,9 @@ function createDetachedWorktree(repoRoot, worktreePath, timeoutMs, stateRoot) {
 
   fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
 
-  const baseCommit = getHeadCommit(repoRoot);
+  const baseCommit = baseRef || getHeadCommit(repoRoot);
 
-  _gitOk(['worktree', 'add', '--detach', worktreePath, 'HEAD'], { cwd: repoRoot, timeoutMs });
+  _gitOk(['worktree', 'add', '--detach', worktreePath, baseCommit], { cwd: repoRoot, timeoutMs });
 
   return { baseCommit, worktreePath };
 }

@@ -16,6 +16,42 @@ const {
   isNestedRepo,
 } = require('../worktree');
 
+/**
+ * Scan sibling jobs under repoKey to find any descendant job that has already
+ * been applied (terminal implement-mode job whose parent_job_id matches the
+ * given jobId). If one exists, refuse to apply an ancestor.
+ */
+function checkNoAppliedDescendant(store, repoKey, jobId) {
+  const jobsDir = path.join(store._stateRoot, 'jobs', repoKey);
+  if (!fs.existsSync(jobsDir)) return;
+
+  const entries = fs.readdirSync(jobsDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === jobId) continue;
+
+    let s;
+    try {
+      const statusPath = path.join(jobsDir, entry.name, 'status.json');
+      if (!fs.existsSync(statusPath)) continue;
+      s = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (s.parent_job_id === jobId &&
+        s.worktree && s.worktree.result_commit &&
+        (s.state === 'done' || s.state === 'failed')) {
+      const err = new Error(
+        `Cannot apply ancestor job ${jobId}: descendant job ${entry.name} ` +
+        `(${s.state}) already exists and must be applied instead. ` +
+        `Apply the newest descendant in the chain.`
+      );
+      err.exitCode = 2;
+      throw err;
+    }
+  }
+}
+
 function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntracked }) {
   let status;
   try {
@@ -38,6 +74,9 @@ function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntrac
     const e = new Error(`Job ${jobId} has no result commit. Must be an implement-mode job.`);
     e.exitCode = 11; throw e;
   }
+
+  // Refuse to apply an ancestor if a descendant has already been applied
+  checkNoAppliedDescendant(store, repoKey, jobId);
 
   const repoRoot = status.repo_root;
   if (!repoRoot) { const e = new Error(`Job ${jobId} has no repo_root`); e.exitCode = 11; throw e; }

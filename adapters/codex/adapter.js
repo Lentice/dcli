@@ -250,7 +250,7 @@ class CodexAdapter {
       schema_version: 1,
       backend: 'codex',
       backend_version: this._detectedVersion || 'unknown',
-      core: { run: true, submit: true, resume: false, cancel: true, wrapper_worktree: true },
+      core: { run: true, submit: true, resume: true, cancel: true, wrapper_worktree: true },
       extensions: {},
       supported_version_range: { min: '0.140.0', max: '0.150.0' },
     };

@@ -10,6 +10,7 @@ Commands:
   wait      Wait for a job to complete
   read      Read a terminal job's result
   list      List jobs
+  resume    Resume a completed job (--kind: continue_backend_session | fork_from_artifacts | retry_attempt)
   cancel    Cancel a job
   review    Run a code review
   tail      Show tail of job logs
@@ -36,6 +37,7 @@ Options:
   --dry-run                 Preview cleanup without deleting
   --scrub-session-ids       Blank recorded backend session ids
   --max-bytes <n>           Maximum bytes for tail (default: 4096)
+  --kind <s>                Resume kind: continue_backend_session, fork_from_artifacts, retry_attempt
   --reasoning-effort <s>    Reasoning effort level (backend-specific)
   --variant <s>             opencode-specific reasoning variant
   --effort <s>              Codex/Claude effort level
@@ -190,6 +192,7 @@ async function main() {
         variant: parsed.variant,
         effort: parsed.effort,
         admission: admissionController,
+        resumeJobId: parsed.resume || null,
       });
 
       if (parsed.json) {
@@ -287,6 +290,45 @@ async function main() {
         console.log(result.text || '');
       }
       process.exit(result.exitCode);
+    }
+
+    case 'resume': {
+      const { executeResume } = require('../core/commands/resume');
+      const stdinPipeActive = !process.stdin.isTTY && parsed.positionals.length === 0 && !parsed.promptFile;
+      const prompt = await resolvePrompt({
+        promptFile: parsed.promptFile,
+        stdinPipeActive,
+        positionals: parsed.positionals,
+      });
+
+      const parentJobId = parsed.positionals[0];
+      if (!parentJobId) {
+        console.error('resume requires a parent job ID');
+        process.exit(2);
+      }
+
+      const output = await executeResume({
+        store, adapter, repoKey, repoRoot: fullPath,
+        prompt,
+        kind: parsed.kind,
+        hardTimeoutSec: parsed.hardTimeoutSec,
+        group: parsed.group, label: parsed.label, model: parsed.model,
+        access: parsed.access,
+        reasoningEffort: parsed.reasoningEffort,
+        variant: parsed.variant,
+        effort: parsed.effort,
+        admission: admissionController,
+        mode: parsed.mode || 'run',
+        stateRoot,
+        parentJobId,
+      });
+
+      if (parsed.json) {
+        console.log(JSON.stringify(output.envelope));
+      } else {
+        console.log(output.text || '');
+      }
+      process.exit(output.exitCode || 0);
     }
 
     case 'list': {
@@ -546,7 +588,7 @@ function getDefaultCapabilities(backendName) {
     schema_version: 1,
     backend: backendName,
     backend_version: '1.0.0',
-    core: { run: true, submit: true, resume: false, cancel: true, wrapper_worktree: true },
+    core: { run: true, submit: true, resume: true, cancel: true, wrapper_worktree: true },
     extensions: {},
   };
 }

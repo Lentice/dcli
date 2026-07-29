@@ -1,8 +1,21 @@
 const { generateJobId } = require('../job-id');
 const { buildEnvelope, isVersionInRange } = require('./index');
 
-function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission }) {
+function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId }) {
   const jobId = generateJobId();
+
+  let parentStatus = null;
+  let parentRootJobId = null;
+  if (resumeJobId) {
+    try {
+      parentStatus = store.readStatus({ repoKey, jobId: resumeJobId });
+    } catch {
+      const err = new Error(`Parent job not found for --resume: ${resumeJobId}`);
+      err.exitCode = 3;
+      throw err;
+    }
+    parentRootJobId = parentStatus.root_job_id || resumeJobId;
+  }
 
   const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
   try {
@@ -38,16 +51,25 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   const adapterVersion = identity.adapter_version || '1.0.0';
   const effectiveAccess = access || 'read-only';
 
+  const inheritedGroup = group || (parentStatus ? parentStatus.group : null);
+  const inheritedLabel = label || (parentStatus ? parentStatus.label : null);
+  const inheritedAccess = access || (parentStatus ? parentStatus.access : null) || 'read-only';
+
   store.createJob({
     jobId, repoKey, repoRoot,
     backend,
     backendVersion,
     adapterVersion,
     mode: 'submit',
-    access: effectiveAccess,
-    group, label, model,
+    access: inheritedAccess,
+    group: inheritedGroup,
+    label: inheritedLabel,
+    model,
     hardTimeoutSec,
     capabilitiesSnapshot,
+    parentJobId: resumeJobId || null,
+    rootJobId: parentRootJobId || null,
+    sessionStrategy: resumeJobId ? 'fork_from_artifacts' : null,
   });
 
   if (admission) {
