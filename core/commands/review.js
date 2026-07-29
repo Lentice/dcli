@@ -1,6 +1,6 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
-const { parseFindings } = require('../findings');
+const { parseFindings, APPENDIX_MARKER, KNOWN_SEVERITIES, MAX_ITEMS } = require('../findings');
 const { executeRun } = require('./run');
 
 const DIFF_CAP_BYTES = 100 * 1024;
@@ -199,8 +199,7 @@ function buildReviewPrompt({ diffInfo, intent, focus, userPrompt }) {
   prompt += 'Rules:\n';
   prompt += '- Provide evidence against the actual diff for each finding.\n';
   prompt += '- Do not suggest edits to the code.\n';
-  prompt += '- Order findings by severity (critical first, then important, then minor).\n';
-  prompt += '- Include exactly one findings appendix using the marker: <!-- dcli:findings -->\n\n';
+  prompt += '- Order findings by severity (critical first, then important, then minor).\n\n';
 
   if (diffInfo.untrackedWarning) {
     prompt += diffInfo.untrackedWarning + '\n\n';
@@ -212,7 +211,50 @@ function buildReviewPrompt({ diffInfo, intent, focus, userPrompt }) {
 
   prompt += '## Diff\n\n```diff\n' + diffInfo.diff + '\n```\n';
 
+  // The output contract goes last, after the diff. An embedded diff runs to
+  // DIFF_CAP_BYTES, and instructions placed before that much context are
+  // reliably diluted. It is also stated in full rather than by reference:
+  // core/findings.js is strict, and a worker left to guess the shape produces
+  // findings_status: malformed, which reads to the caller as a degraded review.
+  prompt += '\n' + buildFindingsContract();
+
   return prompt;
 }
 
-module.exports = { executeReview, generateDiff, buildReviewPrompt, getUntrackedFiles, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT };
+// Derived from the parser's own constants so the instructions and the
+// validator cannot drift apart. Adding a severity in core/findings.js changes
+// this text automatically.
+function buildFindingsContract() {
+  const severities = [...KNOWN_SEVERITIES].join(' | ');
+
+  return [
+    '## Required findings appendix',
+    '',
+    'Your output is machine-parsed. End it with exactly one findings appendix:',
+    `a line containing \`${APPENDIX_MARKER}\`, immediately followed by a \`\`\`json fenced block.`,
+    '',
+    `- The appendix must be the **final** thing you emit. Nothing may follow its closing fence.`,
+    '- Emit it exactly once. Two markers are treated as malformed, not "use the last one".',
+    '- Prose before the marker is fine — put your severity-ordered analysis there.',
+    '',
+    'The JSON object:',
+    '',
+    '- `verdict` — required, non-empty, one line.',
+    '- `items` — required, always an array.',
+    '',
+    'Each item in `items`:',
+    '',
+    '- `severity` — required, one of: ' + severities + '.',
+    '- `claim` — required, non-empty, one sentence.',
+    '- `file` — repository-relative path, or null. Absolute paths and `..` are rejected.',
+    '- `line` — a number, or null.',
+    '- `evidence` — why the problem is real, or null.',
+    '',
+    `Found no problems? Still emit the appendix, with \`items\` as an empty array. That is`,
+    'the only way a clean review is distinguishable from a review that failed to report.',
+    `At most ${MAX_ITEMS} items.`,
+    '',
+  ].join('\n');
+}
+
+module.exports = { executeReview, generateDiff, buildReviewPrompt, buildFindingsContract, getUntrackedFiles, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT };

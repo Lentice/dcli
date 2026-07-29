@@ -1,4 +1,6 @@
 # claude ask
 
 Open-ended question or brainstorming session.
-echo "Your question" | dcli-claude run --mode brainstorm --hard-timeout-sec <n>
+echo "Your question" | dcli-claude run --hard-timeout-sec <n>
+
+`run` is synchronous and the default mode; --hard-timeout-sec bounds it.

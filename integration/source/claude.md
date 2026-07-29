@@ -26,7 +26,7 @@ dcli-claude review [--working|--staged|--range <base>..<head>] [--path <p>] [--i
 ### ask / brainstorm
 
 ```
-echo "Question" | dcli-claude run --mode brainstorm --hard-timeout-sec <n>
+echo "Question" | dcli-claude run --hard-timeout-sec <n>
 ```
 
 ### implement
@@ -48,8 +48,8 @@ echo "Follow-up" | dcli-claude resume <job-id> --kind continue_backend_session -
 ```
 dcli-claude status <job-id>
 dcli-claude list
-dcli-claude wait <job-id>
-dcli-claude wait --all --group <g>
+dcli-claude wait <job-id> --timeout-sec <n>
+dcli-claude wait --all --group <g> --timeout-sec <n>
 ```
 
 ### doctor
@@ -71,7 +71,7 @@ dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run]
 ```powershell
 $budget = 900
 "Critique this architecture." |
-  dcli-claude run --mode brainstorm --hard-timeout-sec $budget
+  dcli-claude run --hard-timeout-sec $budget
 ```
 
 ### Review changes
@@ -86,6 +86,6 @@ dcli-claude review --working --intent "Check for regressions" --hard-timeout-sec
 ```powershell
 $budget = 3600
 "Run the test suite and report." |
-  dcli-claude submit --mode test --access workspace --hard-timeout-sec $budget
+  dcli-claude submit --access workspace --group nightly --hard-timeout-sec $budget
 dcli-claude wait --all --group nightly --timeout-sec 3600 --json
 ```

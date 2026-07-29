@@ -100,7 +100,7 @@ dcli-codex review [--working|--staged|--range <base>..<head>] [--path <p>] [--in
 ### ask / brainstorm
 
 ```
-echo "Question or prompt" | dcli-codex run --mode brainstorm --hard-timeout-sec <n>
+echo "Question or prompt" | dcli-codex run --hard-timeout-sec <n>
 ```
 
 ### implement
@@ -123,8 +123,8 @@ echo "Follow-up" | dcli-codex resume <job-id> --kind continue_backend_session --
 ```
 dcli-codex status <job-id>
 dcli-codex list
-dcli-codex wait <job-id>
-dcli-codex wait --all --group <g>
+dcli-codex wait <job-id> --timeout-sec <n>
+dcli-codex wait --all --group <g> --timeout-sec <n>
 ```
 
 ### doctor
@@ -153,8 +153,8 @@ dcli-codex review --range main..HEAD --intent "Review the refactoring" --hard-ti
 ```powershell
 $budget = 1800
 echo "Refactor the database layer" |
-  dcli-codex submit --mode implement --access workspace --hard-timeout-sec $budget
-dcli-codex wait --all --group nightly --timeout-sec 3600 --json
+  dcli-codex submit --mode implement --access workspace --group nightly --hard-timeout-sec $budget
+dcli-codex wait --all --group nightly --timeout-sec $budget --json
 ```
 
 ### Inspect and apply

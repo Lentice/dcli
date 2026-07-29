@@ -7,7 +7,7 @@ const { spawnSync } = require('child_process');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { JobStore } = require('../../core/job-store');
 const { buildReviewPrompt, generateDiff, executeReview, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT } = require('../../core/commands/review');
-const { parseFindings } = require('../../core/findings');
+const { parseFindings, APPENDIX_MARKER, KNOWN_SEVERITIES } = require('../../core/findings');
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-review-test-'));
@@ -55,6 +55,90 @@ async function main() {
   assert.ok(prompt.includes('<!-- dcli:findings -->'), 'prompt must mention findings marker');
   assert.ok(prompt.includes('Order findings by severity'), 'prompt must mention severity ordering');
   console.log('PASS: review test 1 — prompt building');
+}
+
+// ===========================================================================
+// 1b. buildReviewPrompt states the FULL machine contract the parser enforces.
+//
+// The parser in core/findings.js is strict: it requires a ```json fence, a
+// non-empty `verdict`, an `items` array, a recognized `severity` and a
+// non-empty `claim` per item, and it rejects trailing content after the
+// closing fence. A prompt that names only the marker leaves a worker to guess
+// all of that, and a guess that misses turns an otherwise-good review into
+// findings_status: malformed — AGENTS.md mistake #7.
+//
+// Every assertion below is derived from the parser's own constants, so adding
+// a severity or renaming the marker cannot silently desynchronize the two.
+// ===========================================================================
+{
+  const diffInfo = {
+    diff: '--- a/file.js\n+++ b/file.js\n@@ -1 +1 @@\n-old\n+new',
+    truncated: false,
+    totalBytes: 50,
+    truncationInfo: null,
+    untrackedWarning: null,
+    untrackedFiles: [],
+  };
+  const prompt = buildReviewPrompt({ diffInfo });
+
+  assert.ok(prompt.includes(APPENDIX_MARKER), 'prompt must state the exact marker');
+  assert.ok(/```json/.test(prompt), 'prompt must state the json fence the parser requires');
+
+  for (const severity of KNOWN_SEVERITIES) {
+    assert.ok(
+      prompt.includes(severity),
+      `prompt must name the parser-recognized severity "${severity}"`
+    );
+  }
+
+  assert.ok(/\bverdict\b/.test(prompt), 'prompt must name the required verdict field');
+  assert.ok(/\bitems\b/.test(prompt), 'prompt must name the required items field');
+  assert.ok(/\bclaim\b/.test(prompt), 'prompt must name the required claim field');
+  assert.ok(
+    /empty/i.test(prompt) && /items/.test(prompt),
+    'prompt must tell the worker to emit an empty items array when there are no findings, ' +
+    'so "found nothing" is distinguishable from "produced nothing"'
+  );
+  assert.ok(
+    /last|final/i.test(prompt),
+    'prompt must state the appendix is the last thing in the output — the parser ' +
+    'rejects trailing content after the closing fence'
+  );
+  console.log('PASS: review test 1b — prompt states the full findings contract');
+}
+
+// ===========================================================================
+// 1c. A worker that follows the prompt literally produces a parseable
+// appendix. This is the drift guard that matters: it round-trips the contract
+// the prompt teaches back through the real parser.
+// ===========================================================================
+{
+  const diffInfo = {
+    diff: 'x', truncated: false, totalBytes: 1,
+    truncationInfo: null, untrackedWarning: null, untrackedFiles: [],
+  };
+  const prompt = buildReviewPrompt({ diffInfo });
+
+  // Build a response using ONLY field names and severities the prompt states.
+  const severity = [...KNOWN_SEVERITIES][0];
+  const compliant = 'Prose analysis.\n\n' + APPENDIX_MARKER + '\n```json\n' +
+    JSON.stringify({
+      verdict: 'One-line verdict.',
+      items: [{ severity, file: 'src/a.js', line: 42, claim: 'A real problem.', evidence: 'why' }],
+    }, null, 2) + '\n```\n';
+
+  const parsed = parseFindings(compliant);
+  assert.strictEqual(parsed.status, 'ok', `contract-following output must parse: ${parsed.error}`);
+  assert.strictEqual(parsed.items.length, 1);
+  assert.strictEqual(parsed.items[0].severity, severity);
+
+  // And the clean-review form the prompt prescribes must also parse.
+  const clean = APPENDIX_MARKER + '\n```json\n' +
+    JSON.stringify({ verdict: 'No findings.', items: [] }) + '\n```\n';
+  const parsedClean = parseFindings(clean);
+  assert.strictEqual(parsedClean.status, 'ok', `clean-review form must parse: ${parsedClean.error}`);
+  assert.strictEqual(parsedClean.items.length, 0, 'clean review must be ok-with-zero-items, not absent');
+  console.log('PASS: review test 1c — contract round-trips through the parser');
 }
 
 // ===========================================================================

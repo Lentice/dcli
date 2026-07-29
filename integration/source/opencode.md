@@ -34,7 +34,7 @@ dcli-opencode review [--working|--staged|--range <base>..<head>] [--path <p>] [-
 Open-ended question or design discussion.
 
 ```
-echo "Question or prompt" | dcli-opencode run --mode brainstorm --hard-timeout-sec <n>
+echo "Question or prompt" | dcli-opencode run --hard-timeout-sec <n>
 ```
 
 ### implement
@@ -65,8 +65,8 @@ echo "Follow-up prompt" | dcli-opencode resume <job-id> --kind continue_backend_
 ```
 dcli-opencode status <job-id> [--json]
 dcli-opencode list [--group <g>] [--json]
-dcli-opencode wait <job-id> [--timeout-sec <n>] [--json]
-dcli-opencode wait --all --group <g> [--timeout-sec <n>] [--json]
+dcli-opencode wait <job-id> --timeout-sec <n> [--json]
+dcli-opencode wait --all --group <g> --timeout-sec <n> [--json]
 ```
 
 ### doctor
@@ -88,7 +88,7 @@ dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```powershell
 $budget = 900
 "Compare these two designs for maintainability and performance." |
-  dcli-opencode run --mode brainstorm --hard-timeout-sec $budget
+  dcli-opencode run --hard-timeout-sec $budget
 ```
 
 ### Review a specific path since main
@@ -103,7 +103,7 @@ dcli-opencode review --range main..HEAD --path src/api/ --intent "Review the new
 ```powershell
 $budget = 3600
 "Run the full test suite and report failures." |
-  dcli-claude submit --mode test --access workspace --hard-timeout-sec $budget
+  dcli-opencode submit --access workspace --group nightly --hard-timeout-sec $budget
 dcli-opencode wait --all --group nightly --timeout-sec 3600 --json
 ```
 
