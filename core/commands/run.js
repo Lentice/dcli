@@ -5,7 +5,7 @@ const { reduce } = require('../reducer');
 const { buildEnvelope, isVersionInRange } = require('./index');
 const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
-const { persistCollectedResult, persistInitFiles, persistBackendEvents } = require('../result-artifact');
+const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
@@ -227,6 +227,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 11 };
         }
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
+        try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
 
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',

@@ -1,5 +1,6 @@
 const path = require('path');
 const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./fs-text');
+const { parseFindings } = require('./findings');
 
 function persistCollectedResult({ store, repoKey, jobId, attemptNum, collected }) {
   const text = typeof collected.text === 'string' ? collected.text : '';
@@ -32,10 +33,21 @@ function persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }) {
   }
 }
 
+function persistFindings({ store, repoKey, jobId, attemptNum, text }) {
+  const findingsResult = parseFindings(typeof text === 'string' ? text : '');
+  const findingsPath = attemptPath(store, repoKey, jobId, attemptNum, 'findings.json');
+  writeJsonFileAtomic(findingsPath, {
+    status: findingsResult.status,
+    data: findingsResult.data,
+    items: findingsResult.items,
+    error: findingsResult.error || null,
+  });
+}
+
 function attemptPath(store, repoKey, jobId, attemptNum, filename) {
   return path.join(
     store.getJobDir(repoKey, jobId), 'attempts', String(attemptNum), filename
   );
 }
 
-module.exports = { persistCollectedResult, persistInitFiles, persistBackendEvents };
+module.exports = { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings };

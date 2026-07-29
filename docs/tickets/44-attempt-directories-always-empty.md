@@ -120,21 +120,21 @@ the attempt-dir files exist and all consumers are migrated.
 
 ## Checklist
 
-- [ ] `run.js` writes `prompt.md` and `command.json` to the attempt directory before starting
+- [x] `run.js` writes `prompt.md` and `command.json` to the attempt directory before starting
       the adapter.
 - [x] `run.js` writes `result.md` and computes byte length after `CollectResult` — done as part of
       ticket 42 (`persistCollectedResult()`).
-- [ ] `run.js` additionally writes `backend-events.jsonl` and `findings.json` (if applicable) to
+- [x] `run.js` additionally writes `backend-events.jsonl` and `findings.json` (if applicable) to
       the attempt directory after `CollectResult`.
-- [ ] `resume.js` writes `prompt.md`, `command.json`, `result.md`, `backend-events.jsonl`, and
+- [x] `resume.js` writes `prompt.md`, `command.json`, `result.md`, `backend-events.jsonl`, and
       `findings.json` (if applicable) for all three resume kinds — currently writes none of these.
-- [ ] `worker.js` does the same (most important — background jobs have no other visibility;
+- [x] `worker.js` does the same (most important — background jobs have no other visibility;
       currently writes none of these).
-- [ ] `submit.js` writes its `prompt.txt`/`params.json` to `attempts/1/` instead of (or in
+- [x] `submit.js` writes its `prompt.txt`/`params.json` to `attempts/1/` instead of (or in
       addition to) the job root, then stops writing to the job root after migration.
 - [ ] Existing consumers that read job-root `prompt.txt`/`params.json` are updated to read
       from the attempt directory.
-- [ ] Full suite green.
+- [x] Full suite green.
 
 ## How to verify
 

@@ -299,7 +299,9 @@ class JobStore {
     const attemptDir = path.join(jobDir, 'attempts', String(attemptNum));
 
     if (fs.existsSync(attemptDir)) {
-      throw new Error(`Attempt directory already exists: ${attemptDir}`);
+      const err = new Error(`Attempt directory already exists: ${attemptDir}`);
+      err.code = 'EEXIST';
+      throw err;
     }
 
     fs.mkdirSync(attemptDir, { recursive: true });

@@ -19,7 +19,7 @@ if (process.env.DCLI_WORKER !== '1') {
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { persistCollectedResult, persistInitFiles, persistBackendEvents } = require('../result-artifact');
+const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
@@ -115,9 +115,11 @@ async function main() {
   try {
     store.createAttemptDir({ repoKey, jobId, attemptNum });
   } catch (err) {
-    journalFailure(store, slotId, repoKey, jobId, null, 'worker_startup_failed', `Cannot create attempt dir: ${err.message}`);
-    admission.releaseSlot(slotId);
-    process.exit(1);
+    if (err.code !== 'EEXIST') {
+      journalFailure(store, slotId, repoKey, jobId, null, 'worker_startup_failed', `Cannot create attempt dir: ${err.message}`);
+      admission.releaseSlot(slotId);
+      process.exit(1);
+    }
   }
 
   // Write initial attempt files
@@ -237,6 +239,7 @@ async function main() {
           process.exit(11);
         }
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
+        try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
 
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',

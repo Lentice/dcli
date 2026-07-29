@@ -4,7 +4,7 @@ const { generateJobId } = require('../job-id');
 const { buildEnvelope, isVersionInRange } = require('./index');
 const { resolveDeadline } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
-const { persistCollectedResult, persistInitFiles, persistBackendEvents } = require('../result-artifact');
+const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 
 const VALID_KINDS = new Set(['continue_backend_session', 'fork_from_artifacts', 'retry_attempt']);
 
@@ -301,6 +301,7 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
           return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 11 };
         }
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
+        try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
 
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',

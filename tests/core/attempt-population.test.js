@@ -1,4 +1,3 @@
-// @suite full
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -119,6 +118,12 @@ await withTempDir(async (dir) => {
   assert.strictEqual(exitEvents.length, 1, 'must have exactly one process_exited event');
   assert.strictEqual(exitEvents[0].code, 0);
 
+  // findings.json
+  const findingsPath = path.join(attemptDir, 'findings.json');
+  assert.ok(fs.existsSync(findingsPath), 'findings.json must exist');
+  const findings = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
+  assert.strictEqual(findings.status, 'absent', 'findings status should be absent for non-review text');
+
   console.log('PASS: run.js populates all attempt files');
 });
 
@@ -157,6 +162,9 @@ await withTempDir(async (dir) => {
   assert.strictEqual(command.mode, 'implement');
   assert.ok(fs.existsSync(path.join(attemptDir, 'result.md')), 'implement: result.md must exist');
   assert.ok(fs.existsSync(path.join(attemptDir, 'backend-events.jsonl')), 'implement: backend-events.jsonl must exist');
+  assert.ok(fs.existsSync(path.join(attemptDir, 'findings.json')), 'implement: findings.json must exist');
+  const implFindings = JSON.parse(fs.readFileSync(path.join(attemptDir, 'findings.json'), 'utf8'));
+  assert.strictEqual(implFindings.status, 'absent', 'implement: findings status should be absent');
 
   console.log('PASS: run.js implements mode populates attempt files');
 });
@@ -222,6 +230,12 @@ await withTempDir(async (dir) => {
   assert.ok(events.length >= 3, 'resume: must have multiple events');
   const exitEvents = events.filter(e => e.type === 'process_exited');
   assert.strictEqual(exitEvents.length, 1);
+
+  // findings.json
+  const findingsPath = path.join(attemptDir, 'findings.json');
+  assert.ok(fs.existsSync(findingsPath), 'resume: findings.json must exist');
+  const findings = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
+  assert.strictEqual(findings.status, 'absent');
 
   console.log('PASS: resume.js populates all attempt files');
 });
@@ -297,7 +311,17 @@ await withTempDir(async (dir) => {
   const eventsPath = path.join(attemptDir, 'backend-events.jsonl');
   assert.ok(fs.existsSync(eventsPath), 'findings: backend-events.jsonl must exist');
 
-  console.log('PASS: run.js populates attempt files regardless of findings content');
+  // findings.json with actual findings content
+  const findingsPath = path.join(attemptDir, 'findings.json');
+  assert.ok(fs.existsSync(findingsPath), 'findings: findings.json must exist');
+  const findings = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
+  assert.strictEqual(findings.status, 'ok', 'findings status should be ok for review text with marker');
+  assert.ok(findings.data, 'findings data must be present');
+  assert.strictEqual(findings.data.verdict, 'looks good');
+  assert.strictEqual(findings.items.length, 1);
+  assert.strictEqual(findings.items[0].severity, 'minor');
+
+  console.log('PASS: run.js populates attempt files including findings.json');
 });
 
 console.log('\nAll attempt population tests passed.');
