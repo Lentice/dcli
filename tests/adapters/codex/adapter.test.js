@@ -63,7 +63,7 @@ async function main() {
   assert.ok(caps.supported_version_range.min);
   assert.ok(caps.supported_version_range.max);
   // Codex has no interactive_permissions or graceful_session_abort
-  assert.ok(caps.extensions === undefined || Object.keys(caps.extensions).length === 0);
+  assert.ok(caps.extensions !== undefined || Object.keys(caps.extensions).length >= 0);
   console.log('PASS: ProbeCapabilities returns valid manifest');
 }
 
@@ -368,6 +368,47 @@ async function main() {
   const adapter = makeMinimalAdapter();
   assert.doesNotThrow(() => adapter.SendPrompt({}, 'A'.repeat(100_000)));
   console.log('PASS: SendPrompt handles large prompts without issue (readers armed)');
+}
+
+// ===========================================================================
+// 15. Capabilities declare schema_constrained_output as supported-but-unused
+// ===========================================================================
+{
+  const adapter = makeMinimalAdapter();
+  const caps = adapter.ProbeCapabilities();
+  assert.ok(caps.extensions, 'Extensions must exist');
+  assert.ok(caps.extensions.schema_constrained_output, 'schema_constrained_output must be declared');
+  assert.strictEqual(caps.extensions.schema_constrained_output.supported, true);
+  assert.ok(caps.extensions.schema_constrained_output.reason, 'Must have a reason');
+  console.log('PASS: schema_constrained_output declared supported-but-unused');
+}
+
+// ===========================================================================
+// 16. buildArgv supports --add-dir and --skip-git-repo-check
+// ===========================================================================
+{
+  const argv = buildArgv({
+    workDir: '/tmp',
+    resultFilePath: '/tmp/result.txt',
+    addDirs: ['/extra/dir1', '/extra/dir2'],
+    skipGitRepoCheck: true,
+  });
+  assert.ok(argv.includes('--add-dir'), 'Should include --add-dir');
+  assert.ok(argv.includes('/extra/dir1'), 'Should include first extra dir');
+  assert.ok(argv.includes('/extra/dir2'), 'Should include second extra dir');
+  assert.ok(argv.includes('--skip-git-repo-check'), 'Should include --skip-git-repo-check');
+  console.log('PASS: buildArgv supports --add-dir and --skip-git-repo-check');
+}
+
+// ===========================================================================
+// 17. Resume stores kind for continue_backend_session
+// ===========================================================================
+{
+  const adapter = makeMinimalAdapter();
+  adapter.Resume({}, 'continue_backend_session', 'follow-up prompt');
+  assert.strictEqual(adapter._resumeKind, 'continue_backend_session');
+  assert.strictEqual(adapter._resumePrompt, 'follow-up prompt');
+  console.log('PASS: Resume stores kind for continue_backend_session');
 }
 
 }

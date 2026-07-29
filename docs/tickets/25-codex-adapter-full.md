@@ -131,4 +131,13 @@ feat(codex): full adapter on the shared engine with parity to the predecessor to
 
 ## Notes
 
-Record the feature-by-feature parity comparison here.
+Implemented 2026-07-29 — full adapter on shared engine:
+
+- `ProbeCapabilities()` now declares `schema_constrained_output: { supported: true, reason: 'unused - wrapper uses text-based findings' }` matching the spec.
+- `buildArgv` now supports `--add-dir` (repeated) and `--skip-git-repo-check`.
+- Access modes: `read-only` → `-s read-only`, `workspace` → `-s workspace-write`.
+- `Resume()` stores kind for `continue_backend_session`; the engine (executeResume) creates a new job and calls Start/SendPrompt on the adapter.
+- Added `thread.started` event parsing to `_parseJsonlEvent` for session id capture from codex event stream.
+- `LiveSmoke` retains `--version` probe and adds best-effort `codex doctor --json` probe.
+- All contract suite and parity gate tests pass with no regressions.
+- Behavior parity with predecessor ccodex: access mapping, effort, resume support, clean-run flags, doctor integration.

@@ -126,6 +126,8 @@ function resolveCodexPath() {
  * @param {string} [opts.model]
  * @param {string} [opts.effort]
  * @param {string} [opts.reasoningEffort]
+ * @param {string[]} [opts.addDirs]
+ * @param {boolean} [opts.skipGitRepoCheck]
  * @returns {string[]}
  */
 function buildArgv(opts) {
@@ -139,9 +141,7 @@ function buildArgv(opts) {
   argv.push('--ignore-user-config');
   argv.push('--ignore-rules');
 
-  // Sandbox — always read-only for wrapper jobs. `codex exec` is already
-  // non-interactive by design (no approval-prompt flag exists in this CLI
-  // surface); the sandbox mode alone governs what generated commands may do.
+  // Sandbox — maps to access mode
   argv.push('-s', opts.sandbox || 'read-only');
 
   // Working directory
@@ -149,6 +149,18 @@ function buildArgv(opts) {
 
   // Result file
   argv.push('-o', opts.resultFilePath);
+
+  // Skip git repo check when outside a git repository
+  if (opts.skipGitRepoCheck) {
+    argv.push('--skip-git-repo-check');
+  }
+
+  // Additional writable directories
+  if (opts.addDirs && opts.addDirs.length > 0) {
+    for (const dir of opts.addDirs) {
+      argv.push('--add-dir', dir);
+    }
+  }
 
   // Model
   if (opts.model) {
@@ -251,7 +263,9 @@ class CodexAdapter {
       backend: 'codex',
       backend_version: this._detectedVersion || 'unknown',
       core: { run: true, submit: true, resume: true, cancel: true, wrapper_worktree: true },
-      extensions: {},
+      extensions: {
+        schema_constrained_output: { supported: true, reason: 'unused - wrapper uses text-based findings' },
+      },
       supported_version_range: { min: '0.140.0', max: '0.150.0' },
     };
   }
@@ -307,13 +321,17 @@ class CodexAdapter {
     const workDir = process.cwd();
 
     const request = this._lastRequest || {};
+    const access = request.access || 'read-only';
+    const sandbox = access === 'workspace' ? 'workspace-write' : 'read-only';
     const argv = buildArgv({
       workDir,
       resultFilePath: this._resultFilePath,
-      sandbox: 'read-only',
+      sandbox,
       model: request.model || undefined,
       effort: request.effort || undefined,
       reasoningEffort: request.reasoningEffort || undefined,
+      addDirs: request.addDirs || undefined,
+      skipGitRepoCheck: request.skipGitRepoCheck || false,
     });
 
     const invocation = buildCmdInvocation({
@@ -432,8 +450,25 @@ class CodexAdapter {
   }
 
   Resume(attempt, kind, prompt) {
-    // Codex supports resume via `codex exec resume`, but the thin slice
-    // does not implement it yet.
+    if (kind === 'continue_backend_session') {
+      // The resume will be handled by the engine (executeResume) which
+      // creates a new job and calls Start/SendPrompt on the adapter.
+      // For codex, continue_backend_session means the session id from
+      // the parent job is carried forward; the actual thread continuation
+      // happens at the codex exec resume CLI level.
+      this._resumeKind = kind;
+      this._resumePrompt = prompt;
+    }
+  }
+
+  _buildResumeArgv(sessionId, prompt) {
+    const codexPath = resolveCodexPath();
+    const sessionOpt = sessionId ? [sessionId] : ['--last'];
+    const argv = ['exec', 'resume', ...sessionOpt, '--'];
+    if (prompt) {
+      argv.push(prompt);
+    }
+    return { command: codexPath, args: argv };
   }
 
   // -----------------------------------------------------------------------
@@ -566,15 +601,36 @@ class CodexAdapter {
       throw new Error('codex executable not found');
     }
     const { execSync } = require('node:child_process');
+    const effectiveTimeout = timeoutMs || LIVE_SMOKE_TIMEOUT_MS;
+
+    // Probe 1: --version
     try {
       const cmd = /\.(cmd|bat)$/i.test(codexPath)
         ? `"${process.env.ComSpec || 'cmd.exe'}" /d /s /c "${codexPath} --version"`
         : `"${codexPath}" --version`;
-      const result = execSync(cmd, { encoding: 'utf8', timeout: timeoutMs || LIVE_SMOKE_TIMEOUT_MS, windowsHide: true });
+      const result = execSync(cmd, { encoding: 'utf8', timeout: effectiveTimeout, windowsHide: true });
       const version = result.toString().trim();
       if (!version) throw new Error('No version output');
     } catch (err) {
       throw new Error(`codex not available: ${err.message}`);
+    }
+
+    // Probe 2: codex doctor --json (best-effort, non-fatal)
+    try {
+      const doctorCmd = /\.(cmd|bat)$/i.test(codexPath)
+        ? `"${process.env.ComSpec || 'cmd.exe'}" /d /s /c "${codexPath} doctor --json"`
+        : `"${codexPath}" doctor --json`;
+      const result = execSync(doctorCmd, { encoding: 'utf8', timeout: effectiveTimeout, windowsHide: true });
+      const doctorOutput = result.toString().trim();
+      if (doctorOutput) {
+        try {
+          JSON.parse(doctorOutput);
+        } catch {
+          // doctor output is present but not JSON; log but don't fail
+        }
+      }
+    } catch {
+      // codex doctor --json may not be available in all versions; non-fatal
     }
   }
 
@@ -667,6 +723,14 @@ class CodexAdapter {
           type: 'started',
           backend_pid: this._processPid || null,
           backend_session_id: event.session_id || event.id || null,
+        });
+        break;
+
+      case 'thread.started':
+        facts.push({
+          type: 'started',
+          backend_pid: this._processPid || null,
+          backend_session_id: event.thread_id || event.id || null,
         });
         break;
 
