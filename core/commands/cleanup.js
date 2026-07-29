@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { LockManager, LOCK_SCOPES } = require('../locking');
+const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 
 const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
 
@@ -51,7 +51,7 @@ function jobAgeMs(status) {
 }
 
 async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
-  const lockManager = new LockManager({ lockDir: path.join(store._stateRoot, 'locks'), timeoutMs: 100 });
+  const lockManager = lockManagerForStore(store, { timeoutMs: 100 });
   const jobsDir = path.join(store._stateRoot, 'jobs');
 
   const ageThresholdMs = olderThan ? parseDuration(olderThan) : 0;

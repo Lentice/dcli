@@ -259,9 +259,21 @@ class LockManager {
   }
 }
 
+/**
+ * Build a LockManager scoped to a job store's own state root, so its locks
+ * are visible under that store's root rather than the process-global default.
+ * @param {{ _stateRoot: string }} store
+ * @param {object} [options] extra LockManager options (e.g. timeoutMs)
+ * @returns {LockManager}
+ */
+function lockManagerForStore(store, options = {}) {
+  return new LockManager({ ...options, lockDir: path.join(store._stateRoot, 'locks') });
+}
+
 module.exports = {
   LockManager,
   LOCK_SCOPES,
   LOCK_EXIT_CODE,
   DEFAULT_TIMEOUT_MS,
+  lockManagerForStore,
 };

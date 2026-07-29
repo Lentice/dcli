@@ -1,4 +1,4 @@
-const { LockManager, LOCK_SCOPES } = require('../locking');
+const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 const { getDiff } = require('../worktree');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
@@ -44,9 +44,10 @@ function executeDiff({ store, repoKey, jobId, stat, nameOnly }) {
     throw err;
   }
 
-  const locks = new LockManager();
+  const locks = lockManagerForStore(store);
 
   const leaseLock = locks.acquire(LOCK_SCOPES.JOB_LEASE, jobId, { operation: 'diff' });
+  const applyLock = locks.acquire(LOCK_SCOPES.APPLY, repoKey, { operation: 'diff' });
   try {
     let format = null;
     if (stat) format = 'stat';
@@ -63,6 +64,7 @@ function executeDiff({ store, repoKey, jobId, stat, nameOnly }) {
 
     return { text: diffOutput, exitCode: 0 };
   } finally {
+    locks.release(applyLock);
     locks.release(leaseLock);
   }
 }

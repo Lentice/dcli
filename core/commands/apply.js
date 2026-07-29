@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
-const { LockManager, LOCK_SCOPES } = require('../locking');
+const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 const {
   getHeadCommit,
   getStatusPorcelain,
@@ -42,6 +42,16 @@ function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntrac
   const repoRoot = status.repo_root;
   if (!repoRoot) { const e = new Error(`Job ${jobId} has no repo_root`); e.exitCode = 11; throw e; }
 
+  // Validate the repo state before any git call that reads/mutates it, per
+  // AGENTS.md #6 (validate before you convert/act) — a bad repoRoot must
+  // surface as a clean, expected error rather than a raw git subprocess crash.
+  if (!isGitRepo(repoRoot)) { const e = new Error(`Not a git repo: ${repoRoot}`); e.exitCode = 23; throw e; }
+  if (hasUnresolvedConflicts(repoRoot)) { const e = new Error('Unresolved conflicts'); e.exitCode = 2; throw e; }
+  // isNestedRepo(p) really asks "is p its own git toplevel"; here it catches
+  // repoRoot itself being a subdirectory of some larger enclosing repo.
+  if (isNestedRepo(repoRoot)) { const e = new Error('Nested repository'); e.exitCode = 2; throw e; }
+  if (hasResidualGitState(repoRoot)) { const e = new Error('In-progress am/rebase/cherry-pick'); e.exitCode = 2; throw e; }
+
   const baseCommit = wi.base_commit;
   const resultCommit = wi.result_commit;
   const commitCount = getCommitCount(repoRoot, baseCommit, resultCommit);
@@ -51,11 +61,6 @@ function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntrac
     const e = new Error('--reset-author/--message not supported for multi-commit series');
     e.exitCode = 2; throw e;
   }
-
-  if (!isGitRepo(repoRoot)) { const e = new Error(`Not a git repo: ${repoRoot}`); e.exitCode = 23; throw e; }
-  if (hasUnresolvedConflicts(repoRoot)) { const e = new Error('Unresolved conflicts'); e.exitCode = 2; throw e; }
-  if (isNestedRepo(repoRoot)) { const e = new Error('Nested repository'); e.exitCode = 2; throw e; }
-  if (hasResidualGitState(repoRoot)) { const e = new Error('In-progress am/rebase/cherry-pick'); e.exitCode = 2; throw e; }
 
   const preStatusText = getStatusPorcelain(repoRoot);
   const preUntracked = getUntrackedFilesFromStatus(preStatusText);
@@ -74,7 +79,7 @@ function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntrac
     e.exitCode = 2; throw e;
   }
 
-  const locks = new LockManager();
+  const locks = lockManagerForStore(store);
   const applyLock = locks.acquire(LOCK_SCOPES.APPLY, repoKey, { operation: 'apply', jobId });
 
   try {

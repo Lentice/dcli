@@ -140,25 +140,15 @@ class JobStore {
         if (d.tokens !== undefined) updated.tokens = d.tokens;
         if (d.cost !== undefined) updated.cost = d.cost;
         if (d.session_strategy !== undefined) updated.session_strategy = d.session_strategy;
-        if (d.worktree_path !== undefined) {
+        if (d.worktree_path !== undefined || d.worktree_base_commit !== undefined ||
+            d.worktree_result_commit !== undefined || d.worktree_changed_files !== undefined ||
+            d.worktree_finalize_error !== undefined) {
           if (!updated.worktree) updated.worktree = { path: null, base_commit: null, result_commit: null, changed_files: null };
-          updated.worktree.path = d.worktree_path;
-        }
-        if (d.worktree_base_commit !== undefined) {
-          if (!updated.worktree) updated.worktree = { path: null, base_commit: null, result_commit: null, changed_files: null };
-          updated.worktree.base_commit = d.worktree_base_commit;
-        }
-        if (d.worktree_result_commit !== undefined) {
-          if (!updated.worktree) updated.worktree = { path: null, base_commit: null, result_commit: null, changed_files: null };
-          updated.worktree.result_commit = d.worktree_result_commit;
-        }
-        if (d.worktree_changed_files !== undefined) {
-          if (!updated.worktree) updated.worktree = { path: null, base_commit: null, result_commit: null, changed_files: null };
-          updated.worktree.changed_files = d.worktree_changed_files;
-        }
-        if (d.worktree_finalize_error !== undefined) {
-          if (!updated.worktree) updated.worktree = { path: null, base_commit: null, result_commit: null, changed_files: null };
-          updated.worktree.finalize_error = d.worktree_finalize_error;
+          if (d.worktree_path !== undefined) updated.worktree.path = d.worktree_path;
+          if (d.worktree_base_commit !== undefined) updated.worktree.base_commit = d.worktree_base_commit;
+          if (d.worktree_result_commit !== undefined) updated.worktree.result_commit = d.worktree_result_commit;
+          if (d.worktree_changed_files !== undefined) updated.worktree.changed_files = d.worktree_changed_files;
+          if (d.worktree_finalize_error !== undefined) updated.worktree.finalize_error = d.worktree_finalize_error;
         }
         break;
       }

@@ -598,6 +598,68 @@ async function main() {
     }
   });
 
+  // ===========================================================================
+  // 24. apply validates repo state before running any git call that could
+  //     crash on a bad repoRoot (AGENTS.md #6 — validate before you act).
+  //     A repoRoot whose .git vanished between job creation and apply must
+  //     surface as the clean "Not a git repo" error, not a raw crash from
+  //     getCommitCount running first.
+  // ===========================================================================
+  await testAsync('24. apply validates repo state before computing commit count', async () => {
+    const { executeApply } = require('../../core/commands/apply');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-badrepo-'));
+    try {
+      const repoRoot = path.join(root, 'repo');
+      initRepo(repoRoot);
+      const store = new JobStore({ stateRoot: root });
+      const jobId = 'badrepo-job';
+      store.createJob({ jobId, repoKey: 'rk', repoRoot, backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0', mode: 'implement', access: 'workspace' });
+      store.createAttemptDir({ repoKey: 'rk', jobId, attemptNum: 1 });
+      const bc = getHeadCommit(repoRoot);
+      store.journalTransition(jobId, 'rk', { kind: 'attempt_created', attempt: 1, from: null, to: 'created', detail: { attempt_id: 'a1', execution_token: 't1' } });
+      store.journalTransition(jobId, 'rk', { kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'running', detail: { worktree_path: '/tmp/fake', worktree_base_commit: bc, worktree_result_commit: bc } });
+      store.journalTransition(jobId, 'rk', { kind: 'attempt_state_changed', attempt: 1, from: 'running', to: 'done', detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal' } });
+      // Simulate the .git directory vanishing between job creation and apply.
+      fs.rmSync(path.join(repoRoot, '.git'), { recursive: true, force: true });
+      let threw = null;
+      try { executeApply({ store, repoKey: 'rk', jobId }); } catch (e) { threw = e; }
+      assert.ok(threw, 'apply must throw on a non-git repoRoot');
+      assert.strictEqual(threw.exitCode, 23, 'must report exit 23 (not a git repo), not a getCommitCount crash');
+      assert.ok(/not a git repo/i.test(threw.message), `error must be the clean repo-state message: ${threw.message}`);
+    } finally {
+      try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  // ===========================================================================
+  // 25. diff/apply scope their locks to the job store's own state root, not
+  //     the process-global default one — otherwise a custom/test state root
+  //     never sees lock activity and two jobs on different state roots could
+  //     never actually serialize against each other (regression: both
+  //     commands previously did `new LockManager()` with no lockDir).
+  // ===========================================================================
+  await testAsync('25. diff/apply locks are scoped to the job store state root', async () => {
+    const { executeDiff } = require('../../core/commands/diff');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-lockscope-'));
+    try {
+      const repoRoot = path.join(root, 'repo');
+      initRepo(repoRoot);
+      const store = new JobStore({ stateRoot: root });
+      const jobId = 'lockscope-job';
+      store.createJob({ jobId, repoKey: 'rk', repoRoot, backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0', mode: 'implement', access: 'workspace' });
+      store.createAttemptDir({ repoKey: 'rk', jobId, attemptNum: 1 });
+      const bc = getHeadCommit(repoRoot);
+      store.journalTransition(jobId, 'rk', { kind: 'attempt_created', attempt: 1, from: null, to: 'created', detail: { attempt_id: 'a1', execution_token: 't1' } });
+      store.journalTransition(jobId, 'rk', { kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'running', detail: { worktree_path: '/tmp/fake', worktree_base_commit: bc, worktree_result_commit: bc } });
+      store.journalTransition(jobId, 'rk', { kind: 'attempt_state_changed', attempt: 1, from: 'running', to: 'done', detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal' } });
+      assert.ok(!fs.existsSync(path.join(root, 'locks')), 'sanity: locks dir must not pre-exist');
+      executeDiff({ store, repoKey: 'rk', jobId });
+      assert.ok(fs.existsSync(path.join(root, 'locks')), 'diff must create its lock directory under the job store\'s own state root');
+    } finally {
+      try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+    }
+  });
+
   console.log(`\nAll tests: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }
