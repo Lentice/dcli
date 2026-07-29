@@ -64,6 +64,33 @@ R6 failure condition — if it does escape, record it and escalate rather than s
 - Doctor probe: confirm the sentinel round-trips (spawn a trivial worker, assert it sees the sentinel) and that
   the depth limit is enforced.
 
+## Where this actually wires in — there is no existing scaffolding for it
+
+This is genuinely new: `DCLI_WORKER`/`DCLI_DEPTH` do not exist anywhere in the codebase yet (checked
+across `core/`, `adapters/`, `cli/`), and there is no precedent adapter to mirror the way ticket 25
+was a precedent for ticket 26. Two distinct places need code, and it's easy to conflate them:
+
+1. **The stamping side** — when `dcli-claude`'s adapter spawns the `claude` child process (the
+   `Start()` method on `ClaudeAdapter` from ticket 26, analogous to `adapters/codex/adapter.js:309`),
+   it must build that child's `env` with `DCLI_WORKER=1` and `DCLI_DEPTH=<parentDepth + 1>` merged
+   into `process.env` (default parent depth is 0 when `DCLI_WORKER` is absent from the current
+   process). `core/child-process.js` and `core/containment.js` already accept an `env` option on
+   spawn (`core/child-process.js:106`, `core/containment.js:172`) — pass the sentinel through that
+   existing option, don't add a second env-injection path.
+2. **The reading side** — `cli/dcli-claude.js`'s entrypoint (which ticket 26 also has to create; see
+   its ticket for the "mirror `cli/dcli-codex.js`" pointer) reads `process.env.DCLI_WORKER`/
+   `DCLI_DEPTH` from **its own** process environment, before doing any other work, and exits `2` if
+   depth is at or above the limit. This is a *different process* from the one that stamped the
+   env — the chain is: outer `dcli-claude` → spawns `claude` child with the sentinel in its env →
+   if that `claude` session shells out to `dcli-claude` again, the OS inherits the sentinel into
+   that nested `dcli-claude` process automatically. Don't try to pass the depth as a CLI argument or
+   IPC message; env inheritance is what makes it survive a rediscovered-skill invocation the wrapper
+   didn't orchestrate.
+
+Because ticket 27 is blocked by 26, sequence the work so the `Start()` env-building code and the
+entrypoint depth-check land together — a recursion guard that only does one half is worse than
+useless, since it looks tested but isn't.
+
 ## Pitfalls
 
 - Do not rely on instruction alone. A model reading "don't do this" is not a guard.

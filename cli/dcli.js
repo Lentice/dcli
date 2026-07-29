@@ -102,7 +102,7 @@ async function main() {
   try {
     const adapterPath = path.resolve(__dirname, '..', 'adapters', backend, 'adapter');
     const mod = require(adapterPath);
-    const AdapterClass = mod.FakeAdapter || mod[Object.keys(mod)[0]];
+    const AdapterClass = mod.ClaudeAdapter || mod.CodexAdapter || mod.OpencodeAdapter || mod.FakeAdapter || mod[Object.keys(mod)[0]];
     adapter = new AdapterClass({ facts: getDefaultFacts(), exitCode: 0, declaredRungs: ['hard_kill'], capabilities: getDefaultCapabilities(backend) });
   } catch (err) {
     console.error(`Failed to load adapter "${backend}": ${err.message}`);

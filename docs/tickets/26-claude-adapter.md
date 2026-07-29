@@ -68,6 +68,47 @@ Not used, recorded as namespaced extensions: `-w/--worktree`, `--bg`/`claude age
 `--session-id` accepting a caller-supplied UUID is genuinely useful: assign it up front instead of scraping it
 from output, which removes a whole class of lineage bug.
 
+## Concrete patterns to reuse — don't reinvent these
+
+`adapters/codex/adapter.js` (752 lines) is a completed, tested adapter on the same engine, built by
+ticket 25. It is not just prose guidance — it is the pattern to mirror line-by-line where the shape
+matches:
+
+- **Method surface.** `adapters/fake/adapter.js` is the definitive shape every adapter implements —
+  `GetIdentity`, `DetectVersion`, `ProbeCapabilities`, `DeclareCancelRungs`, `ValidateRequest`,
+  `PrepareInvocation`, `Start`, `Observe` (async generator yielding facts), `SendPrompt`, `Resume`,
+  `Respond`, `RequestCancel`, `CollectResult`, `CollectDiagnostics`, `Dispose`, `Recover`,
+  `LiveSmoke`. Build `ClaudeAdapter` against this shape from the start rather than discovering
+  missing methods when the contract suite fails.
+- **Executable resolution.** `resolveVendorBinaryNear`/`resolveCodexPath` in
+  `adapters/codex/adapter.js:21,77` resolve past the npm `.cmd`/`.ps1` shim ambiguity. `claude` has
+  the identical npm-shim shape — mirror this resolver, don't write a second one from scratch.
+- **`.cmd` quoting.** `adapters/codex/cmd-quoting.js` (92 lines, covered by
+  `tests/adapters/codex/cmd-quoting.test.js`) is the two-layer Win32-plus-metacharacter quoting this
+  project already got right once. `claude.cmd` has the same `EINVAL`-on-direct-spawn problem
+  (`docs/reference/cli-claude.md:211`). **Do not copy-paste a second implementation of this
+  file** — import it directly from `adapters/codex/cmd-quoting.js`, or if that import feels wrong
+  layered across adapter boundaries, move it to a shared location (e.g. `core/`) and have both
+  adapters import the one copy. A hand-rewritten duplicate is exactly the kind of drift AGENTS.md's
+  invariant 1 exists to prevent, even though quoting logic itself isn't the backend-conditional the
+  invariant is aimed at.
+- **CLI entrypoint.** There is no `cli/dcli-claude.js` yet — only `cli/dcli.js`, `cli/dcli-codex.js`,
+  `cli/dcli-opencode.js` exist. Mirror `cli/dcli-codex.js`'s structure (argument parsing, dispatch,
+  the "help exits before heavyweight imports" rule from `AGENTS.md`) rather than designing the
+  entrypoint shape fresh.
+- **Resume wiring.** Per ticket 25's Notes: `Resume()` just records the resume kind; the **engine**
+  (`executeResume`) is what creates the new job and calls `Start`/`SendPrompt` on the adapter. Reuse
+  that engine call path for `-r/--resume <session-id>` + `--fork-session` — do not build a
+  claude-specific resume flow in the adapter.
+- **Supported-but-unused capabilities.** Ticket 25 declared `--output-schema` as
+  `{ supported: true, reason: '...' }` rather than omitting it or silently ignoring it. Apply the
+  same shape to `--json-schema`, native worktree (`-w`), `--bg`/`claude agents`, `--from-pr`, and
+  `ultrareview` — each gets a `ProbeCapabilities()` entry naming why it's unused, not just a line in
+  this doc.
+- **Gates to actually run.** `tests/contract/contract.test.js` and
+  `tests/contract/parity-gate.test.js` are the suites that must pass — run them directly while
+  iterating, not only at the end via `--suite full`.
+
 ## Design
 
 1. `Start`: `claude -p --output-format stream-json --session-id <uuid> …` under containment, argv as an array.

@@ -213,14 +213,52 @@ adapter for this backend, not delegated as it can be for Codex.
 `claude` is npm-installed and exposes `claude.cmd` on Windows. Since the Node 18.20 / 20.12 security fix,
 `spawn("claude.cmd", …)` fails with **`EINVAL`** (verified on Node v24.18.0 here). Spawn `%ComSpec%` explicitly
 with `/d /s /c` and a pre-quoted inner line, windowless (`windowsHide: true`). `shell: true` is banned.
-## Open verification items specific to this backend
 
-1. Can `claude -p` block indefinitely on a permission decision, like opencode's CLI (study §5)?
-   Which `--permission-mode` values are safe for unattended runs?
-2. Does `--input-format stream-json` provide a way to *answer* a permission request mid-run?
-3. Does `--bare` break auth on an OAuth-only host? (Probe in `doctor`.)
-4. Exact `stream-json` event schema — message types, how the final assistant text is identified,
-   how errors and denials surface, and whether `--include-partial-messages` changes framing.
-5. Whether `--json-schema` failures degrade gracefully or corrupt the session (the opencode failure
-   mode, study §8).
-6. Whether a `-p` worker can still discover and invoke `dcli-claude` despite the recursion guard.
+`codex` has the identical npm `.cmd`-shim shape, and `adapters/codex/cmd-quoting.js` (covered by
+`tests/adapters/codex/cmd-quoting.test.js`) already implements the two-layer Win32-plus-metacharacter
+quoting this needs. Import that module for the Claude adapter rather than re-deriving it — a
+hand-rewritten duplicate risks drifting from the one this project already got right.
+
+## Recursion guard: `DCLI_WORKER` / `DCLI_DEPTH`
+
+`dcli-claude` wrapping Claude Code means a worker session can rediscover the same skill and delegate
+again. The wrapper's guard (ticket 27) is an environment sentinel, not a CLI flag Claude Code itself
+understands:
+
+- The adapter's `Start()` stamps `DCLI_WORKER=1` and `DCLI_DEPTH=<parentDepth + 1>` into the spawned
+  `claude` child's environment (parent depth is 0 when the current process has no `DCLI_WORKER`).
+- `cli/dcli-claude.js` reads both from its own `process.env` at the very start of the entrypoint —
+  before argument parsing does any real work — and exits `2` if depth is at or above the configured
+  limit (default 1).
+- This relies on **OS environment inheritance**, not an argument or IPC channel: if the spawned
+  `claude` process later shells out to `dcli-claude` again on its own (a rediscovered skill, not
+  something the wrapper orchestrated), that nested process inherits the sentinel automatically and
+  fails fast at startup.
+
+Nothing in `core/`, `adapters/`, or `cli/` implements this yet — there is no existing scaffolding to
+mirror, unlike most of this adapter's other mechanics.
+
+---
+
+## Verification results (verified 2026-07-29 on claude 2.1.220)
+
+1. **`claude -p` does NOT block with `--permission-mode auto`** (the default in print mode).
+   `auto` auto-approves safe operations without prompting. Safe unattended values: `auto`, `dontAsk`.
+   `manual` can block. `--dangerously-skip-permissions` works but is not needed.
+2. **`--input-format stream-json` exists** but its use as a permission control channel is not needed
+   since `--permission-mode auto` handles unattended permissions. Unverified as a control channel.
+3. **`--bare` breaks OAuth auth** — the help explicitly states "Anthropic auth is strictly
+   ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read)."
+   `--safe-mode` is the preferred base for wrapper jobs.
+4. **`stream-json` event schema** (verified):
+   - `system` (subtype: `init`, `hook_started`, `hook_response`) — startup metadata
+   - `assistant` — message with `message.content[0].text` for response text
+   - `rate_limit_event` — rate limit info
+   - `result` — final event with `stop_reason`, `is_error`, `errors[]`, `permission_denials[]`,
+     `total_cost_usd`, `terminal_reason`. Normal completion: `stop_reason: "end_turn"`.
+     Budget exhaustion: `is_error: true`, `terminal_reason: "budget_exhausted"`.
+   - `--include-partial-messages` shows partial chunks; not needed for the final result.
+5. **`--json-schema` degrades gracefully** — errors are reported in the result object
+   (`is_error`, `errors[]`), not crashing the session.
+6. **`--safe-mode` disables all skills** — verified in a live test. A `-p` worker under
+   `--safe-mode` cannot discover or invoke skills. This satisfies the recursion guard layer 2.
