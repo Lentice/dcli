@@ -382,4 +382,64 @@ const GENERATED_DIR = path.resolve(__dirname, '../../integration/generated');
   console.log('PASS: generate test 9 — worker prompts are role-specific and contract-complete');
 }
 
+// ---------------------------------------------------------------------------
+// 10. Any findings appendix a document shows as an example must actually parse.
+//
+// A worked example is the form a reader copies. core.md shipped one with the
+// marker *inside* the ```json fence, which parseFindings rejects — so the
+// canonical documentation taught the exact shape that produces
+// findings_status: malformed.
+// ---------------------------------------------------------------------------
+{
+  const { parseFindings, APPENDIX_MARKER } = require('../../core/findings');
+
+  const docFiles = [];
+  const collect = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) collect(p);
+      else if (entry.name.endsWith('.md')) docFiles.push(p);
+    }
+  };
+  collect(GENERATED_DIR);
+  collect(path.resolve(__dirname, '../../integration/source'));
+
+  let examples = 0;
+  for (const file of docFiles) {
+    const content = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(process.cwd(), file);
+
+    // An example is a marker followed by a JSON object somewhere below it.
+    // Only consider occurrences that actually carry a JSON body, so prose
+    // references to the marker are not mistaken for worked examples.
+    const idx = content.indexOf(APPENDIX_MARKER);
+    if (idx === -1) continue;
+    const after = content.slice(idx + APPENDIX_MARKER.length);
+    if (!/^\s*(```json|\{)/.test(after)) continue;
+
+    examples++;
+    // Reconstruct the example as a worker would emit it and parse it for real.
+    const jsonMatch = after.match(/\{[\s\S]*?\n\}/);
+    assert.ok(jsonMatch, `${rel}: findings example has no JSON object body`);
+    const candidate = APPENDIX_MARKER + '\n```json\n' + jsonMatch[0] + '\n```\n';
+    const parsed = parseFindings(candidate);
+    assert.strictEqual(
+      parsed.status, 'ok',
+      `${rel}: the documented findings example does not parse (${parsed.error}). ` +
+      `Readers copy this shape verbatim.`
+    );
+
+    // And the marker must be shown outside the fence, as the parser requires.
+    const fenceThenMarker = new RegExp('```json\\s*\\n\\s*' + APPENDIX_MARKER.replace(/[-[\]{}()*+?.,\\^$|#]/g, '\\$&'));
+    assert.ok(
+      !fenceThenMarker.test(content),
+      `${rel}: shows the marker inside the \`\`\`json fence. The parser requires the marker ` +
+      `on its own line BEFORE the fence; the documented form yields findings_status: malformed.`
+    );
+  }
+
+  assert.ok(examples > 0, 'test must actually have found a documented findings example');
+  console.log(`PASS: generate test 10 — ${examples} documented findings examples parse`);
+}
+
 console.log('All integration generation tests passed.');

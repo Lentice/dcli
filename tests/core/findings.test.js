@@ -418,6 +418,52 @@ Even with multiple paragraphs.
 }
 
 // ===========================================================================
+// 19. Windows-absolute and UNC paths are rejected, not just POSIX `/`.
+//
+// win32 is this project's primary platform, and a findings appendix is
+// untrusted input. Checking only for a leading `/` let `C:\Windows\...`,
+// `D:/...` and `\\server\share\...` through as "repository-relative", which is
+// precisely the validation this field exists to perform.
+// ===========================================================================
+{
+  const { parseFindings, APPENDIX_MARKER } = require('../../core/findings');
+  const B = String.fromCharCode(92); // backslash, kept out of source literals
+  const mk = (file) =>
+    APPENDIX_MARKER + '\n```json\n' +
+    JSON.stringify({ verdict: 'v', items: [{ severity: 'minor', claim: 'c', file }] }) +
+    '\n```\n';
+
+  const mustReject = [
+    ['posix absolute', '/etc/passwd'],
+    ['windows drive, backslash', 'C:' + B + 'Windows' + B + 'System32' + B + 'evil'],
+    ['windows drive, forward slash', 'D:/Documents/secret'],
+    ['windows drive, lowercase', 'c:/temp/x'],
+    ['UNC share', B + B + 'server' + B + 'share' + B + 'x'],
+    ['posix traversal', '../../escape'],
+    ['windows traversal', '..' + B + '..' + B + 'escape'],
+  ];
+
+  for (const [label, file] of mustReject) {
+    const result = parseFindings(mk(file));
+    assert.strictEqual(
+      result.status, 'malformed',
+      `${label} must be rejected as not repository-relative: ${JSON.stringify(file)}`
+    );
+  }
+
+  // The check must not start rejecting legitimate relative paths.
+  const mustAccept = ['src/a.js', 'src' + B + 'a.js', 'a.js', 'deep/nested/dir/file.ts'];
+  for (const file of mustAccept) {
+    const result = parseFindings(mk(file));
+    assert.strictEqual(
+      result.status, 'ok',
+      `legitimate relative path must be accepted: ${JSON.stringify(file)} (${result.error})`
+    );
+  }
+  console.log('PASS: findings test 19 — windows-absolute and UNC paths rejected');
+}
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll findings parser tests passed.');

@@ -26,6 +26,39 @@ Without both, a stalled job can silently consume an entire working session.
 - **Keep review intent neutral.** Intent is context, not evidence of correctness.
 - **Keep delegated work out of your context until collection.** When token saving is the point, use `submit` + later `read` rather than `run`.
 
+## Never treat progress as completion
+
+A job holding a finished result while its process tree is still alive is a real,
+observed condition — not a theoretical one. So:
+
+- **Decide from the terminal state**, read via `status` or the value `wait`
+  returns. A phase, a log line, a progress message, or "the backend said it was
+  done" is not a completion signal.
+- **When `wait` returns, check why.** Exit 20 means the wait budget elapsed, not
+  that the job failed — the job is still running and you may wait again. Do not
+  read exit 20 as a result.
+- **A wait without `--timeout-sec` is a defect**, even in a throwaway one-liner.
+  An unbounded wait once consumed an entire working session while the backend's
+  result had been sitting complete for minutes.
+
+## Cancelling and cleaning up
+
+- **Preview before deleting.** Run `cleanup --dry-run` first and read what it
+  lists. Retention once removed a worktree mid-operation and destroyed the only
+  artifact needed to retry the work.
+- **A cancel is not confirmed until the state says so.** Exit 21 means
+  cancellation could not be confirmed — check `status` rather than assuming the
+  job is dead.
+- **Never clean up a job whose diff you have not yet inspected or applied.** The
+  worktree is the artifact; once it is gone the work cannot be recovered.
+
+## An advisory review does not block your task
+
+A delegated review is advice, not a gate. If it returns late, returns
+`malformed`, or fails outright, say so and continue with your own work — do not
+stall the engineer's task waiting on a second opinion, and do not silently
+adopt an unverified finding to close the loop.
+
 ## Failure-class reference
 
 | Exit | Class | Reaction |
@@ -50,26 +83,47 @@ Without both, a stalled job can silently consume an entire working session.
 
 ## Findings contract
 
-A review result may carry a machine-readable findings appendix:
+A review result carries a machine-readable findings appendix. The marker sits on
+its own line, **before** the fence — a marker inside the fence does not parse:
 
-```json
 <!-- dcli:findings -->
+```json
 {
   "verdict": "One-line verdict.",
   "items": [
-    { "severity": "critical|important|minor",
-      "file": "relative/path.ts", "line": 42,
+    { "severity": "important",
+      "file": "relative/path.ts",
+      "line": 42,
       "claim": "One-sentence defect claim.",
-      "evidence": "Why this is real and reachable.",
-      "suggested_fix": "Concrete correction." }
+      "evidence": "Why this is real and reachable." }
   ]
 }
 ```
 
-- `findings_status: ok` — findings were parsed successfully
-- `findings_status: absent` — no findings appendix found (reviewer found nothing or chose not to produce structured output)
-- `findings_status: malformed` — an appendix was found but could not be parsed. This is **not** a clean review.
-- Truncated or duplicate markers are `malformed`, not clean.
+Fields:
+
+- `verdict` — required, non-empty, one line.
+- `items` — required, always an array.
+- `severity` — required per item, one of `critical`, `important`, `minor`.
+- `claim` — required per item, non-empty.
+- `file` — repository-relative, or null. Absolute paths (including `C:\...`,
+  `D:/...` and `\\server\share\...`) and `..` traversal are rejected.
+- `line`, `evidence`, `suggested_fix` — optional, may be null.
+
+The appendix must be the last thing in the output, and must appear exactly once.
+
+Reading the status:
+
+- `findings_status: ok` — the appendix parsed. An **empty `items` array is a clean
+  review**, and it is the only way a reviewer can report "I found nothing".
+- `findings_status: absent` — no appendix at all. This does **not** mean clean; it
+  means the reviewer did not produce the required structured output, so you do not
+  know what it concluded.
+- `findings_status: malformed` — an appendix was found but could not be parsed.
+  Also **not** a clean review. Truncated JSON and duplicate markers land here.
+
+For `absent` and `malformed`, read the prose in `result.md` — it is always
+preserved — and treat the structured verdict as missing rather than empty.
 
 
 # dcli-codex skill

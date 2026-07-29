@@ -1,3 +1,5 @@
+const path = require('path');
+
 const APPENDIX_MARKER = '<!-- dcli:findings -->';
 const MAX_APPENDIX_BYTES = 100 * 1024;
 const MAX_ITEMS = 100;
@@ -131,6 +133,17 @@ function findAllMarkers(text) {
   return positions;
 }
 
+// Deliberately platform-independent: a findings appendix is untrusted input and
+// may have been produced anywhere, so a Windows-absolute path is rejected even
+// when the parser happens to be running on POSIX, and vice versa. Uses
+// path.isAbsolute() only as a supplement — its answer depends on the host.
+function isAbsolutePath(p) {
+  if (p.startsWith('/') || p.startsWith('\\')) return true;   // POSIX root, UNC, rooted-drive-relative
+  if (/^[A-Za-z]:[/\\]/.test(p)) return true;                 // C:\... or C:/...
+  if (/^[A-Za-z]:/.test(p)) return true;                      // C:foo — drive-relative, still not repo-relative
+  return path.isAbsolute(p);
+}
+
 function validateFindingsData(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return 'Findings data must be a JSON object';
@@ -166,7 +179,11 @@ function validateFindingsData(data) {
       if (typeof item.file !== 'string') {
         return `Item ${i}: file must be a string or null`;
       }
-      if (item.file.startsWith('/')) {
+      // Absolute in every form this tool can encounter, not just POSIX. win32
+      // is the primary platform, so a leading-slash check alone let
+      // `C:\Windows\...`, `D:/...` and `\\server\share\...` through as
+      // "repository-relative" — the one thing this validation exists to stop.
+      if (isAbsolutePath(item.file)) {
         return `Item ${i}: absolute path "${item.file}" is not allowed`;
       }
       if (item.file.includes('..')) {
