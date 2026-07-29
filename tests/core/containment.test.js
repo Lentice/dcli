@@ -1,4 +1,5 @@
 // @suite full
+// @serial  kills process trees; asserts descendant sets
 const assert = require('node:assert');
 const { spawn, execSync } = require('node:child_process');
 const path = require('path');

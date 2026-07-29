@@ -1,4 +1,5 @@
 // @suite full
+// @serial  wall-clock deadline assertions, load-sensitive
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');

@@ -48,7 +48,7 @@ function loadModules() {
 
 {
   // Test state root can be overridden by DCLI_STATE_ROOT
-  const customRoot = path.join(os.tmpdir(), 'dcli-custom-root');
+  const customRoot = path.join(os.tmpdir(), `dcli-custom-root-${Math.random().toString(36).slice(2)}`);
   process.env.DCLI_STATE_ROOT = customRoot;
   // reload module fresh
   delete require.cache[require.resolve('../../core/state-root')];
@@ -771,12 +771,13 @@ console.log('PASS: append-only fixture loading');
   loadModules();
   
   const testPaths = [];
+  const suffix = Math.random().toString(36).slice(2);
   
   // Path with spaces
-  testPaths.push(path.join(os.tmpdir(), 'dcli test path with spaces'));
+  testPaths.push(path.join(os.tmpdir(), `dcli test path with spaces ${suffix}`));
   
   // Path with non-ASCII characters (if supported)
-  testPaths.push(path.join(os.tmpdir(), 'dcli-测试-路径'));
+  testPaths.push(path.join(os.tmpdir(), `dcli-测试-${suffix}`));
   
   for (const testDir of testPaths) {
     try {

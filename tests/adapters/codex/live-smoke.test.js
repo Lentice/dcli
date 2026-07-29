@@ -1,4 +1,5 @@
 // @suite full
+// @serial  live backend; external rate limits
 const assert = require('node:assert');
 const { execSync } = require('node:child_process');
 const { CodexAdapter } = require('../../../adapters/codex/adapter');

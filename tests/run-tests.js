@@ -1,24 +1,154 @@
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const os = require('os');
+const { spawn } = require('child_process');
 
-const ROOT = __dirname;
-const SENTINEL = '// @suite full';
-const SUITE = parseSuite();
+const SENTINEL_FULL = '// @suite full';
+const SENTINEL_SERIAL = '// @serial';
+const DEFAULT_TIMEOUT = 120_000;
+const MAX_OUTPUT = 256 * 1024;
+const DRAIN_TIMEOUT = 50;
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /**
- * @returns {'quick' | 'full'}
+ * @param {object} opts
+ * @param {string} [opts.root]  defaults to __dirname
+ * @param {number} [opts.concurrency]  defaults to max(1, cpus-2)
+ * @param {number} [opts.timeoutMs]  defaults to DEFAULT_TIMEOUT
+ * @param {'quick'|'full'} [opts.suite]  defaults to 'quick'
+ * @returns {Promise<{output: string, anyFailed: boolean}>}
  */
-function parseSuite() {
-  const args = process.argv.slice(2);
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--suite') {
-      if (args[i + 1] === 'full') return 'full';
-      return 'quick';
+async function runTests(opts) {
+  const root = opts.root || __dirname;
+  const suite = opts.suite || 'quick';
+  const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT;
+  const concurrency = opts.concurrency != null ? opts.concurrency : Math.max(1, os.cpus().length - 2);
+
+  const allFiles = discoverTests(root);
+  const fileMeta = allFiles.map(f => ({
+    path: f,
+    rel: path.relative(root, f),
+    group: getGroup(root, f),
+    isFull: hasSentinel(f, SENTINEL_FULL),
+    isSerial: hasSentinel(f, SENTINEL_SERIAL),
+  }));
+
+  const toRun = suite === 'full' ? fileMeta : fileMeta.filter(f => !f.isFull);
+  const serial = toRun.filter(f => f.isSerial);
+  const parallel = toRun.filter(f => !f.isSerial);
+
+  const parallelResults = await runParallelBatch(parallel, concurrency, timeoutMs);
+  const serialResults = [];
+  for (const f of serial) {
+    const r = await runSingle(f, timeoutMs);
+    serialResults.push(r);
+  }
+  const allResults = [...parallelResults, ...serialResults];
+
+  return formatResults(fileMeta, allResults, suite);
+}
+
+module.exports = { runTests };
+
+// ---------------------------------------------------------------------------
+// CLI entry point
+// ---------------------------------------------------------------------------
+
+if (require.main === module) {
+  const args = parseArgs();
+  if (args.exitCode) {
+    process.stderr.write(args.message + '\n');
+    process.exit(args.exitCode);
+  }
+  runTests(args.opts).then(({ output, anyFailed }) => {
+    process.stdout.write(output);
+    process.exit(anyFailed ? 1 : 0);
+  }).catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Argument parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * @returns {{ opts: import('./run-tests').RunTestsOpts } | { exitCode: number, message: string }}
+ */
+function parseArgs() {
+  const raw = process.argv.slice(2);
+  const opts = {
+    root: __dirname,
+    concurrency: undefined,
+    timeoutMs: undefined,
+    suite: 'quick',
+  };
+
+  for (let i = 0; i < raw.length; i++) {
+    const arg = raw[i];
+
+    if (arg === '--suite') {
+      i++;
+      if (!raw[i] || raw[i].startsWith('--')) {
+        return { exitCode: 2, message: 'error: --suite requires a value ("quick" or "full")' };
+      }
+      if (raw[i] !== 'quick' && raw[i] !== 'full') {
+        return { exitCode: 2, message: `error: unknown suite "${raw[i]}"; expected "quick" or "full"` };
+      }
+      opts.suite = raw[i];
+      continue;
+    }
+
+    if (arg === '--concurrency') {
+      i++;
+      if (!raw[i] || raw[i].startsWith('--')) {
+        return { exitCode: 2, message: 'error: --concurrency requires an integer value (1–64)' };
+      }
+      const n = parseInt(raw[i], 10);
+      if (!Number.isInteger(n) || n < 1 || n > 64 || String(n) !== raw[i]) {
+        return { exitCode: 2, message: `error: --concurrency must be an integer between 1 and 64, got "${raw[i]}"` };
+      }
+      opts.concurrency = n;
+      continue;
+    }
+
+    if (arg === '--timeout-ms') {
+      i++;
+      if (!raw[i] || raw[i].startsWith('--')) {
+        return { exitCode: 2, message: 'error: --timeout-ms requires an integer value (1000–600000)' };
+      }
+      const n = parseInt(raw[i], 10);
+      if (!Number.isInteger(n) || n < 1000 || n > 600000 || String(n) !== raw[i]) {
+        return { exitCode: 2, message: `error: --timeout-ms must be an integer between 1000 and 600000, got "${raw[i]}"` };
+      }
+      opts.timeoutMs = n;
+      continue;
+    }
+
+    if (arg === '--root') {
+      i++;
+      if (!raw[i] || raw[i].startsWith('--')) {
+        return { exitCode: 2, message: 'error: --root requires a path' };
+      }
+      opts.root = path.resolve(raw[i]);
+      continue;
+    }
+
+    if (arg.startsWith('--')) {
+      return { exitCode: 2, message: `error: unknown flag "${arg}"` };
     }
   }
-  return 'quick';
+
+  return { opts };
 }
+
+// ---------------------------------------------------------------------------
+// Discovery and metadata
+// ---------------------------------------------------------------------------
 
 /**
  * @param {string} dir
@@ -28,6 +158,8 @@ function discoverTests(dir) {
   const results = [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
+    // Skip fixtures directory — it holds helper files, not real tests
+    if (entry.isDirectory() && entry.name === 'fixtures') continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       results.push(...discoverTests(full));
@@ -39,53 +171,147 @@ function discoverTests(dir) {
 }
 
 /**
+ * @param {string} root
  * @param {string} testPath
  * @returns {string}
  */
-function getGroup(testPath) {
-  const rel = path.relative(ROOT, testPath);
+function getGroup(root, testPath) {
+  const rel = path.relative(root, testPath);
   return rel.split(path.sep)[0];
 }
 
 /**
+ * Check if a file carries a @-sentinel on line 1 or 2.
  * @param {string} filePath
+ * @param {string} sentinel
  * @returns {boolean}
  */
-function isSlow(filePath) {
+function hasSentinel(filePath, sentinel) {
   const content = fs.readFileSync(filePath, 'utf8');
-  const firstLine = content.split('\n')[0].trim();
-  return firstLine === SENTINEL;
+  const lines = content.split('\n');
+  return (lines[0] && lines[0].includes(sentinel)) || (lines[1] && lines[1].includes(sentinel));
 }
 
+// ---------------------------------------------------------------------------
+// Running
+// ---------------------------------------------------------------------------
+
 /**
- * @param {{ passed: boolean, exitCode: number|null, stdout: string, stderr: string, error?: Error }}
+ * @param {{ path: string, rel: string, group: string }[]} files
+ * @param {number} concurrency
+ * @param {number} timeoutMs
+ * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, stdout: string, stderr: string }[]>}
  */
-function runTest(filePath) {
-  const result = spawnSync(process.execPath, [filePath], {
-    timeout: 30_000,
-    windowsHide: true,
-    encoding: 'utf8',
+function runParallelBatch(files, concurrency, timeoutMs) {
+  return new Promise((resolve) => {
+    const results = new Array(files.length);
+    let next = 0;
+    let active = 0;
+    let done = 0;
+
+    function startNext() {
+      while (active < concurrency && next < files.length) {
+        const i = next++;
+        active++;
+        runSingle(files[i], timeoutMs).then(r => {
+          results[i] = r;
+          active--;
+          done++;
+          if (done === files.length) {
+            resolve(results);
+          } else {
+            startNext();
+          }
+        });
+      }
+      if (done === files.length) {
+        resolve(results);
+      }
+    }
+
+    if (files.length === 0) {
+      resolve(results);
+    } else {
+      startNext();
+    }
   });
-  return {
-    passed: result.status === 0 && result.error === undefined,
-    exitCode: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr,
-    error: result.error,
-  };
 }
 
 /**
- * @returns {string}
+ * @param {{ path: string, rel: string }} fileMeta
+ * @param {number} timeoutMs
+ * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, stdout: string, stderr: string }>}
  */
-function formatSummary() {
-  const allFiles = discoverTests(ROOT);
-  const groupMap = new Map();
+function runSingle(fileMeta, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [fileMeta.path], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-  for (const file of allFiles) {
-    const group = getGroup(file);
-    if (!groupMap.has(group)) groupMap.set(group, []);
-    groupMap.get(group).push(file);
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let exitCode = null;
+    let resolved = false;
+
+    function finish() {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      const drainTimer = setTimeout(() => {
+        resolve({
+          rel: fileMeta.rel,
+          passed: !timedOut && exitCode === 0,
+          exitCode: exitCode != null ? exitCode : -1,
+          timedOut,
+          stdout: truncateOutput(stdout),
+          stderr: truncateOutput(stderr),
+        });
+      }, DRAIN_TIMEOUT);
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+      finish();
+    }, timeoutMs);
+
+    child.on('exit', (code) => {
+      exitCode = code;
+      finish();
+    });
+
+    child.on('error', () => {
+      if (exitCode == null) exitCode = -1;
+      finish();
+    });
+
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Output formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {{ path: string, rel: string, group: string }[]} active
+ * @param {{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, stdout: string, stderr: string }[]} results
+ * @param {'quick'|'full'} suite
+ * @returns {{ output: string, anyFailed: boolean }}
+ */
+function formatResults(active, results, suite) {
+  const resultMap = new Map();
+  for (const r of results) {
+    resultMap.set(r.rel, r);
+  }
+
+  const groupMap = new Map();
+  for (const f of active) {
+    if (!groupMap.has(f.group)) groupMap.set(f.group, []);
+    groupMap.get(f.group).push(f);
   }
 
   const groupNames = [...groupMap.keys()].sort();
@@ -95,6 +321,7 @@ function formatSummary() {
 
   const maxLen = Math.max(...groupNames.map(g => `${g}:`.length)) + 1;
   const lines = [];
+  const failures = [];
   let anyFailed = false;
 
   for (const group of groupNames) {
@@ -102,20 +329,25 @@ function formatSummary() {
     let passed = 0;
     let failedCount = 0;
     let skipped = 0;
-    const skippedFiles = [];
+    const groupSkipped = [];
 
-    for (const file of files) {
-      if (SUITE === 'quick' && isSlow(file)) {
+    for (const f of files) {
+      if (suite === 'quick' && f.isFull) {
         skipped++;
-        skippedFiles.push(path.relative(ROOT, file));
+        groupSkipped.push(f.rel);
         continue;
       }
-      const res = runTest(file);
-      if (res.passed) {
+      const r = resultMap.get(f.rel);
+      if (!r) {
+        failedCount++;
+        anyFailed = true;
+        failures.push({ rel: f.rel, exitCode: -1, timedOut: false, stdout: '', stderr: 'test did not produce a result' });
+      } else if (r.passed) {
         passed++;
       } else {
         failedCount++;
         anyFailed = true;
+        failures.push(r);
       }
     }
 
@@ -124,14 +356,47 @@ function formatSummary() {
     if (failedCount > 0) line += `, ${failedCount} failed`;
     if (skipped > 0) line += `, ${skipped} skipped`;
     lines.push(line);
-    for (const sf of skippedFiles) {
+    for (const sf of groupSkipped) {
       lines.push(`  (skipped) ${sf}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    lines.push('');
+    lines.push('--- FAILURES ---');
+    for (const f of failures) {
+      if (f.timedOut) {
+        lines.push(`  ${f.rel}  (timed out)`);
+      } else {
+        lines.push(`  ${f.rel}  (exit code: ${f.exitCode})`);
+      }
+      lines.push(`    --- stdout ---`);
+      for (const l of f.stdout.split('\n')) {
+        lines.push(`    ${l}`);
+      }
+      lines.push(`    --- stderr ---`);
+      for (const l of f.stderr.split('\n')) {
+        lines.push(`    ${l}`);
+      }
     }
   }
 
   return { output: lines.join('\n') + '\n', anyFailed };
 }
 
-const result = formatSummary();
-process.stdout.write(result.output);
-process.exit(result.anyFailed ? 1 : 0);
+// ---------------------------------------------------------------------------
+// Output bounding
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} s
+ * @returns {string}
+ */
+function truncateOutput(s) {
+  if (s.length <= MAX_OUTPUT) return s;
+  const half = Math.floor(MAX_OUTPUT / 2);
+  const head = s.slice(0, half);
+  const tail = s.slice(-half);
+  const note = `\n... [output truncated at ${MAX_OUTPUT} bytes; ${s.length - MAX_OUTPUT} bytes dropped] ...\n`;
+  return head + note + tail;
+}

@@ -1,4 +1,5 @@
 // @suite full
+// @serial  runs git / spawns the CLI against the real repository
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');

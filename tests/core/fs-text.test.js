@@ -5,7 +5,7 @@ const os = require('os');
 const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine, setRedactor, getRedactor } = require('../../core/fs-text');
 const { Redactor } = require('../../core/redactor');
 
-const TMP = path.join(os.tmpdir(), 'dcli-fs-test');
+const TMP = path.join(os.tmpdir(), `dcli-fs-test-${Math.random().toString(36).slice(2)}`);
 
 /**
  * @returns {string}

@@ -1,4 +1,5 @@
 // @suite full
+// @serial  binds loopback ports; asserts reserve-and-retry races
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');

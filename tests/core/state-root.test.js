@@ -52,7 +52,8 @@ function clean(dir) {
       const whoami = spawnSync('whoami', [], { timeout: 5000, encoding: 'utf8', windowsHide: true });
       const user = whoami.stdout ? whoami.stdout.trim() : '';
       if (user) {
-        const userLine = acl.split('\n').find(l => l.includes(user));
+        const lower = acl.toLowerCase();
+        const userLine = lower.split('\n').find(l => l.includes(user.toLowerCase()));
         assert.ok(userLine, `icacls output must contain current user "${user}", got: ${acl}`);
         assert.ok(
           /\(OI\)\(CI\)(?:\(F\)|F)/.test(userLine.toUpperCase()),

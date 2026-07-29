@@ -1,4 +1,5 @@
 // @suite full
+// @serial  tears down live server process trees
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');

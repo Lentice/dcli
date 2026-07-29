@@ -1,4 +1,5 @@
 // @suite full
+// @serial  kills process trees at defined crash points
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
