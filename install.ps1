@@ -52,16 +52,26 @@ if ($resolvedInstall -eq $resolvedState -or $resolvedInstall.StartsWith("$resolv
     exit 1
 }
 
-# Guard 2: Refuse to replace a non-empty foreign directory that lacks our marker
+# Guard 2: Refuse to replace foreign content at the exact file paths dcli is
+# about to write. $InstallDir is typically the user's real Claude Code home
+# (~\.claude) and legitimately holds unrelated content (settings.json,
+# memory\, agents\, CLAUDE.md, other rules\*.md, ...) that dcli never touches
+# and must never be treated as a reason to refuse. Some of dcli's own targets
+# live in directories it does not own outright (rules\ is shared with other
+# tools' rule files), so directory-level emptiness is the wrong granularity —
+# only the specific generated files matter.
 $hasMarker = $false
 if (Test-Path $InstallDir) {
     $markerPath = Join-Path $InstallDir $DcliMarkerFile
     $hasMarker = Test-Path $markerPath
-    if (-not $hasMarker) {
-        $items = Get-ChildItem $InstallDir -Force
-        if ($items.Count -gt 0) {
-            Write-Error "Target directory $InstallDir exists, is non-empty, and lacks the dcli marker file ($DcliMarkerFile). Refusing to overwrite foreign installation."
-            exit 1
+    if (-not $hasMarker -and (Test-Path $GeneratedDir)) {
+        Get-ChildItem $GeneratedDir -Recurse -File | ForEach-Object {
+            $rel = $_.FullName.Substring($GeneratedDir.Length + 1)
+            $destPath = Join-Path $InstallDir $rel
+            if (Test-Path $destPath) {
+                Write-Error "Target file $destPath already exists and the install directory lacks the dcli marker file ($DcliMarkerFile). Refusing to overwrite foreign content."
+                exit 1
+            }
         }
     }
 }

@@ -147,3 +147,32 @@ feat: generate per-backend Claude integration and add a mirroring installer with
 ```
 
 ## Notes
+
+**2026-07-29 — Guard 2 was scoped too broadly, and would refuse for nearly every real user.**
+
+The original Guard 2 refused to install whenever the *entire* `-InstallDir` (default `~\.claude`) was
+non-empty and lacked the `.dcli-installed` marker. But `~\.claude` is the standard Claude Code home —
+virtually every real user already has one, populated with `settings.json`, `memory\`, `agents\`,
+`CLAUDE.md`, etc. None of that is written by dcli, so treating its mere presence as "foreign and unsafe"
+meant the installer would refuse on essentially every real first install, not just the edge case the
+guard was meant to catch.
+
+First fix attempt scoped the check to whole directories (`SkillDirs` + `CmdDirs` + `RuleDirs`), which
+was still wrong: `rules\` is a **shared** directory, not one dcli owns outright (a real `~\.claude\rules\`
+can already hold an unrelated `context7.md`), so directory-level emptiness repeats the same mistake one
+level down. Verified this against the actual `~\.claude` used in this session — the whole-directory
+version refused solely because `rules\context7.md` (an unrelated pre-existing rule file) was present.
+
+Final fix checks at the **exact generated-file path**: enumerate every file under `integration/generated/`,
+and refuse only if the specific corresponding destination file already exists (and no marker proves prior
+dcli ownership). Unrelated sibling files/directories are never inspected and never block install. This
+matches the predecessor `ccodex`'s install.ps1, which never guards its shared `ClaudeDir` at all — only
+its own namespaced subdir (`destScriptDir` under `-InstallDir`).
+
+Added regression tests to `tests/integration/installer.test.js` that actually invoke `install.ps1` via
+pwsh (the previous tests in that file only asserted guard logic inline in Node without ever invoking the
+script, so they could not have caught this): one proving install succeeds against a directory with
+unrelated foreign content including an unrelated `rules\context7.md`, one proving refusal when a
+generated file's exact destination path (e.g. `skills\dcli\SKILL.md`) has foreign content, and one
+proving refusal specifically for a foreign `rules\dcli-delegation.md` without disturbing sibling rule
+files.
