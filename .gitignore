@@ -4,6 +4,7 @@ node_modules/
 .superpowers/
 .scratch/
 .dcli-state/
+.live-smoke-state-*/
 .claude/settings.local.json
 
 # .NET build artifacts
