@@ -340,6 +340,7 @@ function readStdinBounded() {
   });
 }
 
+// Simple numeric semver-style comparison: returns -1, 0, or 1.
 function compareVersions(a, b) {
   const aParts = a.split('.').map(Number);
   const bParts = b.split('.').map(Number);
