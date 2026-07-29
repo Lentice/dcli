@@ -7,6 +7,7 @@ const { spawnSync } = require('child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const INSTALLER = path.join(REPO_ROOT, 'install.ps1');
+const DCLI_MARKER = '.dcli-installed';
 
 // ---------------------------------------------------------------------------
 // 1. Installer refuses a directory colliding with the state root
@@ -30,26 +31,91 @@ const INSTALLER = path.join(REPO_ROOT, 'install.ps1');
 }
 
 // ---------------------------------------------------------------------------
-// 2. Installer refuses to replace a non-empty foreign directory
+// 2a. Installer SUCCEEDS against a directory that already holds unrelated
+//     foreign content outside the paths dcli writes to (e.g. a real, in-use
+//     ~\.claude with settings.json / memory\ / agents\ / CLAUDE.md). This is
+//     the common case for every real user and must not be refused.
 // ---------------------------------------------------------------------------
 {
-  const foreignDir = path.join(os.tmpdir(), 'dcli-foreign-' + Date.now());
+  const targetDir = path.join(os.tmpdir(), 'dcli-real-home-' + Date.now());
   try {
-    fs.mkdirSync(foreignDir, { recursive: true });
-    // Create a foreign file (no .dcli-installed marker)
-    fs.writeFileSync(path.join(foreignDir, 'some-other-file.txt'), 'not dcli', 'utf8');
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'settings.json'), '{}', 'utf8');
+    fs.mkdirSync(path.join(targetDir, 'memory'), { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'memory', 'MEMORY.md'), '# memory', 'utf8');
+    fs.mkdirSync(path.join(targetDir, 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'CLAUDE.md'), '# instructions', 'utf8');
+    // rules\ is a SHARED directory dcli does not own outright (e.g. it may
+    // already hold an unrelated rules\context7.md) -- only the specific
+    // generated rule file (rules\dcli-delegation.md) is dcli's concern.
+    fs.mkdirSync(path.join(targetDir, 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'rules', 'context7.md'), '# unrelated rule', 'utf8');
 
-    // The installer's guard checks for the marker file
-    const hasMarker = fs.existsSync(path.join(foreignDir, '.dcli-installed'));
-    assert.strictEqual(hasMarker, false, 'Foreign dir must not have marker');
+    const result = spawnSync('pwsh', ['-NoProfile', '-File', INSTALLER, '-InstallDir', targetDir, '-Force'], {
+      encoding: 'utf8',
+    });
 
-    const items = fs.readdirSync(foreignDir);
-    assert.ok(items.length > 0, 'Foreign dir must be non-empty');
-
-    // The guard rejects this case
-    assert.ok(true, 'Guard logic tested: non-empty foreign dir without marker is rejected');
+    assert.strictEqual(result.status, 0, `Installer must succeed against unrelated foreign content: ${result.stderr}`);
+    assert.ok(fs.existsSync(path.join(targetDir, 'settings.json')), 'Unrelated settings.json must survive install');
+    assert.ok(fs.existsSync(path.join(targetDir, 'memory', 'MEMORY.md')), 'Unrelated memory\\ must survive install');
+    assert.ok(fs.existsSync(path.join(targetDir, 'CLAUDE.md')), 'Unrelated CLAUDE.md must survive install');
+    assert.ok(fs.existsSync(path.join(targetDir, 'rules', 'context7.md')), 'Unrelated rules\\context7.md must survive install');
+    assert.strictEqual(
+      fs.readFileSync(path.join(targetDir, 'rules', 'context7.md'), 'utf8'),
+      '# unrelated rule',
+      'Unrelated rules\\context7.md content must be untouched'
+    );
+    assert.ok(fs.existsSync(path.join(targetDir, DCLI_MARKER)), 'Marker file must be written');
+    assert.ok(fs.existsSync(path.join(targetDir, 'skills', 'dcli')), 'dcli skill dir must be installed');
+    assert.ok(fs.existsSync(path.join(targetDir, 'rules', 'dcli-delegation.md')), 'dcli rule file must be installed');
   } finally {
-    try { fs.rmSync(foreignDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2b. Installer REFUSES when a specific file it is about to write already
+//     exists with foreign, non-dcli content and no marker proves prior dcli
+//     ownership -- checked at the exact generated-file path, not directory
+//     level.
+// ---------------------------------------------------------------------------
+{
+  const targetDir = path.join(os.tmpdir(), 'dcli-scoped-conflict-' + Date.now());
+  try {
+    fs.mkdirSync(path.join(targetDir, 'skills', 'dcli'), { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'skills', 'dcli', 'SKILL.md'), 'not ours', 'utf8');
+
+    const result = spawnSync('pwsh', ['-NoProfile', '-File', INSTALLER, '-InstallDir', targetDir, '-Force'], {
+      encoding: 'utf8',
+    });
+
+    assert.notStrictEqual(result.status, 0, 'Installer must refuse a foreign file at a generated path without the marker');
+    assert.ok(!fs.existsSync(path.join(targetDir, DCLI_MARKER)), 'Marker must not be written on refusal');
+  } finally {
+    try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2c. Installer REFUSES when only the shared rules\ directory has a foreign
+//     file at the exact same relative path dcli would write (not the whole
+//     rules\ dir being non-empty -- an unrelated sibling rule file there must
+//     never trigger this).
+// ---------------------------------------------------------------------------
+{
+  const targetDir = path.join(os.tmpdir(), 'dcli-rules-conflict-' + Date.now());
+  try {
+    fs.mkdirSync(path.join(targetDir, 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(targetDir, 'rules', 'dcli-delegation.md'), 'not ours', 'utf8');
+
+    const result = spawnSync('pwsh', ['-NoProfile', '-File', INSTALLER, '-InstallDir', targetDir, '-Force'], {
+      encoding: 'utf8',
+    });
+
+    assert.notStrictEqual(result.status, 0, 'Installer must refuse a foreign rules\\dcli-delegation.md without the marker');
+    assert.ok(!fs.existsSync(path.join(targetDir, DCLI_MARKER)), 'Marker must not be written on refusal');
+  } finally {
+    try { fs.rmSync(targetDir, { recursive: true, force: true }); } catch {}
   }
 }
 

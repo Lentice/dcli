@@ -56,6 +56,27 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
+// 1b. an explicit state-root override wins over the repository default
+// ===========================================================================
+await withTempDir(async (stateDir) => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-repo-test-'));
+  try {
+    const env = { ...process.env, DCLI_STATE_ROOT: stateDir };
+    const result = spawnCli(
+      ['--backend', 'fake', 'run', '--repo', repoDir, '--hard-timeout-sec', '60', 'test prompt'],
+      undefined, env
+    );
+
+    assert.strictEqual(result.status, 0, `repo override run must exit 0, got ${result.status}`);
+    assert.ok(fs.existsSync(path.join(stateDir, 'jobs')), 'override state root must contain jobs');
+    assert.ok(!fs.existsSync(path.join(repoDir, '.dcli-state')), 'repo state root must not be created when overridden');
+    console.log('PASS: run test 1b — explicit state root overrides repo default');
+  } finally {
+    try { fs.rmSync(repoDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+// ===========================================================================
 // 2. run accepts prompt via --prompt-file, stdin, and positional
 // ===========================================================================
 await withTempDir(async (dir) => {
@@ -301,7 +322,15 @@ await withTempDir(async (dir) => {
     mode: 'run', access: 'read-only',
     group: 'demo',
   });
-  // wg-2 is still running (no terminal transition)
+  store.createAttemptDir({ repoKey, jobId: 'wg-2', attemptNum: 1 });
+  store.journalTransition('wg-2', repoKey, {
+    kind: 'attempt_created', attempt: 1, from: null, to: 'created',
+    detail: { attempt_id: 'a2', execution_token: 'tok2' },
+  });
+  store.journalTransition('wg-2', repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'done',
+    detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal' },
+  });
 
   // Also create a non-group job
   store.createJob({

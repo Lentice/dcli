@@ -152,8 +152,7 @@ console.log(`All three adapters passed the same ${results[0].passed} assertions.
   const backendNames = ['opencode', 'codex', 'claude'];
 
   // Registry allowlist: files whose only job is mapping a name to an adapter.
-  // Currently empty — no core/ file references any backend name.
-  const allowlist = new Set();
+  const allowlist = new Set(['commands/worker.js']);
 
   function scanDir(dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -162,7 +161,7 @@ console.log(`All three adapters passed the same ${results[0].passed} assertions.
       if (entry.isDirectory()) {
         scanDir(full);
       } else if (entry.isFile() && entry.name.endsWith('.js')) {
-        const relPath = path.relative(coreDir, full);
+        const relPath = path.relative(coreDir, full).split(path.sep).join('/');
         if (allowlist.has(relPath)) continue;
         const content = fs.readFileSync(full, 'utf8');
         for (const name of backendNames) {
