@@ -41,8 +41,33 @@ so the breakdown survives as part of the project handoff.
 | [25](25-codex-adapter-full.md) | codex adapter in full | 24 | codex |
 | [26](26-claude-adapter.md) | claude adapter | 25 | claude |
 | [27](27-claude-recursion-guards.md) | claude recursion guards, doctor, capabilities | 26 | claude |
+| [28](28-parallel-test-runner.md) | Parallel test runner | — | Tooling |
+| [29](29-submit-dispatches-real-worker.md) | `submit` actually launches a background worker | — | Stability review |
+| [30](30-cancel-cli-dispatch.md) | Wire `cancel` into the CLI dispatcher | 29 | Stability review |
+| [31](31-adapter-dispose-lifecycle.md) | Call `adapter.Dispose()` on every terminal path | — | Stability review |
+| [32](32-codex-collect-result-facts.md) | codex `CollectResult` must use its own parsed facts | — | Stability review |
+| [33](33-opencode-cancel-rung-escalation.md) | opencode cancellation must escalate through every rung | — | Stability review |
+| [34](34-resume-prompt-positional-fix.md) | `resume` must not let the job ID leak into the prompt | — | Stability review |
+| [35](35-bounded-stream-drain-before-parse.md) | codex/claude must drain streams before parsing results | — | Stability review |
+| [36](36-admission-control-atomicity.md) | Admission control must be atomic; dequeue must launch | 29 | Stability review |
+| [37](37-installer-stage-swap-full-ownership.md) | Installer must stage-and-swap the full owned tree | — | Stability review |
+| [38](38-generate-integration-check-real-diff.md) | `generate-integration --check` must really diff output | — | Stability review |
+| [39](39-windows-argv-quoting-correctness.md) | Correct Win32 argv serialization, shared by both paths | — | Stability review |
+| [40](40-fix-broken-background-recipe-in-templates.md) | Fix the broken background-task recipe in templates | 38 | Stability review |
+| [41](41-install-does-not-put-clis-on-path.md) | Install must put shims on PATH | — | Stability review |
+| [42](42-result-bytes-not-persisted.md) | Real results not persisted or counted | — | Stability review |
+| [43](43-opencode-submit-canonicaldir.md) | opencode submit fails — missing canonicalDir | — | Stability review |
+| [44](44-attempt-directories-always-empty.md) | Attempt directories always empty | 42 | Stability review |
+| [45](45-cli-ignores-dcli-state-root-when-repo-given.md) | `DCLI_STATE_ROOT` ignored when `--repo` is given | — | Stability review |
 
 Tickets **14 and 15 are built in parallel** — they are two halves of one proof.
+
+Tickets **29–40** came out of a 2026-07-29 stability/performance review (Codex-assisted, independently
+verified — several confirmed live against real `codex`/`opencode` invocations) of the shipped
+implementation, run after ticket 28. Tickets **41–45** were added in the same session by a
+live functional test against real backends (opencode, codex, claude). They are not ordered vertical
+slices in the tracer-bullet sense — each is an independent bug-fix scoped to one root cause, safe to
+pick up in any order except where a blocking edge is listed.
 
 ## Why the order is what it is
 
