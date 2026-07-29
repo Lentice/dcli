@@ -558,6 +558,29 @@ async function main() {
       process.exit(result.exitCode);
     }
 
+    case 'cancel': {
+      const { executeCancel } = require('../core/commands/cancel');
+      const jobId = parsed.positionals[0];
+      if (!jobId) {
+        console.error('cancel requires a job ID');
+        process.exit(2);
+      }
+
+      const result = await executeCancel({
+        store, adapter, repoKey, jobId,
+        json: parsed.json,
+      });
+
+      if (parsed.json) {
+        console.log(JSON.stringify(result.envelope));
+      } else if (result.warning) {
+        console.log(`Cancel ${result.warning} (state: ${result.state})`);
+      } else {
+        console.log(`Job ${jobId} is ${result.state}`);
+      }
+      process.exit(result.exitCode);
+    }
+
     case 'doctor': {
       const { executeDoctor } = require('../core/commands/doctor');
       const result = await executeDoctor({

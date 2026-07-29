@@ -265,7 +265,7 @@ function validatePositionals(parsed) {
   if (!cmd) return;
 
   const freeText = new Set(['run', 'submit', 'review', 'resume']);
-  const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug', 'diff', 'apply']);
+  const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug', 'diff', 'apply', 'cancel']);
   const zeroPos = new Set(['list', 'cleanup']);
 
   if (freeText.has(cmd)) return;
