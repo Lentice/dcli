@@ -5,6 +5,7 @@ const { reduce } = require('../reducer');
 const { buildEnvelope, isVersionInRange } = require('./index');
 const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
+const { persistCollectedResult } = require('../result-artifact');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
@@ -190,6 +191,29 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
         const result = reduce(status, facts, {});
         const collected = adapter.CollectResult(attempt);
         const terminalState = result.state;
+        let resultBytes;
+
+        try {
+          resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected });
+        } catch {
+          store.journalTransition(jobId, repoKey, {
+            kind: 'attempt_state_changed',
+            attempt: attemptNum,
+            from: 'running',
+            to: 'failed',
+            detail: {
+              finished_at: new Date().toISOString(),
+              command_exit_code: fact.code !== undefined ? fact.code : null,
+              phase: 'terminal',
+              failure_reason: 'result_persistence_failed',
+              failure: { class: 'artifact_persistence', message: 'Unable to persist result artifact' },
+              ...finalizeWorktreeSnapshot(),
+            },
+          });
+          if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
+          const finalStatus = store.readStatus({ repoKey, jobId });
+          return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 11 };
+        }
 
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',
@@ -202,6 +226,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
             phase: 'terminal',
             ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
             ...(collected.usage ? { tokens: collected.usage } : {}),
+            result_bytes: resultBytes,
             ...finalizeWorktreeSnapshot(),
           },
         });

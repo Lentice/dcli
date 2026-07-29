@@ -4,6 +4,7 @@ const { generateJobId } = require('../job-id');
 const { buildEnvelope, isVersionInRange } = require('./index');
 const { resolveDeadline } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
+const { persistCollectedResult } = require('../result-artifact');
 
 const VALID_KINDS = new Set(['continue_backend_session', 'fork_from_artifacts', 'retry_attempt']);
 
@@ -264,6 +265,29 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
         }
 
         const terminalState = fact.code === 0 ? 'done' : 'failed';
+        let resultBytes;
+        try {
+          resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected });
+        } catch {
+          store.journalTransition(jobId, repoKey, {
+            kind: 'attempt_state_changed',
+            attempt: attemptNum,
+            from: 'running',
+            to: 'failed',
+            detail: {
+              finished_at: new Date().toISOString(),
+              command_exit_code: fact.code !== undefined ? fact.code : null,
+              phase: 'terminal',
+              session_strategy: kind,
+              failure_reason: 'result_persistence_failed',
+              failure: { class: 'artifact_persistence', message: 'Unable to persist result artifact' },
+              ...finalizeWorktreeSnapshot(),
+            },
+          });
+          if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
+          const finalStatus = store.readStatus({ repoKey, jobId });
+          return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 11 };
+        }
 
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',
@@ -277,6 +301,7 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
             session_strategy: kind,
             ...(backendSessionId ? { backend_session_id: backendSessionId } : {}),
             ...(collected.usage ? { tokens: collected.usage } : {}),
+            result_bytes: resultBytes,
             ...finalizeWorktreeSnapshot(),
           },
         });

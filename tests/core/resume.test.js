@@ -263,6 +263,10 @@ async function main() {
       assert.strictEqual(childStatus.parent_job_id, parentJobId);
       assert.strictEqual(childStatus.root_job_id, rootJobId);
       assert.strictEqual(childStatus.session_strategy, 'fork_from_artifacts');
+      const resultPath = path.join(store.getJobDir(repoKey, result.jobId), 'attempts', '1', 'result.md');
+      const persisted = fs.readFileSync(resultPath, 'utf8');
+      assert.strictEqual(persisted, 'Parent result.');
+      assert.strictEqual(childStatus.result_bytes, Buffer.byteLength(persisted, 'utf8'));
     } finally {
       teardown();
     }

@@ -69,6 +69,7 @@ function writeTextFileAtomic(filePath, content) {
   } catch {
   }
   fs.renameSync(tmp, filePath);
+  return buf.byteLength;
 }
 
 /**

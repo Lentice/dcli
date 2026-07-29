@@ -125,7 +125,7 @@ Linux    ${XDG_STATE_HOME:-~/.local/state}/dcli/
 │   ├── command.json              # structured invocation (argv / HTTP request shape)
 │   ├── command.txt               # human-readable only; never used for execution
 │   ├── status.json               # §5
-│   ├── result.md                 # final assistant text
+│   ├── result.md                 # atomically persisted final assistant text
 │   ├── findings.json             # §11; null when absent/invalid
 │   ├── backend-events.jsonl      # raw NDJSON / SSE, verbatim, append-only
 │   ├── stdout.log  stderr.log  worker.log
@@ -153,6 +153,10 @@ jobs/<repo-key>/<job-id>/
 └── attempts/<n>/          # prompt.md, command.json, result.md, findings.json,
                            # backend-events.jsonl, stdout/stderr/worker logs, sentinels
 ```
+
+When an attempt collects a result, it writes `result.md` before its terminal status projection. The
+corresponding `result_bytes` is the exact UTF-8 byte length of that artifact (including `0` for an empty
+result). If that write fails, the attempt is terminally failed rather than reporting a clean zero-byte result.
 
 `status.json` cannot safely be both the public projection and the transactional store. Authoritative
 lifecycle transitions are appended to `journal.jsonl`; the projection is derived from it. Crash points
