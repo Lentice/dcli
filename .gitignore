@@ -3,6 +3,7 @@ node_modules/
 .DS_Store
 .superpowers/
 .scratch/
+.dcli-state/
 .claude/settings.local.json
 
 # .NET build artifacts
