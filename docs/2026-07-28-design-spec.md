@@ -94,7 +94,11 @@ dcli/
   native/
     windows-job-helper/      # ADR-003; prebuilt binaries checked in per arch
   integration/
-    source/  core.md  codex.md  opencode.md  claude.md  router.md
+    source/  core.md  router.md                     # shared + router
+             backend-codex.md  backend-opencode.md  backend-claude.md
+             # the backend-* prefix is required: a file named claude.md is
+             # indistinguishable from CLAUDE.md on a case-insensitive
+             # filesystem, and gets loaded as agent instructions.
     generated/               # checked in; CI fails if stale
       skills/{dcli-codex,dcli-opencode,dcli-claude,dcli}/SKILL.md
       commands/  rules/  worker-prompts/

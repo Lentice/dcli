@@ -442,4 +442,39 @@ const GENERATED_DIR = path.resolve(__dirname, '../../integration/generated');
   console.log(`PASS: generate test 10 — ${examples} documented findings examples parse`);
 }
 
+// ---------------------------------------------------------------------------
+// 11. No source filename may collide with an agent-instruction convention.
+//
+// integration/source/claude.md was indistinguishable from CLAUDE.md on this
+// project's primary platform, where filenames are case-insensitive. Claude Code
+// discovered it as directory-scoped project instructions, so the claude
+// backend's reference data was injected as *directives* to any agent working in
+// that tree. AGENTS.md is explicit that an agent reading one thing while
+// running another is the failure mode that stays invisible.
+// ---------------------------------------------------------------------------
+{
+  const RESERVED = ['claude.md', 'agents.md', 'readme.md', 'gemini.md', 'copilot-instructions.md'];
+  const roots = [
+    path.resolve(__dirname, '../../integration/source'),
+    GENERATED_DIR,
+  ];
+
+  for (const root of roots) {
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) { walk(p); continue; }
+        assert.ok(
+          !RESERVED.includes(entry.name.toLowerCase()),
+          `${path.relative(process.cwd(), p)} collides with the agent-instruction filename ` +
+          `"${entry.name}" on a case-insensitive filesystem, so it is loaded as instructions ` +
+          `rather than read as data. Rename it (backend-<name>.md).`
+        );
+      }
+    };
+    walk(root);
+  }
+  console.log('PASS: generate test 11 — no source filename collides with an instruction convention');
+}
+
 console.log('All integration generation tests passed.');

@@ -42,7 +42,7 @@ function generateTo(dir) {
   fs.writeFileSync(path.join(dir, 'skills', 'dcli', 'SKILL.md'), routerContent, 'utf8');
 
   for (const backend of BACKENDS) {
-    const backendContent = readSource(`${backend}.md`);
+    const backendContent = readSource(`backend-${backend}.md`);
     const combined = `<!-- dcli:${backend} skill -->\n\n${coreContent}\n\n${backendContent}`;
     ensureDir(path.join(dir, 'skills', `dcli-${backend}`));
     fs.writeFileSync(path.join(dir, 'skills', `dcli-${backend}`, 'SKILL.md'), combined, 'utf8');
@@ -278,7 +278,7 @@ function check() {
   const skills = ['dcli'];
   for (const backend of BACKENDS) skills.push(`dcli-${backend}`);
   for (const skill of skills) {
-    const p = path.join(SOURCE_DIR, skill === 'dcli' ? 'router.md' : `${skill.replace('dcli-', '')}.md`);
+    const p = path.join(SOURCE_DIR, skill === 'dcli' ? 'router.md' : `backend-${skill.replace('dcli-', '')}.md`);
     if (fs.existsSync(p)) {
       sourceHashes[`skills/${skill}/SKILL.md`] = crypto.createHash('sha256').update(fs.readFileSync(p, 'utf8'), 'utf8').digest('hex');
     }
