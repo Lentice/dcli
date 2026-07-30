@@ -209,6 +209,7 @@ class CodexAdapter {
     this._lastRequest = null;
     this._stdinClosed = false;
     this._observedExited = false;
+    this._drainTimedOut = false;
   }
 
   get disposed() { return this._disposed; }
@@ -360,10 +361,12 @@ class CodexAdapter {
       this._stderrContent += chunk;
     });
 
-    child.on('exit', (code, signal) => {
-      // Start bounded drain timer
-      this._startBoundedDrain();
+    this._stdoutClosed = false;
+    this._stderrClosed = false;
+    child.stdout.on('close', () => { this._stdoutClosed = true; });
+    child.stderr.on('close', () => { this._stderrClosed = true; });
 
+    child.on('exit', (code, signal) => {
       this._facts.push({ type: 'process_exited', code: code !== null ? code : -1 });
       this._observedExited = true;
       if (this._exitResolve) this._exitResolve();
@@ -408,6 +411,11 @@ class CodexAdapter {
     // signalled by the 'exit'/'error' event handlers registered in
     // Start(), not by anything synchronous in this function.
     await this._waitForExit();
+
+    // Wait for stdout/stderr streams to fully close (EOF), bounded.
+    // Data can arrive after the 'exit' event if a descendant holds a
+    // pipe open or OS buffering delays delivery.
+    await this._waitForStreamDrain();
 
     // Yield accumulated facts including process_exited/backend_error
     for (const fact of this._facts) {
@@ -638,10 +646,15 @@ class CodexAdapter {
   // Internals
   // -----------------------------------------------------------------------
 
-  _startBoundedDrain() {
-    setTimeout(() => {
-      if (this._disposed) return;
-    }, POST_EXIT_DRAIN_MS).unref();
+  async _waitForStreamDrain() {
+    if (this._stdoutClosed && this._stderrClosed) return;
+    const deadline = Date.now() + POST_EXIT_DRAIN_MS;
+    while (Date.now() < deadline) {
+      if (this._stdoutClosed && this._stderrClosed) return;
+      await new Promise(r => setTimeout(r, 10));
+    }
+    this._drainTimedOut = true;
+    this._facts.push({ type: 'drain_timeout', message: 'stdout/stderr did not close within POST_EXIT_DRAIN_MS' });
   }
 
   /**

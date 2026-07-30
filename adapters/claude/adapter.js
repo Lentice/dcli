@@ -102,6 +102,7 @@ class ClaudeAdapter {
     this._stdoutContent = '';
     this._stderrContent = '';
     this._observedExited = false;
+    this._drainTimedOut = false;
     this._lastRequest = null;
     this._sessionId = null;
     this._resumeKind = null;
@@ -254,8 +255,12 @@ class ClaudeAdapter {
       this._stderrContent += chunk;
     });
 
+    this._stdoutClosed = false;
+    this._stderrClosed = false;
+    child.stdout.on('close', () => { this._stdoutClosed = true; });
+    child.stderr.on('close', () => { this._stderrClosed = true; });
+
     child.on('exit', (code, signal) => {
-      this._startBoundedDrain();
       this._facts.push({ type: 'process_exited', code: code !== null ? code : -1 });
       this._observedExited = true;
       if (this._exitResolve) this._exitResolve();
@@ -292,6 +297,7 @@ class ClaudeAdapter {
     }
 
     await this._waitForExit();
+    await this._waitForStreamDrain();
 
     for (const fact of this._facts) {
       yield { ...fact };
@@ -460,10 +466,15 @@ class ClaudeAdapter {
     }
   }
 
-  _startBoundedDrain() {
-    setTimeout(() => {
-      if (this._disposed) return;
-    }, POST_EXIT_DRAIN_MS).unref();
+  async _waitForStreamDrain() {
+    if (this._stdoutClosed && this._stderrClosed) return;
+    const deadline = Date.now() + POST_EXIT_DRAIN_MS;
+    while (Date.now() < deadline) {
+      if (this._stdoutClosed && this._stderrClosed) return;
+      await new Promise(r => setTimeout(r, 10));
+    }
+    this._drainTimedOut = true;
+    this._facts.push({ type: 'drain_timeout', message: 'stdout/stderr did not close within POST_EXIT_DRAIN_MS' });
   }
 
   _parseStreamEvent(line) {
