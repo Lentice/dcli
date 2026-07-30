@@ -183,12 +183,6 @@ function _rollbackOrReport(repoRoot, preHead, preStatusText, preUntracked, origi
 
 function _hardReset(repoRoot, preHead, preUntracked) {
   spawnSync('git', ['reset', '--hard', preHead], { cwd: repoRoot, windowsHide: true, timeout: 30000 });
-  const postStatus = getStatusPorcelain(repoRoot);
-  const postUntracked = getUntrackedFilesFromStatus(postStatus);
-  const newUntracked = postUntracked.filter(f => !preUntracked.includes(f));
-  for (const file of newUntracked) {
-    try { fs.unlinkSync(path.resolve(repoRoot, file)); } catch {}
-  }
   if (hasResidualGitState(repoRoot)) {
     clearResidualGitState(repoRoot);
   }

@@ -159,7 +159,7 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
         }
       }
 
-      // Check lease
+      // Check lease and hold through deletion to prevent race
       const leaseLock = lockManager.tryAcquire('job-lease', jobId, { operation: 'cleanup-lease-check' });
       if (!leaseLock) {
         // Lease is held by someone else (e.g. diff/apply)
@@ -167,15 +167,15 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
         result.skipped++;
         continue;
       }
-      lockManager.release(leaseLock);
 
       if (dryRun) {
+        lockManager.release(leaseLock);
         lockManager.release(perJobLock);
         result.removed++;
         continue;
       }
 
-      // Remove the job directory
+      // Remove the job directory — hold the lease through the delete
       const jobFullPath = path.join(repoFull, jobDir.name);
       try {
         fs.rmSync(jobFullPath, { recursive: true, force: true });
@@ -183,6 +183,7 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
       } catch (err) {
         result.errors.push(`Failed to remove ${repoKey}/${jobId}: ${err.message}`);
       } finally {
+        lockManager.release(leaseLock);
         lockManager.release(perJobLock);
       }
     }
