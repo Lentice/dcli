@@ -61,7 +61,7 @@ dcli-claude doctor --json
 ### cleanup
 
 ```
-dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run]
+dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
 
 ## Recipes

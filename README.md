@@ -70,13 +70,13 @@ For local development on this repo instead of a standalone install, use `npm lin
 
 ```powershell
 # a second opinion, synchronously
-"Compare these two designs." | dcli-opencode run --mode brainstorm --hard-timeout-sec 900
+"Compare these two designs." | dcli-opencode run --hard-timeout-sec 900
 
 # a scoped review; the wrapper generates and embeds the diff itself
 dcli-opencode review --range main..HEAD --path src/ --intent "Add cache invalidation" --hard-timeout-sec 900
 
 # something long, in the background
-"Run the full test suite." | dcli-claude submit --mode test --access workspace --hard-timeout-sec 3600
+"Run the full test suite." | dcli-claude submit --access workspace --hard-timeout-sec 3600
 dcli-opencode wait --all --group nightly --timeout-sec 3600 --json
 
 # a code change, isolated — you review it before it lands
@@ -85,8 +85,11 @@ dcli-codex diff <job-id> --stat
 dcli-codex diff <job-id>
 dcli-codex apply --reset-author --message "feat: add retry logic" <job-id>
 
-# resume — continue a backend conversation
+# resume — continue a backend conversation (piped)
 "Now critique your own plan." | dcli-opencode resume <job-id> --kind continue_backend_session --hard-timeout-sec 600
+
+# resume — continue with a prompt file (always works)
+dcli-opencode resume <job-id> --kind continue_backend_session --prompt-file followup.txt --hard-timeout-sec 600
 
 # resume — retry after a transient failure
 dcli-opencode resume <job-id> --kind retry_attempt --hard-timeout-sec 600 "Re-run the same analysis"

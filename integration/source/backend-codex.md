@@ -62,7 +62,7 @@ dcli-codex doctor --json
 ### cleanup
 
 ```
-dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run]
+dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
 
 ## Recipes

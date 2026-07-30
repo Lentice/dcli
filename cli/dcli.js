@@ -26,7 +26,7 @@ Options:
   --help                    Show this message
   --backend <name>          Backend to use (opencode, codex, claude, fake)
   --repo <path>             Repository path
-  --prompt-file <path>      Read prompt from file
+  --prompt-file <path>      Read prompt from file (canonical way to supply a follow-up prompt for resume)
   --hard-timeout-sec <n>    Job hard timeout in seconds (default: 1800)
   --group <g>               Job group label
   --label <l>               Job label
