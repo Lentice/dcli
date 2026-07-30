@@ -74,8 +74,14 @@ function buildCmdInvocation(opts) {
 }
 
 /**
- * Build a Windows command-line string from an argv array.
- * Arguments containing spaces or tabs are wrapped in double quotes.
+ * Build a Windows command-line string from an argv array, using the
+ * correct CommandLineToArgvW-compatible algorithm.
+ *
+ * For each argument:
+ * - If empty or contains spaces/tabs, wrap in double quotes.
+ * - Inside quotes, embedded quotes are escaped as \" but backslash
+ *   runs preceding a quote or at the end of a quoted argument are
+ *   doubled to match what CommandLineToArgvW expects.
  *
  * @param {string[]} parts - Command and argument array
  * @returns {string} Windows command-line string
@@ -83,7 +89,26 @@ function buildCmdInvocation(opts) {
 function buildWin32CommandLine(parts) {
   return parts.map(part => {
     if (part === '' || /[\s]/.test(part)) {
-      return '"' + part.replace(/"/g, '\\"') + '"';
+      let result = '"';
+      let i = 0;
+      while (i < part.length) {
+        let backslashCount = 0;
+        while (i < part.length && part[i] === '\\') {
+          backslashCount++;
+          i++;
+        }
+        if (i >= part.length) {
+          result += '\\'.repeat(backslashCount * 2);
+        } else if (part[i] === '"') {
+          result += '\\'.repeat(backslashCount * 2 + 1) + '"';
+          i++;
+        } else {
+          result += '\\'.repeat(backslashCount) + part[i];
+          i++;
+        }
+      }
+      result += '"';
+      return result;
     }
     return part;
   }).join(' ');

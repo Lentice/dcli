@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 // The quoting module must be importable from the adapter's directory
-const { quoteForCmd, buildCmdInvocation, CMD_METACHARS } = require('../../../adapters/codex/cmd-quoting');
+const { quoteForCmd, buildCmdInvocation, buildWin32CommandLine, CMD_METACHARS } = require('../../../adapters/codex/cmd-quoting');
 
 async function main() {
 
@@ -165,12 +165,75 @@ async function main() {
     args: ['exec', '-c', 'model_reasoning_effort=high', '-s', 'read-only', '-'],
   });
   const inner = result.args[3];
-  // The cmd metacharacters in the args should be escaped
-  // (no bare = in cmd arguments but = is not a metachar)
   assert.ok(typeof inner === 'string');
   assert.ok(inner.includes('codex.cmd'));
   assert.ok(inner.includes('read-only'));
   console.log('PASS: buildCmdInvocation preserves argument content');
+}
+
+// ===========================================================================
+// 11. buildWin32CommandLine — golden test vectors
+// ===========================================================================
+{
+  const vectors = [
+    { args: ['simple'], expected: 'simple' },
+    { args: ['with space'], expected: '"with space"' },
+    { args: ['no-spaces'], expected: 'no-spaces' },
+    { args: ['has space'], expected: '"has space"' },
+    { args: [''], expected: '""' },
+    { args: ['a', 'b'], expected: 'a b' },
+    { args: ['a', 'has space', 'c'], expected: 'a "has space" c' },
+    { args: ['one"two'], expected: 'one"two' },
+    { args: ['has " quote'], expected: '"has \\" quote"' },
+    { args: ['end\\'], expected: 'end\\' },
+    { args: ['quote \\" here'], expected: '"quote \\\\\\" here"' },
+  ];
+  for (const { args, expected } of vectors) {
+    const result = buildWin32CommandLine(args);
+    assert.strictEqual(result, expected, `buildWin32CommandLine([${args.map(a => JSON.stringify(a)).join(', ')}]) = ${JSON.stringify(result)}, expected ${JSON.stringify(expected)}`);
+  }
+  console.log('PASS: buildWin32CommandLine golden vectors');
+}
+
+// ===========================================================================
+// 12. Round-trip test: spawn a real process and verify argv is received
+//     exactly as sent (exe path)
+// ===========================================================================
+{
+  const { spawnSync } = require('node:child_process');
+  const testArgs = [
+    'simple',
+    'with space',
+    'trailing\\',
+    'quote"here',
+    'back\\"quote',
+  ];
+  for (const arg of testArgs) {
+    const script = `console.log(JSON.stringify(process.argv[1]))`;
+    const result = spawnSync(process.execPath, ['-e', script, arg], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    const received = JSON.parse(result.stdout.trim());
+    assert.strictEqual(received, arg, `Round-trip exe: sent ${JSON.stringify(arg)}, received ${JSON.stringify(received)}`);
+  }
+  console.log('PASS: round-trip exe arguments');
+}
+
+// ===========================================================================
+// 13. buildWin32CommandLine round-trip via exe
+// ===========================================================================
+{
+  const { spawnSync } = require('node:child_process');
+  const parts = ['echo', 'arg with spaces', 'trailing\\', 'quote"here'];
+  const cmdLine = buildWin32CommandLine(parts);
+
+  const result = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', cmdLine], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.strictEqual(result.status, 0, `cmd /s/c round-trip must succeed`);
+  console.log('PASS: buildWin32CommandLine round-trip via cmd.exe');
 }
 
 }
