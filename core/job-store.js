@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./fs-text');
 const { maybeInject } = require('./inject-points');
+const { reduce } = require('./reducer');
+const { isProcessAlive } = require('./process-identity');
 
 const ATOMIC_WRITE_MAX_RETRIES = 10;
 const ATOMIC_WRITE_DELAY_MS = 20;
@@ -115,9 +117,16 @@ class JobStore {
         break;
       }
       case 'attempt_state_changed': {
-        if (entry.to !== undefined) {
-          updated.state = entry.to;
-          updated.attempt_state = entry.to;
+        // null means "no state change" (e.g. cancel_requested_at annotation)
+        if (entry.to != null) {
+          // Don't let done/failed overwrite a confirmed cancelled or timed_out
+          if (['cancelled', 'timed_out'].includes(updated.state) &&
+              ['done', 'failed'].includes(entry.to)) {
+            // Preserve the more authoritative terminal state
+          } else {
+            updated.state = entry.to;
+            updated.attempt_state = entry.to;
+          }
         }
         const d = entry.detail || {};
         if (d.started_at !== undefined) updated.started_at = d.started_at;
@@ -170,12 +179,94 @@ class JobStore {
     for (const entry of entries) {
       status = this._applyJournalEntry(status, entry);
     }
+    status = this._applyReducerBackstop(status, entries);
     return status;
   }
 
   _regenerateStatus(jobDir) {
     const entries = this._readRawJournal(jobDir);
     return this._regenerateStatusFromEntries(entries);
+  }
+
+  _applyReducerBackstop(status, entries) {
+    const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
+    if (TERMINAL.has(status.state)) return status;
+
+    // Hard timeout deadline check for non-terminal jobs
+    if (status.hard_timeout_sec && status.started_at) {
+      const deadline = new Date(status.started_at).getTime() + status.hard_timeout_sec * 1000;
+      if (Number.isFinite(deadline) && Date.now() > deadline) {
+        const reduced = reduce(status, [], {});
+        status.state = reduced.state;
+        status.phase = reduced.phase;
+        if (reduced.failure_reason !== undefined) status.failure_reason = reduced.failure_reason;
+      }
+    }
+
+    return status;
+  }
+
+  gatherEvidence({ repoKey, jobId }) {
+    const jobDir = this._jobDir(repoKey, jobId);
+    const evidence = {
+      workerAlive: null,
+      completionSentinelPresent: false,
+      resultBytes: null,
+      heartbeatAgeMs: null,
+      jobId: null,
+      executionToken: null,
+      executionTokenMatch: null,
+      commandExitCode: null,
+    };
+
+    try {
+      const status = this.readStatus({ repoKey, jobId });
+
+      if (status.worker_pid) {
+        try { evidence.workerAlive = isProcessAlive(status.worker_pid); } catch {}
+      }
+      if (status.job_id) evidence.jobId = status.job_id;
+
+      // Check completion sentinel under attempts/<n>/
+      const attemptNum = status.attempt;
+      if (attemptNum) {
+        const sentinelPath = path.join(jobDir, 'attempts', String(attemptNum), 'worker-complete.json');
+        if (fs.existsSync(sentinelPath)) {
+          evidence.completionSentinelPresent = true;
+          try {
+            const sentinel = JSON.parse(fs.readFileSync(sentinelPath, 'utf8'));
+            if (sentinel.exit_code !== undefined) evidence.commandExitCode = sentinel.exit_code;
+          } catch {}
+        }
+      }
+
+      // Check heartbeat age
+      if (status.heartbeat_at) {
+        const heartbeatMs = Date.now() - new Date(status.heartbeat_at).getTime();
+        evidence.heartbeatAgeMs = heartbeatMs;
+      }
+    } catch {}
+
+    return evidence;
+  }
+
+  reconcileStatus({ repoKey, jobId }) {
+    const status = this.readStatus({ repoKey, jobId });
+    const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
+    if (TERMINAL.has(status.state)) return status;
+
+    const evidence = this.gatherEvidence({ repoKey, jobId });
+    const reduced = reduce(status, [], evidence);
+    if (reduced.state === status.state) return status;
+
+    // Write reconciled status
+    status.state = reduced.state;
+    status.phase = reduced.phase;
+    if (reduced.failure_reason !== undefined) status.failure_reason = reduced.failure_reason;
+    if (reduced.failure !== undefined) status.failure = reduced.failure;
+    if (reduced.warning !== undefined) status.warning = reduced.warning;
+    this._atomicWriteJsonWithRetry(path.join(this._jobDir(repoKey, jobId), 'status.json'), status);
+    return status;
   }
 
   _lastJournalSeq(jobDir) {

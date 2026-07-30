@@ -8,9 +8,9 @@ dead.
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The lifecycle reducer (`core/reducer.js`) is applied on the submit/background path, not only from the
+- [x] The lifecycle reducer (`core/reducer.js`) is applied on the submit/background path, not only from the
       synchronous `run` command where it is currently the sole caller.
 - [ ] `status.json` projection reflects reducer outcomes: a worker whose process has died with no
       completion sentinel and a stale/absent heartbeat resolves to `interrupted`, not `running` forever.
