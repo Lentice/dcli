@@ -1,10 +1,27 @@
 const { spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const { parseFindings, APPENDIX_MARKER, KNOWN_SEVERITIES, MAX_ITEMS } = require('../findings');
 const { executeRun } = require('./run');
+const { resolveDeadline } = require('../deadlines');
 
 const DIFF_CAP_BYTES = 100 * 1024;
 const UNTRACKED_SIZE_LIMIT = 50 * 1024;
+const GIT_SPAWN_TIMEOUT_MS = 30000;
+
+/**
+ * Slice a string to at most maxBytes UTF-8 bytes.
+ * @param {string} str
+ * @param {number} maxBytes
+ * @returns {string}
+ */
+function sliceByBytes(str, maxBytes) {
+  const buf = Buffer.from(str, 'utf8');
+  if (buf.length <= maxBytes) return str;
+  let end = maxBytes;
+  while (end > 0 && (buf[end - 1] & 0xC0) === 0x80) end--;
+  return buf.slice(0, end).toString('utf8');
+}
 
 function executeReview({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, reviewScope, rangeBase, rangeHead, paths, includeUntracked, embedDiff, intent, focus }) {
   if (access && access !== 'read-only') {
@@ -58,7 +75,7 @@ function getDroppedFilesFromDiff(diffText, cutoffChars) {
 }
 
 function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUntracked, embedDiff }) {
-  const info = { diff: '', truncated: false, totalBytes: 0, truncationInfo: null, untrackedWarning: null, untrackedFiles: [] };
+  const info = { diff: '', truncated: false, totalBytes: 0, truncationInfo: null, untrackedWarning: null, untrackedFiles: [], diff_status: 'ok' };
 
   if (embedDiff === false) {
     info.diff = '(diff embedding disabled)';
@@ -81,22 +98,38 @@ function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUnt
     for (const p of paths) gitArgs.push(p);
   }
 
+  const gitTimeout = resolveDeadline('GIT_SPAWN_TIMEOUT_MS', GIT_SPAWN_TIMEOUT_MS);
   const result = spawnSync('git', gitArgs, {
     cwd: repoRoot,
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: DIFF_CAP_BYTES * 2,
+    timeout: gitTimeout,
   });
+
+  if (result.error) {
+    info.diff_status = 'failed';
+    info.diff = `[diff failed: ${result.error.code || result.error.message}]`;
+    info.truncationInfo = `git diff failed: ${result.error.message}`;
+    return info;
+  }
+
+  if (result.status !== 0) {
+    info.diff_status = 'failed';
+    info.diff = `[diff failed: git exited with code ${result.status}]`;
+    return info;
+  }
 
   let diffText = result.stdout || '';
   info.totalBytes = Buffer.byteLength(diffText, 'utf8');
 
   if (info.totalBytes > DIFF_CAP_BYTES) {
     info.truncated = true;
-    const truncatedLen = Buffer.byteLength(diffText.slice(0, DIFF_CAP_BYTES), 'utf8');
+    const truncated = sliceByBytes(diffText, DIFF_CAP_BYTES);
+    const truncatedLen = Buffer.byteLength(truncated, 'utf8');
     const droppedFiles = getDroppedFilesFromDiff(diffText, DIFF_CAP_BYTES);
     info.truncationInfo = `Diff truncated: ${info.totalBytes} bytes total, showing first ${truncatedLen} bytes. Dropped or partially dropped files: ${droppedFiles.join(', ')}.`;
-    diffText = diffText.slice(0, DIFF_CAP_BYTES) + '\n[... diff truncated ...]\n';
+    diffText = truncated + '\n[... diff truncated ...]\n';
   }
 
   if (!includeUntracked) {
@@ -136,7 +169,7 @@ function getUntrackedFiles(repoRoot, paths) {
     args.push('--');
     for (const p of paths) args.push(p);
   }
-  const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
+  const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true, timeout: GIT_SPAWN_TIMEOUT_MS });
   if (result.status !== 0 || !result.stdout) return [];
   return result.stdout.trim().split('\n').filter(Boolean);
 }
@@ -158,15 +191,23 @@ function getUntrackedContent(repoRoot, paths) {
     resultFiles.push(file);
     const filePath = path.join(repoRoot, file);
     try {
-      const fileContent = require('fs').readFileSync(filePath, 'utf8');
-      const fileBytes = Buffer.byteLength(fileContent, 'utf8');
+      const stat = fs.statSync(filePath);
+      const fileBytes = stat.size;
       if (totalBytes + fileBytes > UNTRACKED_SIZE_LIMIT) {
         const available = UNTRACKED_SIZE_LIMIT - totalBytes;
-        content += `\`\`\`\n${fileContent.slice(0, available)}\n\`\`\`\n`;
+        const fd = fs.openSync(filePath, 'r');
+        try {
+          const buf = Buffer.alloc(available);
+          const bytesRead = fs.readSync(fd, buf, 0, available, 0);
+          content += `\`\`\`\n${buf.toString('utf8', 0, bytesRead)}\n\`\`\`\n`;
+        } finally {
+          fs.closeSync(fd);
+        }
         totalBytes += available;
         truncated = true;
         break;
       }
+      const fileContent = fs.readFileSync(filePath, 'utf8');
       content += `### ${file}\n\`\`\`\n${fileContent}\n\`\`\`\n`;
       totalBytes += fileBytes;
     } catch {
