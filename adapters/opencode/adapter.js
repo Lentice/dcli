@@ -1444,10 +1444,21 @@ class OpencodeAdapter {
       backend: 'opencode',
       version: this._detectedVersion || 'unknown',
       facts_emitted: factCount,
-      exit_code: this._mockExitCode !== null ? this._mockExitCode : 0,
+      exit_code: this._resolveExitCode(),
       interactions_seen: this._seenInteractionIds.size,
       has_automation_policy: this._automationPolicy !== null,
     };
+  }
+
+  _resolveExitCode() {
+    if (this._mockExitCode !== null) return this._mockExitCode;
+    const facts = this._facts || [];
+    for (let i = facts.length - 1; i >= 0; i--) {
+      if (facts[i].type === 'process_exited') {
+        return facts[i].code !== undefined ? facts[i].code : null;
+      }
+    }
+    return null;
   }
 
   Dispose(attempt) {
