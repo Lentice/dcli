@@ -112,7 +112,7 @@ await withTempDir(async (dir) => {
     store, adapter,
     repoKey: 'test-repo',
     prompt: 'test prompt',
-    hardTimeoutSec: 0,
+    hardTimeoutSec: 5,
   });
 
   assert.ok(adapter._disposed, 'adapter must be disposed after run with hang');

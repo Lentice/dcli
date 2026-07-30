@@ -205,8 +205,8 @@ function parseArgs(argv) {
           case '--prompt-file': result.promptFile = val; break;
           case '--hard-timeout-sec':
             result.hardTimeoutSec = parseInt(val, 10);
-            if (isNaN(result.hardTimeoutSec) || result.hardTimeoutSec < 0) {
-              const err = new Error(`Invalid --hard-timeout-sec: "${val}" must be a non-negative integer`);
+            if (isNaN(result.hardTimeoutSec) || result.hardTimeoutSec <= 0) {
+              const err = new Error(`Invalid --hard-timeout-sec: "${val}" must be a positive integer`);
               err.exitCode = 2;
               throw err;
             }

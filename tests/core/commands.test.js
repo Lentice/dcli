@@ -151,6 +151,22 @@ console.log('PASS: run test 4 — --prompt-file precedence');
 console.log('PASS: run test 5 — unusable --prompt-file is error');
 
 // ===========================================================================
+// 5b. --hard-timeout-sec 0 is rejected with exit 2 at the CLI level
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const env = { ...process.env, DCLI_STATE_ROOT: dir };
+  const result = spawnCli(
+    ['--backend', 'fake', 'run', '--hard-timeout-sec', '0', 'test prompt'],
+    undefined, env
+  );
+  assert.strictEqual(result.status, 2,
+    `--hard-timeout-sec 0 must exit 2, got ${result.status}`);
+  assert.ok(result.stderr.includes('positive integer'),
+    `stderr must mention "positive integer": ${result.stderr}`);
+  console.log('PASS: --hard-timeout-sec 0 rejected at CLI level');
+});
+
+// ===========================================================================
 // 6. run with piped stdin (e2e via spawnCli)
 // ===========================================================================
 await withTempDir(async (dir) => {
@@ -760,6 +776,120 @@ await withTempDir(async (dir) => {
   assert.ok(fs.existsSync(path.join(repoRoot, 'feature.txt')), 'apply must land the change into the main repo');
 
   console.log('PASS: implement mode — real run -> diff -> apply through executeRun (not just worktree.js primitives)');
+});
+
+// ===========================================================================
+// 25. --hard-timeout-sec 0 is rejected with exit 2
+// ===========================================================================
+{
+  const { parseArgs } = require('../../core/commands/index');
+
+  try {
+    parseArgs(['--backend', 'fake', 'run', '--hard-timeout-sec', '0']);
+    assert.fail('Should have thrown for --hard-timeout-sec 0');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, '--hard-timeout-sec 0 must exit 2');
+    assert.ok(err.message.includes('positive integer'),
+      `Error must mention "positive integer": ${err.message}`);
+  }
+
+  try {
+    parseArgs(['--backend', 'fake', 'resume', '--hard-timeout-sec', '0',
+      '--kind', 'continue_backend_session', 'parent-job-id']);
+    assert.fail('Should have thrown for --hard-timeout-sec 0 on resume');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, 'resume with --hard-timeout-sec 0 must exit 2');
+  }
+
+  try {
+    parseArgs(['--backend', 'fake', 'submit', '--hard-timeout-sec', '0', 'background job']);
+    assert.fail('Should have thrown for --hard-timeout-sec 0 on submit');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, 'submit with --hard-timeout-sec 0 must exit 2');
+  }
+}
+console.log('PASS: --hard-timeout-sec 0 rejected');
+
+// ===========================================================================
+// 26. Default hard timeout is applied when --hard-timeout-sec is omitted
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeRun } = require('../../core/commands/run');
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_def' },
+      { type: 'assistant_text', message_id: 'm1', text: 'ok' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  // With a short env override so the test runs fast
+  const saved = process.env.DCLI_HARD_TIMEOUT;
+  process.env.DCLI_HARD_TIMEOUT = '100';
+  try {
+    const output = await executeRun({
+      store, adapter,
+      repoKey: 'def-tmt',
+      prompt: 'test prompt',
+    });
+
+    assert.strictEqual(output.envelope.state, 'done',
+      `Expected done when adapter finishes before timeout, got ${output.envelope.state}`);
+  } finally {
+    if (saved === undefined) {
+      delete process.env.DCLI_HARD_TIMEOUT;
+    } else {
+      process.env.DCLI_HARD_TIMEOUT = saved;
+    }
+  }
+
+  console.log('PASS: default hard timeout applied (env override exercised for speed)');
+});
+
+// ===========================================================================
+// 27. Default hard timeout fires when adapter hangs and --hard-timeout-sec omitted
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeRun } = require('../../core/commands/run');
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_hang' },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+    behaviors: { hangAfter: 'started' },
+  });
+
+  const saved = process.env.DCLI_HARD_TIMEOUT;
+  process.env.DCLI_HARD_TIMEOUT = '500';
+  const startTime = Date.now();
+  try {
+    const output = await executeRun({
+      store, adapter,
+      repoKey: 'def-tmt-hang',
+      prompt: 'test prompt',
+    });
+
+    const elapsed = Date.now() - startTime;
+    assert.strictEqual(output.envelope.state, 'timed_out',
+      `Expected timed_out when adapter hangs, got ${output.envelope.state}`);
+    assert.ok(elapsed < 30000,
+      `Hang timeout must complete within 30s, took ${elapsed}ms`);
+  } finally {
+    if (saved === undefined) {
+      delete process.env.DCLI_HARD_TIMEOUT;
+    } else {
+      process.env.DCLI_HARD_TIMEOUT = saved;
+    }
+  }
+
+  console.log('PASS: default hard timeout fires when adapter hangs');
 });
 
 // ===========================================================================

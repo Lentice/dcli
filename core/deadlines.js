@@ -72,4 +72,19 @@ function validateTimeoutMs(value, name) {
   return value;
 }
 
-module.exports = { DEFAULTS, resolveDeadline, validateTimeoutMs, ENV_OVERRIDES };
+/**
+ * Resolve the hard timeout for a synchronous run via the CLI flag.
+ * If a positive number is supplied, use it verbatim. Otherwise,
+ * resolve the default from resolveDeadline('JOB_HARD_TIMEOUT_MS').
+ *
+ * @param {number|undefined|null} hardTimeoutSec - --hard-timeout-sec value from parseArgs
+ * @returns {number} milliseconds
+ */
+function resolveHardTimeoutMs(hardTimeoutSec) {
+  if (hardTimeoutSec !== undefined && hardTimeoutSec !== null && hardTimeoutSec > 0) {
+    return hardTimeoutSec * 1000;
+  }
+  return resolveDeadline('JOB_HARD_TIMEOUT_MS');
+}
+
+module.exports = { DEFAULTS, resolveDeadline, validateTimeoutMs, resolveHardTimeoutMs, ENV_OVERRIDES };

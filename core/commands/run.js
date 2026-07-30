@@ -3,7 +3,7 @@ const path = require('path');
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
 const { buildEnvelope, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure } = require('./index');
-const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
+const { validateTimeoutMs, resolveDeadline, resolveHardTimeoutMs } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 
@@ -99,7 +99,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
       model,
       access: effectiveAccess,
       mode: effectiveMode,
-      hardTimeoutMs: hardTimeoutSec !== undefined && hardTimeoutSec !== null && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0,
+      hardTimeoutMs: resolveHardTimeoutMs(hardTimeoutSec),
       reasoningEffort,
       variant,
       effort,
@@ -135,9 +135,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
 
   const attempt = {};
 
-  const hardTimeoutMs = hardTimeoutSec !== undefined && hardTimeoutSec !== null && hardTimeoutSec > 0
-    ? hardTimeoutSec * 1000
-    : 0;
+  const hardTimeoutMs = resolveHardTimeoutMs(hardTimeoutSec);
   let hardTimedOut = false;
   let hardTimeoutTimer = null;
 
