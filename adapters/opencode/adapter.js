@@ -538,7 +538,7 @@ class OpencodeAdapter {
                 : part.tool;
               facts.push({ type: 'tool_invoked', call_id: callId, tool: part.tool, summary: inputSummary });
             } else {
-              const ok = part.state && part.state.metadata ? part.state.metadata.exit === 0 : true;
+              const ok = part.state && part.state.metadata ? part.state.metadata.exit === 0 : null;
               const outputSummary = part.state && part.state.output
                 ? String(part.state.output).slice(0, 200)
                 : (part.tool || '');
@@ -1137,9 +1137,9 @@ class OpencodeAdapter {
           const t = resp[sid].type;
           return t === 'retry' ? 'retrying' : t;
         }
-        return 'idle';
+        return 'unknown';
       }
-      return 'idle';
+      return 'unknown';
     }
 
     const status = await this._transportRequest('GET', '/session/status', null, SESSION_STATUS_TIMEOUT_MS);
@@ -1155,7 +1155,7 @@ class OpencodeAdapter {
         }
       }
     }
-    return 'idle';
+    return 'unknown';
   }
 
   async _readMessagesFromServer() {
