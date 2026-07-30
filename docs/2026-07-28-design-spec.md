@@ -784,19 +784,13 @@ inspect `diff` before `apply`; use exact wrapper lineage rather than "continue l
 per the failure-class table; never retry quota/auth/permission/timeout failures; keep review intent
 neutral; keep delegated work out of the caller's context until collection.
 
-Project policy file (`.dcli/policy.json`), all keys optional:
-
-```json
-{ "delegation": {
-    "review_after_changes": "ask",
-    "review_min_changed_lines": 50,
-    "review_default_paths": [],
-    "plan_second_opinion": "ask",
-    "max_calls_per_task": 2,
-    "default_backend": "codex",
-    "default_model": null,
-    "allow_network": false } }
-```
+**Decided against: no project policy file.** An earlier draft of this section specified a
+`.dcli/policy.json` with auto/ask/off delegation modes, inherited from the predecessor `ccodex`.
+That is deliberately not built. Any auto/ask/off checkpoint implies a code path where some condition
+triggers automation — and that is incompatible with AGENTS.md's "nine mistakes" #8: `apply` never
+runs automatically, not at a policy checkpoint, not unattended, ever. See commit `074cdd0`, which
+states the absence explicitly in every generated skill so an agent cannot infer a checkpoint exists.
+There is no `.dcli/policy.json`, and none is planned.
 
 ---
 
