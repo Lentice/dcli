@@ -115,7 +115,9 @@ async function main() {
   // inside the target repository (and keeps state placement independently
   // configurable from repository resolution).
   const stateRoot = process.env.DCLI_STATE_ROOT
-    || (parsed.repo ? path.resolve(parsed.repo, '.dcli-state') : process.env.DCLI_TEST_STATE_ROOT || getStateRoot());
+    || (parsed.repo ? path.resolve(parsed.repo, '.dcli-state')
+      : (process.env.NODE_ENV === 'test' ? process.env.DCLI_TEST_STATE_ROOT : null)
+      || getStateRoot());
 
   ensureStateRoot(stateRoot);
 

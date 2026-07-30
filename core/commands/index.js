@@ -16,6 +16,8 @@ const KNOWN_FLAGS = new Set([
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'resume', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
 
+const KNOWN_BACKENDS = new Set(['opencode', 'codex', 'claude', 'fake']);
+
 // Threshold below which a non-zero-exit result is treated as "no usable
 // result produced" (the backend emitted only a few dozen bytes of
 // "I'll dispatch..." boilerplate before exiting 1). Conservative: every real review/analysis result observed in
@@ -200,7 +202,19 @@ function parseArgs(argv) {
         }
         const val = args[i];
         switch (arg) {
-          case '--backend': result.backend = val; break;
+          case '--backend':
+            if (!KNOWN_BACKENDS.has(val)) {
+              const err = new Error(`Unknown backend "${val}". Must be one of: ${[...KNOWN_BACKENDS].join(', ')}`);
+              err.exitCode = 2;
+              throw err;
+            }
+            if (result.backend !== null) {
+              const err = new Error(`--backend set twice: was "${result.backend}", got "${val}". Only one backend may be specified.`);
+              err.exitCode = 2;
+              throw err;
+            }
+            result.backend = val;
+            break;
           case '--repo': result.repo = val; break;
           case '--prompt-file': result.promptFile = val; break;
           case '--hard-timeout-sec':

@@ -1074,6 +1074,51 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
+// 32. --backend enum validation (unknown backend rejected)
+// ===========================================================================
+{
+  const { parseArgs } = require('../../core/commands/index');
+  try {
+    parseArgs(['node', 'dcli', '--backend', 'nonesuch', 'run', '--hard-timeout-sec', '60', 'prompt']);
+    assert.fail('Should have thrown for unknown backend');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, 'unknown backend must exit 2');
+    assert.ok(err.message.includes('nonesuch'), `Error must name the backend: ${err.message}`);
+    assert.ok(err.message.includes('opencode'), `Error must list valid backends: ${err.message}`);
+  }
+}
+console.log('PASS: unknown backend rejected');
+
+// ===========================================================================
+// 33. --backend with path traversal rejected
+// ===========================================================================
+{
+  const { parseArgs } = require('../../core/commands/index');
+  try {
+    parseArgs(['node', 'dcli', '--backend', '..\\..\\foo', 'run', '--hard-timeout-sec', '60', 'prompt']);
+    assert.fail('Should have thrown for path-traversal backend');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, 'path-traversal backend must exit 2');
+  }
+}
+console.log('PASS: path-traversal backend rejected');
+
+// ===========================================================================
+// 34. --backend set twice is rejected
+// ===========================================================================
+{
+  const { parseArgs } = require('../../core/commands/index');
+  try {
+    parseArgs(['node', 'dcli', '--backend', 'codex', '--backend', 'claude', 'run', '--hard-timeout-sec', '60', 'prompt']);
+    assert.fail('Should have thrown for double --backend');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, 'double --backend must exit 2');
+    assert.ok(err.message.includes('twice'), `Error must mention duplicate: ${err.message}`);
+  }
+}
+console.log('PASS: double --backend rejected');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll core command tests passed.');
