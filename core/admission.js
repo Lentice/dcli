@@ -75,18 +75,8 @@ class AdmissionController {
       if (meta.executionToken && meta.executionToken !== this._ownToken) return false;
       return true;
     }
-    // Non-self pid: verify with process.kill(pid, 0).
-    // Full identity verification (pid + startTime + imagePath) requires
-    // OS-level process inspection and is deferred to ticket 51's full
-    // implementation. PID-reuse risk is documented: a reused PID will be
-    // counted as alive until manual reconciliation or cleanup.
-    try {
-      process.kill(meta.pid, 0);
-      return true;
-    } catch (err) {
-      if (err.code === 'EPERM') return true;
-      return false;
-    }
+    const { isSameProcessAlive } = require('./process-identity');
+    return isSameProcessAlive({ pid: meta.pid, startTime: meta.startTime, imagePath: meta.imagePath });
   }
 
   _generateSlotId() {

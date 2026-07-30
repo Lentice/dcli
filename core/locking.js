@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { getOwnIdentity, generateExecutionToken, isProcessAlive } = require('./process-identity');
+const { getOwnIdentity, generateExecutionToken, isProcessAlive, isSameProcessAlive } = require('./process-identity');
 
 const LOCK_SCOPES = Object.freeze({
   ATTEMPT: 'attempt',
@@ -242,7 +242,7 @@ class LockManager {
         return true;
       }
 
-      const alive = isProcessAlive(meta.pid);
+      const alive = isSameProcessAlive({ pid: meta.pid, startTime: meta.startTime, imagePath: meta.imagePath });
       return !alive;
     } catch {
       return false;

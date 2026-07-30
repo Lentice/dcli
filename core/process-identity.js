@@ -71,6 +71,62 @@ function isProcessAlive(pid) {
   }
 }
 
+/**
+ * For non-self pids: verify basic liveness AND try OS-level identity match.
+ * Falls back to bare process.kill(pid, 0) when OS querying is unavailable.
+ *
+ * @param {{ pid: number, startTime: string, imagePath?: string }} identity
+ * @returns {boolean}
+ */
+function isSameProcessAlive(identity) {
+  if (!identity || typeof identity.pid !== 'number' || identity.pid <= 0) return false;
+  if (!isProcessAlive(identity.pid)) return false;
+
+  // Self-pid: identity verified by matching own startTime
+  if (identity.pid === process.pid) {
+    return identity.startTime === PROCESS_START_TIME.toISOString();
+  }
+
+  // Non-self pid: try OS-level startTime verification
+  try {
+    const startTime = getProcessStartTime(identity.pid);
+    if (startTime) return startTime === identity.startTime;
+  } catch {}
+
+  // Fall through: can't query OS — accept basic liveness check
+  return true;
+}
+
+/**
+ * Get process start time from the OS. Returns ISO string or null.
+ *
+ * @param {number} pid
+ * @returns {string|null}
+ */
+function getProcessStartTime(pid) {
+  const { execSync } = require('node:child_process');
+  try {
+    if (process.platform === 'win32') {
+      const result = execSync(
+        `powershell -NoProfile -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).StartTime.ToUniversalTime().ToString('o')"`,
+        { encoding: 'utf8', timeout: 3000, windowsHide: true }
+      );
+      const line = result.trim();
+      return line || null;
+    }
+    const stat = require('fs').readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const match = stat.match(/^\d+\s+\(.+?\)\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\d+)/);
+    if (match) {
+      const bootTime = parseInt(require('fs').readFileSync('/proc/stat', 'utf8').match(/btime\s+(\d+)/)[1], 10);
+      const startTicks = parseInt(match[1], 10);
+      const hz = 100;
+      const epochMs = (bootTime + startTicks / hz) * 1000;
+      return new Date(epochMs).toISOString();
+    }
+  } catch {}
+  return null;
+}
+
 module.exports = {
   getOwnIdentity,
   generateExecutionToken,
@@ -78,5 +134,7 @@ module.exports = {
   parseWorkerIdentity,
   identitiesMatch,
   isProcessAlive,
+  isSameProcessAlive,
+  getProcessStartTime,
   PROCESS_START_TIME,
 };
