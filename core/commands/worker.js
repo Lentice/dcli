@@ -190,15 +190,39 @@ async function main() {
   }, hardTimeoutMs);
   if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
 
+  // Cancel request watcher: observe cancel.request on a bounded cadence
+  let cancelled = false;
+  let cancelWatcherTimer = null;
+  const CANCEL_WATCH_MS = 2000;
+
+  function checkCancelRequest() {
+    if (cancelled || hardTimedOut) return;
+    try {
+      const cancelPath = path.join(jobDir, 'cancel.request');
+      if (fs.existsSync(cancelPath)) {
+        cancelled = true;
+        clearTimeout(cancelWatcherTimer);
+        requestCancelRungs();
+      }
+    } catch {}
+    if (!cancelled && !hardTimedOut) {
+      cancelWatcherTimer = setTimeout(checkCancelRequest, CANCEL_WATCH_MS);
+      if (cancelWatcherTimer.unref) cancelWatcherTimer.unref();
+    }
+  }
+  cancelWatcherTimer = setTimeout(checkCancelRequest, CANCEL_WATCH_MS);
+  if (cancelWatcherTimer.unref) cancelWatcherTimer.unref();
+
   // Run the job
   try {
     adapter.PrepareInvocation(attempt, params);
     await adapter.Start(attempt);
-    if (hardTimedOut) throw null;
+    if (hardTimedOut || cancelled) throw null;
     await adapter.SendPrompt(attempt, prompt);
-    if (hardTimedOut) throw null;
+    if (hardTimedOut || cancelled) throw null;
   } catch (err) {
     clearTimeout(hardTimeoutTimer);
+    clearTimeout(cancelWatcherTimer);
     tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
     if (hardTimedOut) {
@@ -210,6 +234,16 @@ async function main() {
         detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'hard_timeout' },
       });
       process.exit(24);
+    }
+    if (cancelled) {
+      store.journalTransition(jobId, repoKey, {
+        kind: 'attempt_state_changed',
+        attempt: attemptNum,
+        from: 'running',
+        to: 'cancelled',
+        detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal' },
+      });
+      process.exit(0);
     }
     store.journalTransition(jobId, repoKey, {
       kind: 'attempt_state_changed',
@@ -226,11 +260,14 @@ async function main() {
   const facts = [];
   try {
     for await (const fact of raceObserve(adapter.Observe(attempt), deadline)) {
-      if (hardTimedOut) throw null;
+      if (hardTimedOut || cancelled) throw null;
       facts.push(fact);
 
       if (fact.type === 'process_exited') {
         clearTimeout(hardTimeoutTimer);
+        clearTimeout(cancelWatcherTimer);
+        // If cancelled by external request, don't report process_exited as done
+        if (cancelled && !hardTimedOut) throw null;
         const collected = adapter.CollectResult(attempt);
         const terminalState = fact.code === 0 ? 'done' : 'failed';
         let resultBytes;
@@ -279,6 +316,7 @@ async function main() {
     }
   } catch (err) {
     clearTimeout(hardTimeoutTimer);
+    clearTimeout(cancelWatcherTimer);
     if (!hardTimedOut && err && err[HARD_TIMEOUT_ERROR]) hardTimedOut = true;
     requestCancelRungs();
     // Collect partial result before dispose so adapter state is intact
@@ -302,6 +340,16 @@ async function main() {
       });
       process.exit(24);
     }
+    if (cancelled) {
+      store.journalTransition(jobId, repoKey, {
+        kind: 'attempt_state_changed',
+        attempt: attemptNum,
+        from: 'running',
+        to: 'cancelled',
+        detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal' },
+      });
+      process.exit(0);
+    }
     store.journalTransition(jobId, repoKey, {
       kind: 'attempt_state_changed',
       attempt: attemptNum,
@@ -313,6 +361,20 @@ async function main() {
   }
 
   clearTimeout(hardTimeoutTimer);
+  clearTimeout(cancelWatcherTimer);
+
+  if (cancelled) {
+    store.journalTransition(jobId, repoKey, {
+      kind: 'attempt_state_changed',
+      attempt: attemptNum,
+      from: 'running',
+      to: 'cancelled',
+      detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal' },
+    });
+    tryDisposeAdapter(adapter, attempt);
+    admission.releaseSlot(slotId);
+    process.exit(0);
+  }
 
   const collected = adapter.CollectResult(attempt);
   store.journalTransition(jobId, repoKey, {
