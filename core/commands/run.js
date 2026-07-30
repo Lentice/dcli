@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
-const { buildEnvelope, isVersionInRange } = require('./index');
+const { buildEnvelope, isVersionInRange, tryDisposeAdapter } = require('./index');
 const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
@@ -183,10 +183,12 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           ...finalizeWorktreeSnapshot(),
         },
       });
+      tryDisposeAdapter(adapter, attempt);
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
       return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
+    tryDisposeAdapter(adapter, attempt);
     if (worktreePath) removeWorktree(repoRoot, worktreePath);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
@@ -222,6 +224,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
               ...finalizeWorktreeSnapshot(),
             },
           });
+          tryDisposeAdapter(adapter, attempt);
           if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
           const finalStatus = store.readStatus({ repoKey, jobId });
           return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 11 };
@@ -245,6 +248,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           },
         });
 
+        tryDisposeAdapter(adapter, attempt);
         if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
         const finalStatus = store.readStatus({ repoKey, jobId });
         return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus) };
@@ -266,10 +270,12 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           ...finalizeWorktreeSnapshot(),
         },
       });
+      tryDisposeAdapter(adapter, attempt);
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
       return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
+    tryDisposeAdapter(adapter, attempt);
     if (worktreePath) removeWorktree(repoRoot, worktreePath);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
@@ -291,6 +297,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
         ...finalizeWorktreeSnapshot(),
       },
     });
+    tryDisposeAdapter(adapter, attempt);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     const finalStatus = store.readStatus({ repoKey, jobId });
     return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
@@ -310,6 +317,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     },
   });
 
+  tryDisposeAdapter(adapter, attempt);
   if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
   const finalStatus = store.readStatus({ repoKey, jobId });
   return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus), exitCode: 1 };

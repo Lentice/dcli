@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
+const { tryDisposeAdapter } = require('./index');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
@@ -187,6 +188,7 @@ async function main() {
     if (hardTimedOut) throw null;
   } catch (err) {
     clearTimeout(hardTimeoutTimer);
+    tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
     if (hardTimedOut) {
       store.journalTransition(jobId, repoKey, {
@@ -235,6 +237,7 @@ async function main() {
               failure: { class: 'artifact_persistence', message: 'Unable to persist result artifact' },
             },
           });
+          tryDisposeAdapter(adapter, attempt);
           admission.releaseSlot(slotId);
           process.exit(11);
         }
@@ -256,12 +259,14 @@ async function main() {
           },
         });
 
+        tryDisposeAdapter(adapter, attempt);
         admission.releaseSlot(slotId);
         process.exit(0);
       }
     }
   } catch (err) {
     clearTimeout(hardTimeoutTimer);
+    tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
     if (hardTimedOut) {
       store.journalTransition(jobId, repoKey, {
@@ -299,6 +304,7 @@ async function main() {
       ...(collected.usage ? { tokens: collected.usage } : {}),
     },
   });
+  tryDisposeAdapter(adapter, attempt);
   admission.releaseSlot(slotId);
   process.exit(1);
 }

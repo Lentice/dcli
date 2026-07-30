@@ -371,4 +371,19 @@ function isVersionInRange(version, range) {
   return true;
 }
 
-module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange };
+function tryDisposeAdapter(adapter, attempt) {
+  if (!adapter || typeof adapter.Dispose !== 'function') return { disposed: false, reason: 'no_adapter' };
+  const ms = resolveDeadline('ADAPTER_DISPOSE_MS');
+  const deadline = Date.now() + ms;
+  try {
+    adapter.Dispose(attempt);
+    if (Date.now() > deadline) {
+      return { disposed: true, exceeded: true };
+    }
+    return { disposed: true };
+  } catch (err) {
+    return { disposed: false, reason: err.message || 'dispose_error' };
+  }
+}
+
+module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter };
