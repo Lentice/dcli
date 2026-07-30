@@ -67,6 +67,28 @@ async function main() {
   // Acquire admission slot
   const admission = new AdmissionController({ stateRoot, backendLimits: { opencode: 3, codex: 3, claude: 3 } });
   admission.reconcile();
+
+  // Set up dequeue spawning so queued jobs are re-launched when slots free
+  admission.setSpawnWorker((entry) => {
+    const { spawn } = require('child_process');
+    const workerPath = path.resolve(__dirname, 'worker.js');
+    const child = spawn(process.execPath, [workerPath], {
+      detached: true, windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        DCLI_WORKER: '1',
+        DCLI_STATE_ROOT: stateRoot,
+        DCLI_BACKEND: entry.backend,
+        DCLI_JOB_ID: entry.jobId,
+        DCLI_REPO_KEY: entry.repoKey || 'unknown',
+        DCLI_REPO_ROOT: entry.repoRoot || stateRoot,
+        DCLI_WORKER_HARD_TIMEOUT_MS: String(entry.hardTimeoutMs || 0),
+      },
+    });
+    child.unref();
+  });
+
   const slotResult = admission.acquireSlot(backendName);
   if (!slotResult.acquired) {
     store.journalTransition(jobId, repoKey, {
@@ -76,7 +98,9 @@ async function main() {
       to: 'queued',
       detail: { phase: 'queued', queue_reason: slotResult.reason },
     });
-    admission.enqueueJob(backendName, jobId);
+    admission.enqueueJob(backendName, jobId, {
+      repoKey, repoRoot, hardTimeoutMs,
+    });
     process.exit(0);
   }
   const slotId = slotResult.slotId;

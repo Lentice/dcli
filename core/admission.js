@@ -146,16 +146,17 @@ class AdmissionController {
     return this.tryDequeue();
   }
 
-  enqueueJob(backend, jobId) {
+  enqueueJob(backend, jobId, meta) {
     this._ensureDir(this._queueDir);
     const filePath = path.join(this._queueDir, `${jobId}.json`);
     if (fs.existsSync(filePath)) return false;
-    const meta = {
+    const entry = {
       jobId,
       backend: backend || 'unknown',
       enqueuedAt: new Date().toISOString(),
+      ...meta,
     };
-    fs.writeFileSync(filePath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(filePath, JSON.stringify(entry, null, 2) + '\n', 'utf8');
     return true;
   }
 
@@ -178,7 +179,7 @@ class AdmissionController {
     for (const f of files) {
       try {
         const meta = JSON.parse(fs.readFileSync(path.join(this._queueDir, f), 'utf8'));
-        queueEntries.push(meta);
+        queueEntries.push({ ...meta, fileName: f });
       } catch {}
     }
 
@@ -189,6 +190,10 @@ class AdmissionController {
       const result = this.acquireSlot(entry.backend);
       if (result.acquired) {
         this.dequeueJob(entry.jobId);
+        // Spawn the worker for the dequeued job so it actually runs
+        if (typeof this._spawnWorker === 'function') {
+          try { this._spawnWorker(entry); } catch {}
+        }
         dequeued++;
       } else {
         break;
@@ -196,6 +201,10 @@ class AdmissionController {
     }
 
     return dequeued;
+  }
+
+  setSpawnWorker(fn) {
+    this._spawnWorker = fn;
   }
 
   reconcile() {
