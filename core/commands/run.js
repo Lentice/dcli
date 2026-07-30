@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
-const { buildEnvelope, isVersionInRange, tryDisposeAdapter } = require('./index');
+const { buildEnvelope, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure } = require('./index');
 const { validateTimeoutMs, resolveDeadline } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
@@ -232,6 +232,12 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
         try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
 
+        const terminalFailure = classifyTerminalFailure({
+          exitCode: fact.code !== undefined ? fact.code : null,
+          resultBytes,
+          reducerResult: result,
+        });
+
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',
           attempt: attemptNum,
@@ -241,6 +247,8 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
             finished_at: new Date().toISOString(),
             command_exit_code: fact.code !== undefined ? fact.code : null,
             phase: 'terminal',
+            failure_reason: terminalFailure.failure_reason,
+            failure: terminalFailure.failure,
             ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
             ...(collected.usage ? { tokens: collected.usage } : {}),
             result_bytes: resultBytes,

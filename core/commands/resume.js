@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const path = require('path');
 const { generateJobId } = require('../job-id');
-const { buildEnvelope, isVersionInRange, tryDisposeAdapter } = require('./index');
+const { buildEnvelope, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure } = require('./index');
+const { reduce } = require('../reducer');
 const { resolveDeadline } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
@@ -272,13 +273,14 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
 
       if (fact.type === 'process_exited') {
         const status = store.regenerateStatus({ repoKey, jobId });
+        const result = reduce(status, facts, {});
         const collected = adapter.CollectResult(attempt);
         let backendSessionId = collected.backend_session_id;
         if (!backendSessionId && parentBackendSessionId) {
           backendSessionId = parentBackendSessionId;
         }
 
-        const terminalState = fact.code === 0 ? 'done' : 'failed';
+        const terminalState = result.state;
         let resultBytes;
         try {
           resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected });
@@ -306,6 +308,12 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
         try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
 
+        const terminalFailure = classifyTerminalFailure({
+          exitCode: fact.code !== undefined ? fact.code : null,
+          resultBytes,
+          reducerResult: result,
+        });
+
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',
           attempt: attemptNum,
@@ -316,6 +324,8 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
             command_exit_code: fact.code !== undefined ? fact.code : null,
             phase: 'terminal',
             session_strategy: kind,
+            failure_reason: terminalFailure.failure_reason,
+            failure: terminalFailure.failure,
             ...(backendSessionId ? { backend_session_id: backendSessionId } : {}),
             ...(collected.usage ? { tokens: collected.usage } : {}),
             result_bytes: resultBytes,

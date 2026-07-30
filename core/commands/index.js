@@ -16,6 +16,63 @@ const KNOWN_FLAGS = new Set([
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'resume', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
 
+// Threshold below which a non-zero-exit result is treated as "no usable
+// result produced" (the backend emitted only a few dozen bytes of
+// "I'll dispatch..." boilerplate before exiting 1). Conservative: every real review/analysis result observed in
+// production is well above this size.
+const NO_RESULT_BYTE_THRESHOLD = 512;
+
+// Advisory patterns for prompts that ask for tool dispatch a read-only job
+// cannot satisfy (subagent / Task tool / file writes). Conservative — only
+// verb-led constructions of the direct object ("dispatch a subagent",
+// "use the Task tool", "write a file") trigger, not bare nouns.
+const ACCESS_HINT_PATTERNS = [
+  /\b(?:dispatch|spawn|launch|use|invoke|call)\s+(?:a\s+|the\s+|some\s+)?sub-?agent\b/i,
+  /\b(?:dispatch|spawn|launch)\s+(?:a\s+|the\s+)?agent\b/i,
+  /\btask\s+tool\b/i,
+  /\b(?:write|create|edit|modify|delete|remove)\s+(?:a\s+|the\s+|some\s+)?file\b/i,
+];
+
+/**
+ * Derive the journal-ready failure_reason / failure for a terminal attempt
+ * from the reducer's projection plus a byte-size heuristic. When the reducer
+ * already supplied a failure_reason (e.g. 'hard_timeout'), it is preserved —
+ * the no-result heuristic only fills in for otherwise-unexplained non-zero
+ * exits with an unusably small result.
+ *
+ * @param {{ exitCode:number|null, resultBytes:number, reducerResult:Object }} args
+ * @returns {{ failure_reason:string|null, failure:Object|null }}
+ */
+function classifyTerminalFailure({ exitCode, resultBytes, reducerResult }) {
+  const failure_reason = (reducerResult && reducerResult.failure_reason) || null;
+  const failure = (reducerResult && reducerResult.failure) || null;
+  if (exitCode && exitCode !== 0 &&
+      typeof resultBytes === 'number' && resultBytes < NO_RESULT_BYTE_THRESHOLD) {
+    if (!failure_reason) return { failure_reason: 'backend_exited_no_result', failure };
+  }
+  return { failure_reason, failure };
+}
+
+/**
+ * Cheap advisory check: if no --access was supplied (default is read-only) and
+ * the prompt asks for subagent dispatch / file writes / the Task tool, emit a
+ * hint pointing at --access workspace. Never blocks the run.
+ *
+ * @param {{ access:string|null, prompt:string|null }} args
+ * @returns {string|null} hint message, or null if no advice applies
+ */
+function maybeAccessHint({ access, prompt }) {
+  const effectiveAccess = access || 'read-only';
+  if (effectiveAccess !== 'read-only') return null;
+  if (!prompt || typeof prompt !== 'string') return null;
+  for (const re of ACCESS_HINT_PATTERNS) {
+    if (re.test(prompt)) {
+      return 'hint: --access read-only forbids subagent / write tools; --access workspace may be needed for this task.';
+    }
+  }
+  return null;
+}
+
 function buildEnvelope(status) {
   return {
     schema_version: 1,
@@ -386,4 +443,4 @@ function tryDisposeAdapter(adapter, attempt) {
   }
 }
 
-module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter };
+module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure, maybeAccessHint, NO_RESULT_BYTE_THRESHOLD };

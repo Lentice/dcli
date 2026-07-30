@@ -75,7 +75,7 @@ if (process.argv.includes('--help')) {
   process.exit(0);
 }
 
-const { parseArgs, buildEnvelope, resolvePrompt } = require('../core/commands/index');
+const { parseArgs, buildEnvelope, resolvePrompt, maybeAccessHint } = require('../core/commands/index');
 const { JobStore } = require('../core/job-store');
 const { getStateRoot, ensureStateRoot } = require('../core/state-root');
 const { computeRepoKeyWithPath } = require('../core/repo-key');
@@ -148,6 +148,9 @@ async function main() {
         stdinPipeActive,
         positionals: parsed.positionals,
       });
+
+      const accessHint = maybeAccessHint({ access: parsed.access, prompt });
+      if (accessHint && !parsed.json) process.stderr.write(accessHint + '\n');
 
       const output = await executeRun({
         store, adapter, repoKey, repoRoot: fullPath,
@@ -306,6 +309,9 @@ async function main() {
         stdinPipeActive,
         positionals: parsed.positionals,
       });
+
+      const accessHint = maybeAccessHint({ access: parsed.access, prompt });
+      if (accessHint && !parsed.json) process.stderr.write(accessHint + '\n');
 
       const parentJobId = parsed.positionals[0];
       if (!parentJobId) {

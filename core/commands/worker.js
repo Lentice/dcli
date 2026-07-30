@@ -21,7 +21,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { resolveDeadline } = require('../deadlines');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
-const { tryDisposeAdapter } = require('./index');
+const { tryDisposeAdapter, classifyTerminalFailure } = require('./index');
+const { reduce } = require('../reducer');
 
 const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
@@ -292,8 +293,10 @@ async function main() {
         clearTimeout(cancelWatcherTimer);
         // If cancelled by external request, don't report process_exited as done
         if (cancelled && !hardTimedOut) throw null;
+        const status = store.regenerateStatus({ repoKey, jobId });
+        const result = reduce(status, facts, {});
         const collected = adapter.CollectResult(attempt);
-        const terminalState = fact.code === 0 ? 'done' : 'failed';
+        const terminalState = result.state;
         let resultBytes;
         try {
           resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected });
@@ -318,6 +321,12 @@ async function main() {
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
         try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
 
+        const terminalFailure = classifyTerminalFailure({
+          exitCode: fact.code !== undefined ? fact.code : null,
+          resultBytes,
+          reducerResult: result,
+        });
+
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',
           attempt: attemptNum,
@@ -327,6 +336,8 @@ async function main() {
             finished_at: new Date().toISOString(),
             command_exit_code: fact.code !== undefined ? fact.code : null,
             phase: 'terminal',
+            failure_reason: terminalFailure.failure_reason,
+            failure: terminalFailure.failure,
             ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
             ...(collected.usage ? { tokens: collected.usage } : {}),
             result_bytes: resultBytes,
