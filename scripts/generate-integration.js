@@ -296,135 +296,79 @@ function allDocs() {
 }
 
 function check() {
-  // Compare generated files against source templates
-  // by generating into a temp dir and comparing hashes
-  // First, collect source hashes directly
-  const sourceHashes = {};
-  const skills = ['dcli'];
-  for (const backend of BACKENDS) skills.push(`dcli-${backend}`);
-  for (const skill of skills) {
-    const p = path.join(SOURCE_DIR, skill === 'dcli' ? 'router.md' : `backend-${skill.replace('dcli-', '')}.md`);
-    if (fs.existsSync(p)) {
-      sourceHashes[`skills/${skill}/SKILL.md`] = crypto.createHash('sha256').update(fs.readFileSync(p, 'utf8'), 'utf8').digest('hex');
-    }
-  }
-
-  // Read actual generated hashes
-  const actualHashes = {};
-  if (fs.existsSync(GENERATED_DIR)) {
-    collectHashes(GENERATED_DIR, actualHashes);
-  }
-
-  // Read a sample of generated files and verify they contain expected content
+  const os = require('os');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-gen-check-'));
   let stale = false;
 
-  // Check skills exist and reference correct backend
-  for (const backend of BACKENDS) {
-    const skillPath = path.join(GENERATED_DIR, 'skills', `dcli-${backend}`, 'SKILL.md');
-    if (!fs.existsSync(skillPath)) {
-      console.error(`STALE: skills/dcli-${backend}/SKILL.md is missing`);
-      stale = true;
-      continue;
-    }
-    const content = fs.readFileSync(skillPath, 'utf8');
-    if (!content.includes(`--hard-timeout-sec`)) {
-      console.error(`STALE: skills/dcli-${backend}/SKILL.md missing budget reference`);
-      stale = true;
-    }
-    if (!content.includes(`dcli-${backend}`)) {
-      console.error(`STALE: skills/dcli-${backend}/SKILL.md missing backend reference`);
-      stale = true;
-    }
-  }
+  try {
+    const generatedHashes = {};
+    const expectedHashes = {};
 
-  // Check router exists
-  const routerPath = path.join(GENERATED_DIR, 'skills', 'dcli', 'SKILL.md');
-  if (!fs.existsSync(routerPath)) {
-    console.error('STALE: skills/dcli/SKILL.md is missing');
-    stale = true;
-  }
+    // Generate into temp dir
+    generateTo(tmpDir);
 
-  // Every skill must carry discoverable `name` and `description` frontmatter,
-  // with a name matching its directory. Both Claude Code and the Codex CLI read
-  // these keys from the shared skills root; a skill without them is installed
-  // but effectively undiscoverable.
-  for (const skill of ['dcli', ...BACKENDS.map((b) => `dcli-${b}`)]) {
-    const p = path.join(GENERATED_DIR, 'skills', skill, 'SKILL.md');
-    if (!fs.existsSync(p)) continue;
-    const content = fs.readFileSync(p, 'utf8');
-    const fm = /^---\n([\s\S]*?)\n---\n/.exec(content);
-    if (!fm) {
-      console.error(`STALE: skills/${skill}/SKILL.md has no YAML frontmatter`);
-      stale = true;
-      continue;
-    }
-    const nameMatch = /^name:[ \t]*(\S.*)$/m.exec(fm[1]);
-    if (!nameMatch) {
-      console.error(`STALE: skills/${skill}/SKILL.md frontmatter has no name`);
-      stale = true;
-    } else if (nameMatch[1].trim() !== skill) {
-      console.error(`STALE: skills/${skill}/SKILL.md frontmatter name is "${nameMatch[1].trim()}", expected "${skill}"`);
-      stale = true;
-    }
-    if (!/^description:[ \t]*\S/m.test(fm[1])) {
-      console.error(`STALE: skills/${skill}/SKILL.md frontmatter has no description`);
-      stale = true;
-    }
-  }
+    // Collect hashes from both trees
+    collectHashes(tmpDir, generatedHashes);
+    collectHashes(GENERATED_DIR, expectedHashes);
 
-  // Check commands exist for each backend
-  for (const backend of BACKENDS) {
-    for (const cmd of ['review.md', 'ask.md', 'implement.md', 'resume.md', 'jobs.md', 'doctor.md', 'cleanup.md']) {
-      const p = path.join(GENERATED_DIR, 'commands', `dcli-${backend}`, cmd);
-      if (!fs.existsSync(p)) {
-        console.error(`STALE: commands/dcli-${backend}/${cmd} is missing`);
+    const allFiles = new Set([...Object.keys(generatedHashes), ...Object.keys(expectedHashes)]);
+
+    for (const file of allFiles) {
+      const inGen = file in generatedHashes;
+      const inExpected = file in expectedHashes;
+
+      if (inGen && !inExpected) {
+        console.error(`STALE: ${file} is present in generated output but missing from integration/generated/`);
+        stale = true;
+      } else if (!inGen && inExpected) {
+        console.error(`STALE: ${file} is present in integration/generated/ but missing from generated output`);
+        stale = true;
+      } else if (generatedHashes[file] !== expectedHashes[file]) {
+        console.error(`STALE: ${file} content differs between generated output and integration/generated/`);
         stale = true;
       }
     }
-  }
 
-  // Check rules
-  if (!fs.existsSync(path.join(GENERATED_DIR, 'rules', 'dcli-delegation.md'))) {
-    console.error('STALE: rules/dcli-delegation.md is missing');
-    stale = true;
-  }
-
-  // Check worker prompts
-  for (const role of ['reviewer', 'implementer', 'brainstormer']) {
-    if (!fs.existsSync(path.join(GENERATED_DIR, 'worker-prompts', `${role}.md`))) {
-      console.error(`STALE: worker-prompts/${role}.md is missing`);
-      stale = true;
+    // Cross-template consistency checks (these check semantic correctness,
+    // not just file-level parity — they catch content drift within generated
+    // files that happen to have matching hashes from stale templates).
+    for (const backend of BACKENDS) {
+      const content = expectedHashes[`skills/dcli-${backend}/SKILL.md`]
+        ? fs.readFileSync(path.join(GENERATED_DIR, 'skills', `dcli-${backend}`, 'SKILL.md'), 'utf8')
+        : '';
+      if (content && !content.includes('--hard-timeout-sec')) {
+        console.error(`STALE: skills/dcli-${backend}/SKILL.md missing budget reference`);
+        stale = true;
+      }
+      if (content && !content.includes(`dcli-${backend}`)) {
+        console.error(`STALE: skills/dcli-${backend}/SKILL.md missing backend reference`);
+        stale = true;
+      }
     }
-  }
 
-  // Every documented recipe carries a wait budget, and carries it as required
-  // rather than optional. Presence of --hard-timeout-sec above only proves an
-  // execution budget; the eight-hour stall in AGENTS.md was an unbounded WAIT.
-  // A checker that greps for one budget and calls it done is how the other one
-  // went missing from every recipe in the first place.
-  for (const { file, rel } of allDocs()) {
-    const lines = fs.readFileSync(file, 'utf8').split('\n');
-    lines.forEach((line, i) => {
-      // A backend's documentation must not route the reader to another shim.
-      // This runs before the `wait` filter below: the leak is not specific to
-      // wait recipes, and an early return here once hid one.
-      for (const other of BACKENDS) {
-        if (rel.includes(other)) continue;
-        if (new RegExp(`(^|[\\s\`|$(])dcli-${other}\\s+[a-z]`).test(line)) {
-          console.error(`STALE: ${rel}:${i + 1} invokes dcli-${other} in another backend's docs`);
+    // Every documented recipe carries a wait budget
+    for (const { file, rel } of allDocs()) {
+      const lines = fs.readFileSync(file, 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        for (const other of BACKENDS) {
+          if (rel.includes(other)) continue;
+          if (new RegExp(`(^|[\\s\`|$(])dcli-${other}\\s+[a-z]`).test(line)) {
+            console.error(`STALE: ${rel}:${i + 1} invokes dcli-${other} in another backend's docs`);
+            stale = true;
+          }
+        }
+        if (!/\bdcli(-\w+)?\s+wait\b/.test(line)) return;
+        if (!line.includes('--timeout-sec')) {
+          console.error(`STALE: ${rel}:${i + 1} documents \`wait\` with no wait budget`);
+          stale = true;
+        } else if (/\[\s*--timeout-sec/.test(line)) {
+          console.error(`STALE: ${rel}:${i + 1} shows the wait budget as optional`);
           stale = true;
         }
-      }
-
-      if (!/\bdcli(-\w+)?\s+wait\b/.test(line)) return;
-      if (!line.includes('--timeout-sec')) {
-        console.error(`STALE: ${rel}:${i + 1} documents \`wait\` with no wait budget`);
-        stale = true;
-      } else if (/\[\s*--timeout-sec/.test(line)) {
-        console.error(`STALE: ${rel}:${i + 1} shows the wait budget as optional`);
-        stale = true;
-      }
-    });
+      });
+    }
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 
   if (stale) {
