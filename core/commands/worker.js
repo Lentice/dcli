@@ -19,6 +19,7 @@ if (process.env.DCLI_WORKER !== '1') {
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { resolveDeadline } = require('../deadlines');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 const { tryDisposeAdapter } = require('./index');
 
@@ -30,7 +31,7 @@ async function main() {
   const jobId = process.env.DCLI_JOB_ID;
   const repoKey = process.env.DCLI_REPO_KEY;
   const repoRoot = process.env.DCLI_REPO_ROOT;
-  const hardTimeoutMs = parseInt(process.env.DCLI_WORKER_HARD_TIMEOUT_MS || '0', 10);
+  const hardTimeoutMsRaw = parseInt(process.env.DCLI_WORKER_HARD_TIMEOUT_MS || '0', 10);
 
   if (!stateRoot || !backendName || !jobId || !repoKey || !repoRoot) {
     console.error('Worker: missing required env vars');
@@ -159,27 +160,37 @@ async function main() {
   // Write first heartbeat
   store.writeHeartbeat({ repoKey, jobId });
 
-  // Hard timeout
+  // Apply default hard timeout when none specified (invariant #3: nothing blocks forever).
+  // 0 means "not supplied" and gets the default. Validate before use (mistake #6).
+  const hardTimeoutMs = resolveDeadline('JOB_HARD_TIMEOUT_MS',
+    hardTimeoutMsRaw > 0 ? hardTimeoutMsRaw : undefined);
+
+  // Hard timeout setup: deadline-based so an adapter blocked inside a single long
+  // Observe() call is still interrupted via Promise.race in raceObserve() below.
+  const deadline = Date.now() + hardTimeoutMs;
   let hardTimedOut = false;
   let hardTimeoutTimer = null;
-  if (hardTimeoutMs > 0) {
-    hardTimeoutTimer = setTimeout(() => {
-      hardTimedOut = true;
-      try {
-        const rungs = adapter.DeclareCancelRungs();
-        if (rungs && rungs.length > 0) {
-          for (const rung of rungs) {
-            try { adapter.RequestCancel({}, rung); } catch {}
-          }
-        }
-      } catch {}
-    }, hardTimeoutMs);
-    if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
-  }
 
-  // Run the job
   const attempt = {};
 
+  function requestCancelRungs() {
+    try {
+      const rungs = adapter.DeclareCancelRungs();
+      if (rungs && rungs.length > 0) {
+        for (const rung of rungs) {
+          try { adapter.RequestCancel(attempt, rung); } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  hardTimeoutTimer = setTimeout(() => {
+    hardTimedOut = true;
+    requestCancelRungs();
+  }, hardTimeoutMs);
+  if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
+
+  // Run the job
   try {
     adapter.PrepareInvocation(attempt, params);
     await adapter.Start(attempt);
@@ -210,9 +221,11 @@ async function main() {
     process.exit(1);
   }
 
+  // Observe with racing: each iteration is raced against the deadline so a
+  // blocking Observe() call does not prevent the hard timeout from firing.
   const facts = [];
   try {
-    for await (const fact of adapter.Observe(attempt)) {
+    for await (const fact of raceObserve(adapter.Observe(attempt), deadline)) {
       if (hardTimedOut) throw null;
       facts.push(fact);
 
@@ -266,9 +279,20 @@ async function main() {
     }
   } catch (err) {
     clearTimeout(hardTimeoutTimer);
+    if (!hardTimedOut && err && err[HARD_TIMEOUT_ERROR]) hardTimedOut = true;
+    requestCancelRungs();
+    // Collect partial result before dispose so adapter state is intact
+    let partialResult = null;
+    try { partialResult = adapter.CollectResult(attempt); } catch {}
     tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
     if (hardTimedOut) {
+      // Flush partial output before journaling timed_out
+      if (partialResult && partialResult.text) {
+        try { persistCollectedResult({ store, repoKey, jobId, attemptNum, collected: partialResult }); } catch {}
+        try { persistFindings({ store, repoKey, jobId, attemptNum, text: partialResult.text }); } catch {}
+      }
+      try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
       store.journalTransition(jobId, repoKey, {
         kind: 'attempt_state_changed',
         attempt: attemptNum,
@@ -307,6 +331,48 @@ async function main() {
   tryDisposeAdapter(adapter, attempt);
   admission.releaseSlot(slotId);
   process.exit(1);
+}
+
+const HARD_TIMEOUT_ERROR = Symbol('hard_timeout');
+
+function raceObserve(iterator, deadline) {
+  return {
+    [Symbol.asyncIterator]() {
+      const iter = iterator[Symbol.asyncIterator]();
+      return {
+        async next() {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) {
+            const err = new Error('Hard timeout reached');
+            err[HARD_TIMEOUT_ERROR] = true;
+            throw err;
+          }
+          const result = await Promise.race([
+            iter.next().then(r => ({ value: r, source: 'iter' })),
+            new Promise(resolve => setTimeout(() => resolve({ value: { done: true }, source: 'timer' }), remaining)),
+          ]);
+          if (result.source === 'timer') {
+            const err = new Error('Hard timeout reached');
+            err[HARD_TIMEOUT_ERROR] = true;
+            throw err;
+          }
+          return result.value;
+        },
+        async return() {
+          if (typeof iter.return === 'function') {
+            return iter.return();
+          }
+          return { done: true };
+        },
+        async throw(err) {
+          if (typeof iter.throw === 'function') {
+            return iter.throw(err);
+          }
+          throw err;
+        },
+      };
+    },
+  };
 }
 
 function journalFailure(store, slotId, repoKey, jobId, stateRoot, reason, message) {

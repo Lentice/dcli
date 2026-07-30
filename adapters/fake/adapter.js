@@ -100,7 +100,11 @@ class FakeAdapter {
       const { delayMs, ...factData } = fact;
       yield { ...factData };
       if (hangAfter && fact.type === hangAfter) {
-        await this._interruptibleWait();
+        if (this._script.behaviors && this._script.behaviors.hangForever) {
+          await this._foreverWait();
+        } else {
+          await this._interruptibleWait();
+        }
         break;
       }
     }
@@ -191,6 +195,12 @@ class FakeAdapter {
 
   async _interruptibleWait() {
     while (!this._cancelled) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  async _foreverWait() {
+    while (true) {
       await new Promise(r => setTimeout(r, 50));
     }
   }

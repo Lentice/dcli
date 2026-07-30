@@ -6,24 +6,24 @@ because the timer merely flipped an internal flag nobody acted on.
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] When the hard-timeout deadline fires, the worker actually tears the job down in bounded time:
+- [x] When the hard-timeout deadline fires, the worker actually tears the job down in bounded time:
       close stdin → kill the contained process tree (via the containment context / declared cancel rungs
       using the *real* attempt) → boundedly observe readers → flush partial output → journal `timed_out`.
-- [ ] The hard-timeout path passes the **real `attempt` object** to `adapter.RequestCancel`, not an empty
+- [x] The hard-timeout path passes the **real `attempt` object** to `adapter.RequestCancel`, not an empty
       `{}`. Today `core/commands/worker.js` calls `adapter.RequestCancel({}, rung)`, so the rung never
       reaches the live session/handles.
-- [ ] The hard timeout does not rely solely on a flag checked between `await` points. If the adapter is
+- [x] The hard timeout does not rely solely on a flag checked between `await` points. If the adapter is
       blocked inside a single long `Observe()` call (the exact situation a hard timeout exists for), the
       timeout must still force termination — e.g. arm the kill before/alongside `Observe`, or race it.
-- [ ] A submitted job with no `--hard-timeout-sec` still cannot hang forever: there is a bounded default
+- [x] A submitted job with no `--hard-timeout-sec` still cannot hang forever: there is a bounded default
       hard timeout applied to the worker path, and a missing/zero value is rejected or defaulted rather
       than silently meaning "unbounded".
-- [ ] Regression test: a fake adapter whose `Observe` never yields a `process_exited` fact is driven
+- [x] Regression test: a fake adapter whose `Observe` never yields a `process_exited` fact is driven
       past the hard timeout; assert the job is `timed_out` (exit 24) within a bounded window and no worker
       process/tree remains alive.
-- [ ] Full suite green.
+- [x] Full suite green.
 
 ## Notes
 
