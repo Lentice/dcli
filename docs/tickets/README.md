@@ -65,6 +65,31 @@ so the breakdown survives as part of the project handoff.
 | [49](49-queued-jobs-never-relaunched.md) | Queued jobs are never re-launched by `tryDequeue` | — | Code review |
 | [50](50-default-state-root-is-test.md) | Production default state root is `<platform-root>/test` | — | Code review |
 | [51](51-admission-reused-pid-counted-as-live.md) | Admission liveness counts reused PIDs as live slots | — | Code review |
+| [52](52-opencode-cmd-shim-einval.md) | opencode server spawn bypasses cmd.exe wrapping (EINVAL on .cmd) | — | Code review |
+| [53](53-backend-conditional-in-core.md) | Backend-specific conditionals in core/ (registry refactor) | — | Code review |
+| [54](54-no-default-hard-timeout-run-review-resume.md) | run/review/resume have no default hard timeout; worker does | — | Code review |
+| [55](55-observe-end-hardcoded-failed.md) | Observe-end terminal transition hardcoded failed/exit 1, bypassing reducer | — | Code review |
+| [56](56-resume-drops-followup-prompt.md) | resume drops the follow-up prompt (positionals slice bug) | — | Code review |
+| [57](57-recover-always-done.md) | Recover() always returns done; no durable evidence check | — | Code review |
+| [58](58-opencode-reject-interaction-rethrow.md) | opencode reject-interaction rethrows instead of yielding fact | — | Code review |
+| [59](59-opencode-cancel-unawaited.md) | opencode cancel rungs unawaited; null serverBaseUrl | — | Code review |
+| [60](60-native-helper-stdin-and-eof-drain.md) | Native helper lacks stdin forwarding and bounded EOF drain | — | Code review |
+| [61](61-collect-diagnostics-exit-code-always-0.md) | CollectDiagnostics always returns exit_code 0 | — | Code review |
+| [62](62-codex-unbounded-result-missing-clean.md) | codex CollectResult unbounded read + missing-result classified as clean | — | Code review |
+| [63](63-opencode-malformed-metadata-success.md) | opencode unknown sentinel falls through to success default | — | Code review |
+| [64](64-observe-non-temporal-fact-order.md) | Observe generator assumes non-temporal fact ordering | — | Code review |
+| [65](65-codex-temp-dir-leak.md) | codex temp directory not cleaned up on cleanup/teardown | — | Code review |
+| [66](66-trydisposeadapter-unbounded.md) | tryDisposeAdapter is synchronous and unbounded | — | Code review |
+| [67](67-admission-locking-pid-identity.md) | Admission liveness assumes PID is current owner | — | Code review |
+| [68](68-locking-robustness.md) | Locking robustness: corrupt/missing/cpu-spin | — | Code review |
+| [69](69-worker-hard-timeout-no-tree-kill.md) | Worker hard-timeout does not kill the process tree | — | Code review |
+| [70](70-apply-cleanup-destructive.md) | apply/cleanup can destroy non-owned untracked files | — | Code review |
+| [71](71-cancel-overwrites-done.md) | Cancel can overwrite a done job | — | Code review |
+| [72](72-review-unbounded-slice-spawnsync.md) | Review: four bugs (unbounded read, byte-slice, maxBuffer, spawnSync timeout) | — | Code review |
+| [73](73-test-state-root-and-backend-validation.md) | Test state root gate and --backend enum validation | — | Code review |
+| [74](74-installer-worker-prompts-and-staging.md) | Installer: atomic staging + worker prompt isolation | — | Code review |
+| [75](75-docs-mode-promptfile-scrub-drift.md) | Docs drift: --mode, --prompt-file, scrub-session-ids in skills | — | Code review |
+| [76](76-dcli-claude-silent-failure-read-only.md) | dcli-claude run silently fails tasks needing Task/subagent tool | — | Code review |
 
 Tickets **14 and 15 are built in parallel** — they are two halves of one proof.
 
@@ -82,6 +107,23 @@ the only blocking edge is 48 on 47, because the worker self-cancel in 48 is only
 reducer projection of 47 makes terminal decisions stick. 49 and 51 are the unfinished halves of ticket
 36 — atomicity and slot-owner metadata landed in commit `8bd5995`, but "dequeue must launch" and
 PID-reuse liveness did not, so they are recorded here rather than left as silent gaps in 36.
+
+Tickets **52–76** came out of a 2026-07-30 comprehensive four-parallel-subagent review of the entire
+codebase (core/, adapters/, cli+native+installer, docs+integration) against `AGENTS.md` invariants and the
+nine-mistake catalog, plus a live repro of the dcli-claude silent failure (ticket 76 — done). The 25
+tickets are ordered from easiest to most complex, with the final seven (70–76) requiring either
+cross-cutting state-machine work or Win32 container integration. Three blocking edges exist:
+55 (observe-end reducer routing) is a prerequisite for 71 (cancel-vs-done race), and 67 (admission PID
+identity) unblocks the locking work in 68. Ticket 76 (failure_reason observable + access hint) is
+closed — the remaining 24 are ready-for-agent.
+
+## Complexity tiers for agent assignment
+
+| Tier | Tickets | Description |
+|---|---|---|
+| Low | 52, 54, 56, 61, 65, 75 | Mechanical fixes — single file, existing helper reuse |
+| Medium | 58, 59, 62, 63, 64, 67, 70, 72, 73, 76 | Single subsystem, moderate reasoning |
+| High | 53, 55, 57, 60, 66, 68, 69, 71, 74 | Cross-cutting, state-machine, or Win32-deep — assign to higher-level agent |
 
 ## Why the order is what it is
 
