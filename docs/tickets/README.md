@@ -59,6 +59,12 @@ so the breakdown survives as part of the project handoff.
 | [43](43-opencode-submit-canonicaldir.md) | opencode submit fails — missing canonicalDir | — | Stability review |
 | [44](44-attempt-directories-always-empty.md) | Attempt directories always empty | 42 | Stability review |
 | [45](45-cli-ignores-dcli-state-root-when-repo-given.md) | `DCLI_STATE_ROOT` ignored when `--repo` is given | — | Stability review |
+| [46](46-worker-hard-timeout-inert.md) | Worker hard timeout is inert and never kills the tree | — | Code review |
+| [47](47-reducer-bypassed-on-submit-path.md) | Reducer/reconciliation bypassed on the submit path | — | Code review |
+| [48](48-worker-ignores-cancel-request.md) | Worker ignores `cancel.request`; cancel races the projection | 47 | Code review |
+| [49](49-queued-jobs-never-relaunched.md) | Queued jobs are never re-launched by `tryDequeue` | — | Code review |
+| [50](50-default-state-root-is-test.md) | Production default state root is `<platform-root>/test` | — | Code review |
+| [51](51-admission-reused-pid-counted-as-live.md) | Admission liveness counts reused PIDs as live slots | — | Code review |
 
 Tickets **14 and 15 are built in parallel** — they are two halves of one proof.
 
@@ -68,6 +74,14 @@ implementation, run after ticket 28. Tickets **41–45** were added in the same 
 live functional test against real backends (opencode, codex, claude). They are not ordered vertical
 slices in the tracer-bullet sense — each is an independent bug-fix scoped to one root cause, safe to
 pick up in any order except where a blocking edge is listed.
+
+Tickets **46–51** came out of a 2026-07-30 source-code review against the standing rules in `AGENTS.md`
+and the development guide (no live run required — the defects are visible in the shipped code, and the
+full suite is green while they exist). Again each is an independent bug-fix scoped to one root cause;
+the only blocking edge is 48 on 47, because the worker self-cancel in 48 is only authoritative once the
+reducer projection of 47 makes terminal decisions stick. 49 and 51 are the unfinished halves of ticket
+36 — atomicity and slot-owner metadata landed in commit `8bd5995`, but "dequeue must launch" and
+PID-reuse liveness did not, so they are recorded here rather than left as silent gaps in 36.
 
 ## Why the order is what it is
 
