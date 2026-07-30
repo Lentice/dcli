@@ -316,39 +316,46 @@ class CodexAdapter {
 
     // Create temp directory for result file
     this._tmpDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-'));
-    this._resultFilePath = path.join(this._tmpDirPath, 'result.txt');
 
-    const codexPath = resolveCodexPath();
-    const workDir = process.cwd();
+    try {
+      this._resultFilePath = path.join(this._tmpDirPath, 'result.txt');
 
-    const request = this._lastRequest || {};
-    const access = request.access || 'read-only';
-    const sandbox = access === 'workspace' ? 'workspace-write' : 'read-only';
-    const argv = buildArgv({
-      workDir,
-      resultFilePath: this._resultFilePath,
-      sandbox,
-      model: request.model || undefined,
-      effort: request.effort || undefined,
-      reasoningEffort: request.reasoningEffort || undefined,
-      addDirs: request.addDirs || undefined,
-      skipGitRepoCheck: request.skipGitRepoCheck || false,
-    });
+      const codexPath = resolveCodexPath();
+      const workDir = process.cwd();
 
-    const invocation = buildCmdInvocation({
-      command: codexPath,
-      args: argv,
-      cwd: workDir,
-    });
+      const request = this._lastRequest || {};
+      const access = request.access || 'read-only';
+      const sandbox = access === 'workspace' ? 'workspace-write' : 'read-only';
+      const argv = buildArgv({
+        workDir,
+        resultFilePath: this._resultFilePath,
+        sandbox,
+        model: request.model || undefined,
+        effort: request.effort || undefined,
+        reasoningEffort: request.reasoningEffort || undefined,
+        addDirs: request.addDirs || undefined,
+        skipGitRepoCheck: request.skipGitRepoCheck || false,
+      });
 
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: invocation.windowsHide,
-    });
+      const invocation = buildCmdInvocation({
+        command: codexPath,
+        args: argv,
+        cwd: workDir,
+      });
 
-    this._childProcess = child;
-    this._processPid = child.pid;
+      const child = spawn(invocation.command, invocation.args, {
+        cwd: invocation.cwd,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: invocation.windowsHide,
+      });
+
+      this._childProcess = child;
+      this._processPid = child.pid;
+    } catch (err) {
+      try { fs.rmSync(this._tmpDirPath, { recursive: true, force: true }); } catch {}
+      this._tmpDirPath = null;
+      throw err;
+    }
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
