@@ -1003,7 +1003,15 @@ class OpencodeAdapter {
             for (const interaction of interactions) {
               yield { type: 'interaction_pending', interaction_id: interaction.interaction_id, kind: interaction.kind, detail: interaction.detail };
               if (!this._automationPolicy) {
-                await this._rejectInteraction(interaction);
+                try {
+                  await this._rejectInteraction(interaction);
+                } catch (err) {
+                  if (err && err.rejectFailed) {
+                    yield { type: 'stream_closed', reason: 'interaction_reject_failed', detail: { interaction_id: interaction.interaction_id, error: err.message } };
+                    break;
+                  }
+                  throw err;
+                }
                 yield { type: 'interaction_resolved', interaction_id: interaction.interaction_id, outcome: 'rejected_unattended' };
                 const permPayload = interaction.raw ? { permission: interaction.raw.permission || null, patterns: interaction.raw.patterns || null } : {};
                 yield {
@@ -1210,7 +1218,10 @@ class OpencodeAdapter {
       }
     } catch (err) {
       if (err && err.statusCode === 404) return;
-      throw err;
+      const wrapped = new Error(`Failed to reject interaction ${interaction.interaction_id}: ${err.message}`);
+      wrapped.rejectFailed = true;
+      wrapped.cause = err;
+      throw wrapped;
     }
   }
 
