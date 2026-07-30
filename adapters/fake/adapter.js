@@ -14,6 +14,7 @@ class FakeAdapter {
     this._cancelRungReached = null;
     this._disposed = false;
     this._responses = [];
+    this._lastPrompt = null;
   }
 
   get script() { return this._script; }
@@ -21,6 +22,7 @@ class FakeAdapter {
   get cancelRungReached() { return this._cancelRungReached; }
   get disposed() { return this._disposed; }
   get responses() { return this._responses; }
+  get lastPrompt() { return this._lastPrompt; }
 
   GetIdentity() {
     return {
@@ -111,9 +113,11 @@ class FakeAdapter {
   }
 
   SendPrompt(attempt, prompt) {
+    this._lastPrompt = prompt;
   }
 
   Resume(attempt, kind, prompt) {
+    this._lastPrompt = prompt;
   }
 
   Respond(interactionId, decision) {

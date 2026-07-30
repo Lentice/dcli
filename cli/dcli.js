@@ -303,21 +303,23 @@ async function main() {
 
     case 'resume': {
       const { executeResume } = require('../core/commands/resume');
-      const stdinPipeActive = !process.stdin.isTTY && parsed.positionals.length === 0 && !parsed.promptFile;
-      const prompt = await resolvePrompt({
-        promptFile: parsed.promptFile,
-        stdinPipeActive,
-        positionals: parsed.positionals,
-      });
-
-      const accessHint = maybeAccessHint({ access: parsed.access, prompt });
-      if (accessHint && !parsed.json) process.stderr.write(accessHint + '\n');
 
       const parentJobId = parsed.positionals[0];
       if (!parentJobId) {
         console.error('resume requires a parent job ID');
         process.exit(2);
       }
+
+      const followupPositionals = parsed.positionals.slice(1);
+      const stdinPipeActive = !process.stdin.isTTY && followupPositionals.length === 0 && !parsed.promptFile;
+      const prompt = await resolvePrompt({
+        promptFile: parsed.promptFile,
+        stdinPipeActive,
+        positionals: followupPositionals,
+      });
+
+      const accessHint = maybeAccessHint({ access: parsed.access, prompt });
+      if (accessHint && !parsed.json) process.stderr.write(accessHint + '\n');
 
       const output = await executeResume({
         store, adapter, repoKey, repoRoot: fullPath,

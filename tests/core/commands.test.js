@@ -893,6 +893,187 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
+// 28. resume: piped stdin prompt reaches adapter (not job ID)
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeResume } = require('../../core/commands/resume');
+  const store = new JobStore({ stateRoot: dir });
+  const parentJobId = 'res-parent-001';
+
+  // Create parent job in done state
+  store.createJob({
+    jobId: parentJobId, repoKey: 'res-test', repoRoot: dir,
+    backend: 'test', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'run', access: 'read-only', hardTimeoutSec: 600,
+    capabilitiesSnapshot: {},
+  });
+  store.createAttemptDir({ repoKey: 'res-test', jobId: parentJobId, attemptNum: 1 });
+  store.journalTransition(parentJobId, 'res-test', {
+    kind: 'attempt_state_changed', attempt: 1,
+    from: 'created', to: 'done',
+    detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal', backend_session_id: 'ses_1' },
+  });
+
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_res' },
+      { type: 'assistant_text', message_id: 'm1', text: 'followup ok' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true, resume: true } },
+  });
+
+  const output = await executeResume({
+    store, adapter, repoKey: 'res-test', repoRoot: dir,
+    prompt: 'follow-up from stdin',
+    kind: 'retry_attempt', hardTimeoutSec: 60,
+    parentJobId,
+  });
+
+  assert.strictEqual(adapter.lastPrompt, 'follow-up from stdin',
+    `Adapter must receive the follow-up prompt, got "${adapter.lastPrompt}"`);
+  assert.strictEqual(output.envelope.state, 'done',
+    `Expected done, got ${output.envelope.state}`);
+
+  console.log('PASS: resume sends correct prompt to adapter');
+});
+
+// ===========================================================================
+// 29. resume: positional follow-up prompt is correct (no job ID in it)
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeResume } = require('../../core/commands/resume');
+  const store = new JobStore({ stateRoot: dir });
+  const parentJobId = 'res-parent-002';
+
+  store.createJob({
+    jobId: parentJobId, repoKey: 'res-test2', repoRoot: dir,
+    backend: 'test', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'run', access: 'read-only', hardTimeoutSec: 600,
+    capabilitiesSnapshot: {},
+  });
+  store.createAttemptDir({ repoKey: 'res-test2', jobId: parentJobId, attemptNum: 1 });
+  store.journalTransition(parentJobId, 'res-test2', {
+    kind: 'attempt_state_changed', attempt: 1,
+    from: 'created', to: 'done',
+    detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal', backend_session_id: 'ses_2' },
+  });
+
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_pos' },
+      { type: 'assistant_text', message_id: 'm1', text: 'positional ok' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true, resume: true } },
+  });
+
+  const output = await executeResume({
+    store, adapter, repoKey: 'res-test2', repoRoot: dir,
+    prompt: 'continue with X',
+    kind: 'retry_attempt', hardTimeoutSec: 60,
+    parentJobId,
+  });
+
+  assert.strictEqual(adapter.lastPrompt, 'continue with X',
+    `Adapter must receive only positional follow-up, got "${adapter.lastPrompt}"`);
+  assert.ok(!adapter.lastPrompt.includes(parentJobId),
+    `Prompt must NOT contain parent job ID, got "${adapter.lastPrompt}"`);
+  assert.strictEqual(output.envelope.state, 'done');
+
+  console.log('PASS: resume positional prompt excludes job ID');
+});
+
+// ===========================================================================
+// 30. resume: --prompt-file delivers content to adapter
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeResume } = require('../../core/commands/resume');
+  const store = new JobStore({ stateRoot: dir });
+  const parentJobId = 'res-parent-003';
+  const promptFilePath = path.join(dir, 'followup-prompt.md');
+  fs.writeFileSync(promptFilePath, '# Follow-up\nContinue from here.', 'utf8');
+
+  store.createJob({
+    jobId: parentJobId, repoKey: 'res-test3', repoRoot: dir,
+    backend: 'test', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'run', access: 'read-only', hardTimeoutSec: 600,
+    capabilitiesSnapshot: {},
+  });
+  store.createAttemptDir({ repoKey: 'res-test3', jobId: parentJobId, attemptNum: 1 });
+  store.journalTransition(parentJobId, 'res-test3', {
+    kind: 'attempt_state_changed', attempt: 1,
+    from: 'created', to: 'done',
+    detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal', backend_session_id: 'ses_3' },
+  });
+
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_pf' },
+      { type: 'assistant_text', message_id: 'm1', text: 'ok' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true, resume: true } },
+  });
+
+  const promptContent = fs.readFileSync(promptFilePath, 'utf8');
+  const output = await executeResume({
+    store, adapter, repoKey: 'res-test3', repoRoot: dir,
+    prompt: promptContent,
+    kind: 'retry_attempt', hardTimeoutSec: 60,
+    parentJobId,
+  });
+
+  assert.strictEqual(adapter.lastPrompt, '# Follow-up\nContinue from here.',
+    `Adapter must receive prompt-file content, got "${adapter.lastPrompt}"`);
+  assert.strictEqual(output.envelope.state, 'done');
+
+  console.log('PASS: resume --prompt-file content reaches adapter');
+});
+
+// ===========================================================================
+// 31. resume via CLI: piped stdin does not use job ID as prompt
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { computeRepoKeyWithPath } = require('../../core/repo-key');
+  const stateRoot = path.join(dir, 'state');
+  const { repoKey } = computeRepoKeyWithPath(dir);
+  const store = new JobStore({ stateRoot });
+  const parentJobId = 'res-parent-cli-001';
+
+  store.createJob({
+    jobId: parentJobId, repoKey, repoRoot: dir,
+    backend: 'test', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'run', access: 'read-only', hardTimeoutSec: 600,
+    capabilitiesSnapshot: {},
+  });
+  store.createAttemptDir({ repoKey, jobId: parentJobId, attemptNum: 1 });
+  store.journalTransition(parentJobId, repoKey, {
+    kind: 'attempt_state_changed', attempt: 1,
+    from: 'created', to: 'done',
+    detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal', backend_session_id: 'ses_cli' },
+  });
+
+  const env = { ...process.env, DCLI_STATE_ROOT: stateRoot };
+  const result = spawnCli(
+    ['--backend', 'fake', '--repo', dir, 'resume', parentJobId, '--kind', 'retry_attempt', '--hard-timeout-sec', '60'],
+    'piped follow-up message',
+    env
+  );
+
+  assert.strictEqual(result.status, 0,
+    `resume with piped stdin must exit 0, got ${result.status}. stderr: ${result.stderr}`);
+
+  console.log('PASS: resume via CLI with piped stdin succeeds');
+});
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll core command tests passed.');
