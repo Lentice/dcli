@@ -8,6 +8,7 @@ const DETECT_VERSION_TIMEOUT_MS = 10000;
 const STARTUP_SENTINEL_MS = 10000;
 const POST_EXIT_DRAIN_MS = 3000;
 const LIVE_SMOKE_TIMEOUT_MS = 30000;
+const MAX_RESULT_BYTES = 1024 * 1024;
 
 /**
  * Given a resolved npm-global JS wrapper path for the `codex` package
@@ -549,15 +550,33 @@ class CodexAdapter {
       try {
         const stat = fs.statSync(this._resultFilePath);
         if (stat.size === 0) {
-          // 0-byte file is "empty", not a crash
-          this._collectedResult = { text: '', usage: { input: 0, output: 0, total: 0 }, backend_session_id: null };
+          this._collectedResult = { text: '', usage: { input: 0, output: 0, total: 0 }, backend_session_id: null, result_status: 'empty' };
           return this._collectedResult;
         }
-        const content = fs.readFileSync(this._resultFilePath, 'utf8');
-        this._collectedResult = { text: content, usage: { input: 0, output: 0, total: 0 }, backend_session_id: null };
+        let content;
+        let truncated = false;
+        if (stat.size > MAX_RESULT_BYTES) {
+          const fd = fs.openSync(this._resultFilePath, 'r');
+          try {
+            const buf = Buffer.alloc(MAX_RESULT_BYTES);
+            const bytesRead = fs.readSync(fd, buf, 0, MAX_RESULT_BYTES, 0);
+            content = buf.toString('utf8', 0, bytesRead);
+          } finally {
+            fs.closeSync(fd);
+          }
+          truncated = true;
+        } else {
+          content = fs.readFileSync(this._resultFilePath, 'utf8');
+        }
+        this._collectedResult = { text: content, usage: { input: 0, output: 0, total: 0 }, backend_session_id: null, result_status: truncated ? 'oversize' : 'ok' };
         return this._collectedResult;
-      } catch {
-        // File doesn't exist → empty
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          this._facts.push({ type: 'backend_error', class_hint: 'execution_error', detail: { reason: 'result_file_missing', path: this._resultFilePath } });
+          this._collectedResult = { text: '', usage: { input: 0, output: 0, total: 0 }, backend_session_id: null, result_status: 'missing' };
+          return this._collectedResult;
+        }
+        throw err;
       }
     }
 
