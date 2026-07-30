@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const { LockManager } = require('./locking');
 
 const DEFAULT_GLOBAL_LIMIT = 5;
 const DEFAULT_PER_BACKEND_LIMIT = 5;
@@ -15,6 +16,8 @@ class AdmissionController {
     this._slotDir = path.join(stateRoot, 'locks', 'admission');
     this._queueDir = path.join(stateRoot, 'queue');
     this._ownIdentity = this._captureIdentity();
+    this._ownToken = this._ownIdentity.startTime + ':' + process.pid;
+    this._lockManager = new LockManager({ lockDir: path.join(stateRoot, 'locks') });
   }
 
   _captureIdentity() {
@@ -23,6 +26,7 @@ class AdmissionController {
       ppid: process.ppid,
       startTime: new Date().toISOString(),
       hostname: os.hostname(),
+      imagePath: process.execPath,
     };
   }
 
@@ -53,7 +57,7 @@ class AdmissionController {
     for (const f of files) {
       const meta = this._readSlotFile(path.join(this._slotDir, f));
       if (!meta) continue;
-      const alive = this._isPidAlive(meta);
+      const alive = this._isSlotAlive(meta);
       if (!alive) continue;
       globalActive++;
       const b = meta.backend || 'unknown';
@@ -64,8 +68,13 @@ class AdmissionController {
     return { globalActive, backendActive, backendCounts, totalFiles: files.length };
   }
 
-  _isPidAlive(meta) {
+  _isSlotAlive(meta) {
     if (!meta || !meta.pid) return false;
+    if (meta.pid === this._ownIdentity.pid) {
+      if (meta.startTime && meta.startTime !== this._ownIdentity.startTime) return false;
+      if (meta.executionToken && meta.executionToken !== this._ownToken) return false;
+      return true;
+    }
     try {
       process.kill(meta.pid, 0);
       return true;
@@ -85,9 +94,11 @@ class AdmissionController {
       slotId,
       backend,
       pid: this._ownIdentity.pid,
+      ppid: this._ownIdentity.ppid,
       startTime: this._ownIdentity.startTime,
+      imagePath: this._ownIdentity.imagePath,
       hostname: this._ownIdentity.hostname,
-      executionToken: this._ownIdentity.startTime + ':' + process.pid,
+      executionToken: this._ownToken,
       acquiredAt: new Date().toISOString(),
     };
     fs.writeFileSync(filePath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
@@ -103,20 +114,30 @@ class AdmissionController {
 
   acquireSlot(backend) {
     const b = backend || 'unknown';
-    const { globalActive, backendActive, backendCounts } = this._countActiveSlots(b);
 
-    if (globalActive >= this._globalLimit) {
-      return { acquired: false, queued: true, reason: 'global_limit', active: globalActive, limit: this._globalLimit };
+    const lock = this._lockManager.tryAcquire('admission', 'global');
+    if (!lock) {
+      return { acquired: false, queued: true, reason: 'contention', active: this._countActiveSlots(b).globalActive };
     }
 
-    const perBackendLimit = this._backendLimits[b] !== undefined ? this._backendLimits[b] : this._perBackendLimit;
-    if (backendActive >= perBackendLimit) {
-      return { acquired: false, queued: true, reason: 'backend_limit', backend: b, active: backendActive, limit: perBackendLimit };
-    }
+    try {
+      const { globalActive, backendActive } = this._countActiveSlots(b);
 
-    const slotId = this._generateSlotId();
-    const meta = this._writeSlotFile(slotId, b);
-    return { acquired: true, queued: false, slotId, executionToken: meta.executionToken };
+      if (globalActive >= this._globalLimit) {
+        return { acquired: false, queued: true, reason: 'global_limit', active: globalActive, limit: this._globalLimit };
+      }
+
+      const perBackendLimit = this._backendLimits[b] !== undefined ? this._backendLimits[b] : this._perBackendLimit;
+      if (backendActive >= perBackendLimit) {
+        return { acquired: false, queued: true, reason: 'backend_limit', backend: b, active: backendActive, limit: perBackendLimit };
+      }
+
+      const slotId = this._generateSlotId();
+      const meta = this._writeSlotFile(slotId, b);
+      return { acquired: true, queued: false, slotId, executionToken: meta.executionToken };
+    } finally {
+      this._lockManager.release(lock);
+    }
   }
 
   releaseSlot(slotId) {
@@ -188,7 +209,7 @@ class AdmissionController {
         reclaimed++;
         continue;
       }
-      if (!this._isPidAlive(meta)) {
+      if (!this._isSlotAlive(meta)) {
         try { fs.unlinkSync(path.join(this._slotDir, f)); } catch {}
         reclaimed++;
       }
