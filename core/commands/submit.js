@@ -80,6 +80,7 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   const jobDir = store.getJobDir(repoKey, jobId);
   writeTextFileAtomic(path.join(jobDir, 'prompt.txt'), prompt);
   writeJsonFileAtomic(path.join(jobDir, 'params.json'), {
+    canonicalDir: repoRoot,
     model,
     access: inheritedAccess,
     reasoningEffort: reasoningEffort || null,
