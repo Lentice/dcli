@@ -4,6 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
 const crypto = require('node:crypto');
+const { buildCmdInvocation } = require('../codex/cmd-quoting');
 const { getRedactor } = require('../../core/fs-text');
 
 const PORT_RESERVE_MAX_RETRIES = 5;
@@ -814,11 +815,17 @@ class OpencodeAdapter {
     const port = await this._reservePort();
     const args = this._buildArgs(port);
 
-    const server = spawn(opencodePath, args, {
+    const invocation = buildCmdInvocation({
+      command: opencodePath,
+      args,
+      cwd: this._canonicalDir || undefined,
+    });
+
+    const server = spawn(invocation.command, invocation.args, {
+      cwd: invocation.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, OPENCODE_SERVER_PASSWORD: this._password },
-      windowsHide: true,
-      cwd: this._canonicalDir || undefined,
+      windowsHide: invocation.windowsHide,
     });
 
     this._serverProcess = server;
