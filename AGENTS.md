@@ -75,13 +75,32 @@ Start the timeout deadline immediately after process start so a blocked write is
 teardown, preserve the order: close stdin → kill the contained tree → boundedly observe readers → flush
 partial output → report.
 
-### 3. Every drain must be bounded — this was fixed three separate times
+### 3. Every drain must be bounded — this was fixed three separate times, then a fourth
 
 The predecessor shipped three separate fixes for the same class: the normal-exit drain, the doctor
 probe's drain, and the concurrent stdin/stdout drain. A "read until EOF" on a child's stream hangs
 whenever a surviving grandchild holds it open.
 
 Also: a "bounded tail" that calls `readAllBytes` and *then* slices is not bounded. Seek, then read.
+
+**The fourth was in `dcli` itself (ticket 79), and it did not look like a drain bug.** The adapters' live
+fact drain parked on `await new Promise(resolve => { this._liveFactsResolve = resolve })`, and the child's
+`exit` handler woke a *different* waiter. A parked wait whose loop condition is only re-checked after it
+settles is a hang the moment one wake-up path is missed — and a missed wake-up is one forgotten line, in a
+handler nobody re-reads.
+
+Two rules, and the second is the one that made this invisible for the whole build:
+
+- **A wait must re-check its own condition on a bounded interval, not only when someone remembers to wake
+  it.** Waking correctly is necessary; depending on it is not sufficient. A dropped wake-up must degrade
+  to a short delay, never to a hang.
+- **A bare promise refs nothing, so "await forever" is not a hang — it is a silent exit 0.** Once the
+  child's pipes and `ProcessWrap` are released, no libuv handle remains, Node drains the event loop and
+  the process exits **0, mid-`for await`**, with no result and no error. `dcli-codex run` returned exit 0
+  with zero bytes on both streams for exactly this reason, and an agent parsing stdout reads that as
+  "succeeded, empty result". Whatever holds a wait open must be a real refed handle, and if a comment
+  claims a promise is "refed", that comment is wrong — the one in `_waitForExit` is why this defect read
+  as already-considered.
 
 ### 4. Process trees do not die the way you expect
 
@@ -215,12 +234,23 @@ main path, not an edge case.
 The only correct form is to spawn the interpreter explicitly:
 
 ```js
-spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", innerCommandLine], { windowsHide: true })
+spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", innerCommandLine],
+  { windowsHide: true, windowsVerbatimArguments: true })
 ```
 
 `shell: true` would also work and is **banned**. This is why the two-layered quoting rule exists: the inner
 command line needs Win32 quoting *plus* force-quoting of cmd metacharacters, and it must be handed over as one
 pre-quoted string so the runtime does not re-escape it.
+
+**`windowsVerbatimArguments: true` is the half that makes "does not re-escape it" true, and omitting it is not
+a style choice — it silently breaks the launch.** Ticket 80: the pre-quoting was implemented, the flag was not,
+so `spawn` applied a third quoting layer, cmd.exe received literal `\"` characters and reported the whole
+command line as an unrecognized program name. **The shim never ran, and the launch still looked successful from
+the parent** — a live pid, no throw, no `EINVAL`.
+
+That last sentence is also the testing rule: **assert the child's own observable behaviour — its stdout marker
+and its exit code — never that `spawn` didn't throw.** "Does not throw `EINVAL`" is satisfied by a launch that
+executes nothing, and that assertion is exactly what kept this green.
 ## Names are contracts (ADR-009)
 
 The family is **`dcli`**: umbrella `dcli`, shims `dcli-codex` / `dcli-opencode` / `dcli-claude`, state root

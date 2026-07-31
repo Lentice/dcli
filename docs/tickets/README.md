@@ -124,7 +124,36 @@ closed — the remaining 24 are ready-for-agent.
 |---|---|---|
 | Low | 52, 54, 56, 61, 65, 75 | Mechanical fixes — single file, existing helper reuse |
 | Medium | 58, 59, 62, 63, 64, 67, 70, 72, 73, 76 | Single subsystem, moderate reasoning |
-| High | 53, 55, 57, 60, 66, 68, 69, 71, 74, 78 | Cross-cutting, state-machine, or Win32-deep — assign to higher-level agent |
+| High | 53, 55, 57, 60, 66, 68, 69, 71, 74, 78, 81 | Cross-cutting, state-machine, or Win32-deep — assign to higher-level agent |
+
+**79 and 80 are landed** (2026-07-31). They are not in the tiers above because they were not planned work —
+they are the two defects that made the tool unable to return a result at all. See the section below before
+scheduling anything else.
+
+## The tool did not work at all until 2026-07-31, and the suite was green throughout
+
+Discovered while trying to *delegate* ticket verification — the delegation itself never came back. Three
+defects, one investigation:
+
+| Ticket | Defect | Status |
+|---|---|---|
+| [79](79-observe-missed-wakeup-silent-exit.md) | codex/claude `Observe()` parked on a promise the exit handler never woke; with no refed handle left, Node exited **0 mid-`for await`** | **landed** |
+| [80](80-cmd-shim-launch-reescaped.md) | `buildCmdInvocation` pre-quoted the cmd.exe line but no caller passed `windowsVerbatimArguments`, so `spawn` re-escaped it and the `.cmd` shim never ran | **landed** |
+| [81](81-opencode-unknown-status-never-terminates.md) | opencode polls `unknown` forever and never terminates; every job runs to its hard timeout with zero artifacts | open |
+
+`dcli-codex run` used to return **exit 0 with zero bytes on both streams** — which an agent parsing stdout
+reads as "succeeded, empty result". After 79 + 80, codex and claude both return real results and reach
+`done`. opencode still does not; that is 81.
+
+Two process lessons worth more than the fixes:
+
+- **Every one of these lived below a `_testMode` short-circuit**, so the adapter suite exercised none of it.
+  This is the second time that exact cliff has broken every codex job in this repo. When adding an adapter
+  test, the question is not "does it pass" but "does it run the code a real job runs".
+- **`doctor` reported all-green the entire time**, because it verifies the state root is writable, the
+  containment helper exists, git resolves — and never starts a backend (`live_smoke_timeout_sec: null`). A
+  green doctor is currently evidence about the environment, not about the tool. Do not trust it as a
+  pre-flight for delegated work; run a real bounded smoke instead.
 
 ## Ticket 78 is the one that unblocks every termination promise
 

@@ -7,6 +7,12 @@ const { buildCmdInvocation } = require('../codex/cmd-quoting');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
 const POST_EXIT_DRAIN_MS = 3000;
+// How often a parked live-fact drain re-checks its own terminal condition.
+// This bound is not a performance knob: the timer behind it is the only refed
+// libuv handle that exists while the drain is parked and the child has closed
+// its pipes, so it is what stops the process from silently exiting 0 mid-drain.
+// See _waitForFactsOrRecheck and docs/tickets/79.
+const LIVE_DRAIN_RECHECK_MS = 250;
 const LIVE_SMOKE_TIMEOUT_MS = 30000;
 
 function resolveClaudePath() {
@@ -241,6 +247,9 @@ class ClaudeAdapter {
       cwd: invocation.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: invocation.windowsHide,
+      // Forward the invocation's own value: it is the single source of truth
+      // for how its command line was quoted (docs/tickets/80).
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       env: childEnv,
     });
 
@@ -262,11 +271,7 @@ class ClaudeAdapter {
           for (const f of parsed) this._liveFacts.push(f);
         }
       }
-      if (this._liveFactsResolve) {
-        const r = this._liveFactsResolve;
-        this._liveFactsResolve = null;
-        r();
-      }
+      this._wakeFactWaiter();
     });
 
     child.stderr.on('data', (chunk) => {
@@ -281,13 +286,13 @@ class ClaudeAdapter {
     child.on('exit', (code, signal) => {
       this._facts.push({ type: 'process_exited', code: code !== null ? code : -1 });
       this._observedExited = true;
-      if (this._exitResolve) this._exitResolve();
+      this._wakeObservers();
     });
 
     child.on('error', (err) => {
       this._facts.push({ type: 'backend_error', class_hint: 'execution_error', structured_payload: { error: err.message } });
       this._observedExited = true;
-      if (this._exitResolve) this._exitResolve();
+      this._wakeObservers();
     });
 
     return { handle: 'claude-process', pid: child.pid, sessionId: this._sessionId };
@@ -337,9 +342,7 @@ class ClaudeAdapter {
       if (this._liveFacts.length > 0) {
         yield this._liveFacts.shift();
       } else {
-        await new Promise((resolve) => {
-          this._liveFactsResolve = resolve;
-        });
+        await this._waitForFactsOrRecheck();
       }
     }
     while (this._liveFacts.length > 0) {
@@ -347,6 +350,79 @@ class ClaudeAdapter {
     }
   }
 
+  /**
+   * Park until new live facts arrive, the child terminates, or the re-check
+   * bound elapses — whichever comes first. The loop condition above is only
+   * re-evaluated after this settles, so this must never be able to park
+   * forever.
+   *
+   * Two independent guarantees, because either alone has already failed here:
+   *
+   * 1. `_wakeObservers()` on child exit/error wakes this waiter, not only
+   *    `_waitForExit`'s. Waking only the latter was the actual defect: the
+   *    drain stayed parked on a promise nothing would ever settle.
+   * 2. The `setTimeout` is deliberately left REFED. While the drain is parked
+   *    and the child has closed its pipes, this timer is the only libuv handle
+   *    keeping the event loop alive. Unref it and Node drains the loop and
+   *    exits the whole process with code 0 in the middle of the caller's
+   *    `for await` — which is exactly how `dcli-codex run` came to return exit
+   *    0 with zero bytes and no error. A dropped wake-up must degrade to one
+   *    re-check interval of delay, never to a hang and never to process
+   *    evaporation.
+   *
+   * @returns {Promise<void>}
+   */
+  _waitForFactsOrRecheck() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (this._liveFactsResolve === done) this._liveFactsResolve = null;
+        resolve();
+      };
+      const timer = setTimeout(done, LIVE_DRAIN_RECHECK_MS);
+      this._liveFactsResolve = done;
+    });
+  }
+
+  /**
+   * Wake the live-fact drain. Called whenever stdout produced new facts.
+   */
+  _wakeFactWaiter() {
+    if (this._liveFactsResolve) {
+      const r = this._liveFactsResolve;
+      this._liveFactsResolve = null;
+      r();
+    }
+  }
+
+  /**
+   * Wake every waiter after the child has terminated. Both terminal handlers
+   * call this single method on purpose: the defect it fixes was one terminal
+   * handler waking one of two waiters, so a future third waiter must not be
+   * something a handler can forget.
+   */
+  _wakeObservers() {
+    this._wakeFactWaiter();
+    if (this._exitResolve) {
+      const r = this._exitResolve;
+      this._exitResolve = null;
+      r();
+    }
+  }
+
+  /**
+   * Resolve once the child has exited or errored. A bare promise refs nothing;
+   * what keeps the event loop alive is the child's own handles while open, and
+   * the refed re-check timer in `_waitForFactsOrRecheck` once they are not.
+   * Reaching here normally means `_drainLiveQueue` already observed
+   * termination, so it resolves immediately. The caller owns the hard-timeout
+   * bound.
+   *
+   * @returns {Promise<void>}
+   */
   _waitForExit() {
     if (this._observedExited) return Promise.resolve();
     return new Promise((resolve) => {

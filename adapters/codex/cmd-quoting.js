@@ -70,6 +70,14 @@ function buildCmdInvocation(opts) {
     ...(cwd ? { cwd } : {}),
     ...(env ? { env } : {}),
     windowsHide: true,
+    // Both quoting layers are already applied above, so the runtime must not
+    // apply a third. Without this, child_process.spawn re-quotes the
+    // pre-quoted inner line, cmd.exe receives literal \" characters, and it
+    // reports the entire command line as an unrecognized program name — the
+    // shim never runs, while the launch still looks successful from the
+    // parent (a live pid, no throw, no EINVAL). Callers MUST forward this
+    // field to spawn; see docs/tickets/80.
+    windowsVerbatimArguments: true,
   };
 }
 
