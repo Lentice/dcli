@@ -454,8 +454,14 @@ class ClaudeAdapter {
 
   Recover(attempt) {
     if (this._cancelled) return { state: 'cancelled' };
-    const exitCode = this._mockExitCode !== null ? this._mockExitCode : 0;
-    return { state: exitCode !== 0 ? 'failed' : 'done' };
+    const facts = this._facts || [];
+    const processExited = facts.find(f => f && f.type === 'process_exited');
+    if (processExited) {
+      return { state: processExited.code === 0 ? 'done' : 'failed' };
+    }
+    const backendError = facts.find(f => f && f.type === 'backend_error');
+    if (backendError) return { state: 'failed' };
+    return { state: 'interrupted' };
   }
 
   async LiveSmoke(timeoutMs) {

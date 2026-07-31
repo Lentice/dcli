@@ -1233,6 +1233,93 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
+// 38. Recover: no terminal evidence → interrupted
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_rec1' },
+      { type: 'assistant_text', message_id: 'm1', text: 'partial' },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const result = adapter.Recover({});
+  assert.strictEqual(result.state, 'interrupted',
+    `Recover with no terminal evidence must return interrupted, got ${result.state}`);
+
+  console.log('PASS: Recover no evidence → interrupted');
+});
+
+// ===========================================================================
+// 39. Recover: positive completion → done
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_rec2' },
+      { type: 'assistant_text', message_id: 'm1', text: 'done' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const result = adapter.Recover({});
+  assert.strictEqual(result.state, 'done',
+    `Recover with process_exited(0) must return done, got ${result.state}`);
+
+  console.log('PASS: Recover positive evidence → done');
+});
+
+// ===========================================================================
+// 40. Recover: positive failure → failed
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_rec3' },
+      { type: 'assistant_text', message_id: 'm1', text: 'partial' },
+      { type: 'process_exited', code: 1 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const result = adapter.Recover({});
+  assert.strictEqual(result.state, 'failed',
+    `Recover with process_exited(1) must return failed, got ${result.state}`);
+
+  console.log('PASS: Recover positive failure → failed');
+});
+
+// ===========================================================================
+// 41. Recover: cancelled → cancelled
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_rec4' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+  adapter.RequestCancel({}, 'hard_kill');
+
+  const result = adapter.Recover({});
+  assert.strictEqual(result.state, 'cancelled',
+    `Recover cancelled must return cancelled, got ${result.state}`);
+
+  console.log('PASS: Recover cancelled → cancelled');
+});
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll core command tests passed.');

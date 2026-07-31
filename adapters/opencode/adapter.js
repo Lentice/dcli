@@ -1491,7 +1491,15 @@ class OpencodeAdapter {
   }
 
   Recover(attempt) {
-    return { state: this._cancelled ? 'cancelled' : (this._mockExitCode !== 0 ? 'failed' : 'done') };
+    if (this._cancelled) return { state: 'cancelled' };
+    const facts = this._mockFacts || this._facts || [];
+    const processExited = facts.find(f => f && f.type === 'process_exited');
+    if (processExited) {
+      return { state: processExited.code === 0 ? 'done' : 'failed' };
+    }
+    const backendError = facts.find(f => f && f.type === 'backend_error');
+    if (backendError) return { state: 'failed' };
+    return { state: 'interrupted' };
   }
 
   async _probeEndpointShape(url, method, body, timeoutMs, name, shapeCheck) {

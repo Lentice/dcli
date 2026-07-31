@@ -174,8 +174,14 @@ class FakeAdapter {
   Recover(attempt) {
     if (this._cancelled) return { state: 'cancelled' };
     if (this._script.behaviors.hangAfter) return { state: 'interrupted' };
-    if (this._script.exitCode !== 0) return { state: 'failed' };
-    return { state: 'done' };
+    const facts = this._script.facts || [];
+    const processExited = facts.find(f => f && f.type === 'process_exited');
+    if (processExited) {
+      return { state: processExited.code === 0 ? 'done' : 'failed' };
+    }
+    const backendError = facts.find(f => f && f.type === 'backend_error');
+    if (backendError) return { state: 'failed' };
+    return { state: 'interrupted' };
   }
 
   async LiveSmoke(timeoutMs) {
