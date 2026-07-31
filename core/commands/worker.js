@@ -199,6 +199,8 @@ async function main() {
   const deadline = Date.now() + hardTimeoutMs;
   let hardTimedOut = false;
   let hardTimeoutTimer = null;
+  /** @type {string|null} why no contained tree kill happened on hard timeout */
+  let hardTimeoutKillSkipped = null;
 
   const attempt = {};
 
@@ -213,9 +215,16 @@ async function main() {
     } catch {}
   }
 
+  // Why the hard timeout cannot escalate past the rung walk yet: the adapter spawns the
+  // backend with a plain `spawn`, so the tree is not inside a Job Object, and the native
+  // helper can only terminate a Job Object it created itself (see core/containment.js).
+  // Recording an escalation we did not perform is the failure mode AGENTS.md Mistake #5
+  // describes, so we record that the kill was skipped and why. Ticket 78 removes the
+  // limitation by containing the tree at spawn time; then this becomes context.terminate().
   hardTimeoutTimer = setTimeout(async () => {
     hardTimedOut = true;
     await requestCancelRungs();
+    hardTimeoutKillSkipped = 'not_contained';
   }, hardTimeoutMs);
   if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
 
@@ -260,7 +269,7 @@ async function main() {
         attempt: attemptNum,
         from: 'running',
         to: 'timed_out',
-        detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'hard_timeout' },
+        detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'hard_timeout', kill_skipped: hardTimeoutKillSkipped },
       });
       process.exit(24);
     }
@@ -375,7 +384,7 @@ async function main() {
         attempt: attemptNum,
         from: 'running',
         to: 'timed_out',
-        detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'hard_timeout' },
+        detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'hard_timeout', kill_skipped: hardTimeoutKillSkipped },
       });
       process.exit(24);
     }

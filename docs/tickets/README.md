@@ -124,7 +124,15 @@ closed — the remaining 24 are ready-for-agent.
 |---|---|---|
 | Low | 52, 54, 56, 61, 65, 75 | Mechanical fixes — single file, existing helper reuse |
 | Medium | 58, 59, 62, 63, 64, 67, 70, 72, 73, 76 | Single subsystem, moderate reasoning |
-| High | 53, 55, 57, 60, 66, 68, 69, 71, 74 | Cross-cutting, state-machine, or Win32-deep — assign to higher-level agent |
+| High | 53, 55, 57, 60, 66, 68, 69, 71, 74, 78 | Cross-cutting, state-machine, or Win32-deep — assign to higher-level agent |
+
+## Ticket 78 is the one that unblocks every termination promise
+
+Discovered 2026-07-31 while picking up ticket 69: `ContainmentContext` is **dead code in production**. Nothing
+constructs it, all three adapters plain-`spawn` the backend, and `core/commands/cancel.js` passes
+`containment: null` hardcoded. So no cancel rung and no hard timeout can prove a backend tree died — and a Job
+Object cannot adopt a tree after the fact, so there is no pid-based shortcut. Ticket 78 implements what
+[design spec §14](../2026-07-28-design-spec.md) already specifies. Sequence: **60 → 78 → 69**.
 
 ## Why the order is what it is
 

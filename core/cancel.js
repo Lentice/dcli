@@ -77,16 +77,42 @@ async function cancelJob(opts) {
     }
   }
 
+  // Every declared rung failed. The last resort is a contained tree kill — but it only
+  // exists when a ContainmentContext owns the tree. Record which of the two actually
+  // happened: 'hard_kill' is an ADAPTER RUNG NAME, so reusing it here would make "the
+  // adapter's hard_kill rung worked" indistinguishable from "we killed the Job Object"
+  // and from "we did nothing at all" (AGENTS.md Mistake #5: a cancel that wrote
+  // `cancelled` while killing nothing).
+  /** @type {{terminated: boolean, survivors?: number[], error?: string}|null} */
+  let containedKill = null;
   if (!cancelRungReached) {
     if (containment && typeof containment.terminate === 'function') {
-      await containment.terminate({ executionToken: executionToken || undefined });
+      try {
+        containedKill = await containment.terminate({ executionToken: executionToken || undefined });
+      } catch (err) {
+        containedKill = { terminated: false, error: err.message };
+      }
+      await boundedSleep(hardKillWaitMs);
+      cancelRungReached = 'contained_tree_kill';
+    } else {
+      // No Job Object owns this tree, so nothing was killed. Say so.
+      await boundedSleep(hardKillWaitMs);
+      cancelRungReached = 'containment_unavailable';
     }
-    await boundedSleep(hardKillWaitMs);
-    cancelRungReached = 'hard_kill';
   }
 
-  if (isProcessAliveFn(pid)) {
-    return { state: status.state, cancelRungReached, exitCode: 21, warning: 'termination_unconfirmed' };
+  // A helper that reports survivors has NOT delivered a clean kill, even if the root pid
+  // is gone — a surviving grandchild still holds ports, temp dirs and pipes.
+  const killReportedSurvivors = containedKill !== null && containedKill.terminated !== true;
+
+  if (isProcessAliveFn(pid) || killReportedSurvivors) {
+    return {
+      state: status.state,
+      cancelRungReached,
+      exitCode: 21,
+      warning: 'termination_unconfirmed',
+      ...(containedKill ? { survivors: containedKill.survivors || [] } : {}),
+    };
   }
 
   store.journalTransition(jobId, repoKey, {

@@ -14,7 +14,18 @@
 
 ### B. Reducer rule ordering
 - [ ] `core/reducer.js` rule #2 (around line 43-51): `cancel_requested_at` no longer UNCONDITIONALLY returns `cancelled` before considering `process_exited`. Add a check: if a `process_exited { code: 0 }` fact is in the set yielding `done`, the reducer returns `done` (or `done_then_cancelled`? — no, Invariant #4 is append-only; pick `done` with a `cancel_received_after_completion: true` detail). The `cancelled` verdict applies only when there's NO positive completion evidence.
-- [ ] A `cancel_requested_at` PLUS `process_exited { code: N != 0 }` → the reducer returns `failed` (the process actually failed) OR `cancelled_with_failure` — pick ONE and assert it, with a detail noting both. AGENTS Mistake #5 ("a cancel wrote cancelled while killing nothing"): the truth is what the kill AND the process did.
+- [ ] A `cancel_requested_at` PLUS `process_exited { code: N != 0 }` → **DECIDED 2026-07-31: the reducer returns
+  `failed`**, with `cancel_received_after_completion: true` on the detail. The choice is now closed — do not
+  re-open it in implementation.
+  - **Why `failed` and not `cancelled`:** AGENTS Mistake #5 says the truth is what the kill *and* the process did.
+    A non-zero exit is positive evidence the backend actually failed; recording `cancelled` would hide a real
+    backend failure inside a detail field and teach operators that a cancelled job says nothing about backend health.
+  - **Why not a new `cancelled_with_failure` value:** Invariant #4 is append-only, so a new terminal enum value is
+    permitted — but it is not free. Every `status.json` reader (skills, generated commands, exit-code tables, the
+    reducer's own tests, agent-facing polling recipes) would have to learn a third terminal shape. The detail field
+    carries the same information at a fraction of the contract cost.
+  - Consequence to assert in tests: a cancel that races a non-zero exit yields `state: failed`,
+    `cancel_received_after_completion: true`, and the real `command_exit_code` — never `cancelled`.
 
 ### C. cancel command
 - [ ] `core/cancel.js` (around line 88-102): after the rung-walk kill, before journalling `cancelled`, RE-READ the job status. If it is now terminal (e.g. `done` written by the worker between the cancel's readStatus and its journalTransition), DO NOT journal `cancelled` — or journal a non-state-changing marker like `cancel_after_completion` whose only side effect is setting `cancel_received_after_completion: true`. Either way, the user-visible state remains `done`.

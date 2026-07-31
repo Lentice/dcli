@@ -2,9 +2,56 @@
 
 **What to build:** the worker's hard-timeout timer — when `cancelThroughRungs` walk fails or the adapter ignores the cancel signal — escalates to `containment.terminate(...)` to provably kill the backend process tree, not just ask politely. Today `worker.js`'s hard-timeout calls `requestCancelRungs()` (rung walk) then journals `timed_out` and `process.exit(24)` — the backend process tree (the one with the real孙子 processes holding stdin/stdout pipes) keeps running outside any Job Object, holding resources and locks until the OS reaps it. This is exactly the incident that started the predecessor's "`AGENTS.md` §1: unbounded wait cost a user eight hours."
 
-**Blocked by:** Ticket 55 (both touch the worker terminal/journal paths — sequence 55 first so the reducer drives state, then 69's kill-on-hard-timeout uses that state)
+**Blocked by:** Ticket 55 (both touch the worker terminal/journal paths — sequence 55 first so the reducer drives state, then 69's kill-on-hard-timeout uses that state). **Also blocked by ticket 78** — see the amendment below.
 
-**Status:** ready-for-agent
+**Status:** partially landed 2026-07-31 (honesty half done); the kill itself is blocked on ticket 78
+
+## Amendment 2026-07-31 — the kill this ticket asks for is not implementable as written
+
+Investigated while picking this ticket up. **The premise "call `containment.terminate(backendProcessIdentity)`
+— the same helper `core/cancel.js:80-86` uses" is false in two ways**, so the acceptance criteria below cannot
+be met by editing `worker.js`:
+
+1. **`core/cancel.js`'s containment branch never runs on a real job.** `core/commands/cancel.js:36` passes
+   `containment: null` hardcoded, and nothing anywhere in `core/`, `adapters/` or `cli/` ever constructs a
+   `ContainmentContext`. There is no working precedent to copy.
+2. **The backend tree is not contained, and cannot be contained after the fact.** All three adapters plain-`spawn`
+   the backend (`adapters/claude/adapter.js:240`, `adapters/codex/adapter.js:354`,
+   `adapters/opencode/adapter.js:824`), so it is in no Job Object. The native helper has exactly two commands,
+   `spawn` and `terminate`, and `terminate` only acts on the Job Object that helper instance created itself —
+   `HandleTerminate` answers `{"type":"error","error":"no active job"}` when `_jobHandle` is zero. A Windows Job
+   Object cannot adopt a running tree. There is no `terminate-by-pid` capability to call.
+
+An in-progress `terminateTree(pid)` found uncommitted in the working tree demonstrated the trap: it launched the
+helper with the pid as **argv** (which the helper never reads), then resolved `{terminated: true}` off the
+helper's exit code *after* the helper had already answered with an error — reporting a successful kill having
+killed nothing, i.e. AGENTS.md Mistake #5 verbatim. It was removed rather than repaired, and
+`tests/core/hard-kill-honesty.test.js` test 4 now pins its absence.
+
+**Decision (2026-07-31, with the maintainer): take the route with the least long-term debt** — contain the tree
+at spawn time, which is what `docs/2026-07-28-design-spec.md` §14 already specifies and which was simply never
+implemented. That work is **ticket 78**, itself blocked on ticket 60 (the helper discards child-stdin data, and
+codex/claude deliver the prompt over stdin).
+
+### Landed in this ticket (commit: honesty half)
+
+- `core/containment.js`: the bogus `terminateTree` is gone, replaced by a comment explaining why a pid-based
+  tree kill cannot work against today's helper.
+- `core/commands/worker.js`: the hard timeout records `kill_skipped: 'not_contained'` on the `timed_out`
+  journal detail instead of silently implying it killed something.
+- `core/job-store.js`: `kill_skipped` is projected into `status.json` (append-only field addition) and
+  defaults to `null` — otherwise the honest record would be dropped by the whitelist projection.
+- `core/cancel.js`: the all-rungs-failed fallback no longer records `cancelRungReached: 'hard_kill'`, which
+  collided with the adapter's own `hard_kill` rung name. It now records `containment_unavailable` when there is
+  no context, or `contained_tree_kill` when a context was actually asked to terminate; a kill reporting
+  `terminated: false`/`survivors` yields `termination_unconfirmed` + exit 21 rather than a clean kill.
+- `tests/core/hard-kill-honesty.test.js` (new) and an updated ambiguous assertion in
+  `tests/core/cancel.test.js` test 3.
+
+### Still open here, and moving to ticket 78
+
+The acceptance criteria below that require an actual kill. Re-read them **after** 78 lands; at that point this
+ticket reduces to "the hard timeout calls `context.terminate({graceMs})` and reports the outcome honestly".
 
 ## Acceptance criteria
 

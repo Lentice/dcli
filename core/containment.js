@@ -228,4 +228,25 @@ class ContainmentContext {
   }
 }
 
+// NOTE — there is deliberately no pid-based `terminateTree(pid)` here.
+//
+// The native helper's protocol has exactly two commands, `spawn` and `terminate`
+// (native/windows-job-helper/Program.cs, the switch at HandleCommand), and `terminate`
+// acts only on the Job Object that THIS helper instance created in its own `spawn`.
+// A freshly launched helper has `_jobHandle == IntPtr.Zero` and answers
+// `{"type":"error","error":"no active job"}` — it cannot adopt an already-running tree,
+// because a Windows Job Object cannot retroactively adopt one.
+//
+// So a pid-based tree kill is not implementable against today's helper, and an
+// implementation that appears to work is worse than none: the version removed here
+// spawned the helper with the pid as argv (which the helper never reads), then
+// resolved `{terminated: true}` off the helper's exit code after the helper had
+// already answered with an error — reporting a successful kill having killed nothing.
+// That is AGENTS.md Mistake #5 exactly.
+//
+// The debt-free fix is for adapters to spawn the backend THROUGH a ContainmentContext
+// so the tree is contained from birth; then `context.terminate()` above is all the
+// worker's hard timeout needs. See docs/tickets/69 and docs/tickets/78.
+// `tests/core/hard-kill-honesty.test.js` pins the absence of this export.
+
 module.exports = { ContainmentContext, isAvailable, resolveHelperPath, HELPER_PATH };

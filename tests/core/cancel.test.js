@@ -155,7 +155,12 @@ await withTempDir(async (dir) => {
   });
 
   assert.strictEqual(result.exitCode, 21, 'False success must exit 21');
-  assert.strictEqual(result.cancelRungReached, 'hard_kill', 'Must reach hard_kill rung');
+  // Every declared rung (including the adapter's own 'hard_kill') failed to kill the
+  // process, and containment is null, so nothing escalated. Recording 'hard_kill' here
+  // would be indistinguishable from the adapter's hard_kill rung having worked — see
+  // tests/core/hard-kill-honesty.test.js.
+  assert.strictEqual(result.cancelRungReached, 'containment_unavailable',
+    'With no rung effective and no containment, the record must name why nothing was killed');
   assert.strictEqual(result.warning, 'termination_unconfirmed', 'Must warn about unconfirmed termination');
 
   const status = store.readStatus({ repoKey, jobId });

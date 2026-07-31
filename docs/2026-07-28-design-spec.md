@@ -639,6 +639,24 @@ Containment failure is **fail-closed**: if containment is requested and the help
 version-incompatible, the job does not start. `taskkill`-based cleanup is a **declared degraded
 capability** recorded in the job record — never a transparent fallback.
 
+### Amendment 2026-07-31 — implementation status of this section
+
+Everything above remains the binding target. **None of it is wired up yet**, and the gap is recorded here so
+no future reader assumes otherwise:
+
+- `ContainmentContext` (`core/containment.js`) is constructed nowhere in `core/`, `adapters/` or `cli/`.
+  All three adapters launch the backend with a plain `child_process.spawn`, so no backend tree is in a Job
+  Object, and `core/commands/cancel.js` passes `containment: null` hardcoded.
+- Therefore the ladder's `→ if no rung terminated it: hard process-tree kill via the contained job` step, the
+  `containment.degraded` record, and the fail-closed rule are all **specified but absent**.
+- A Job Object cannot adopt an already-running tree, and the native helper's protocol has no
+  terminate-by-pid command (only `spawn` and `terminate`, the latter acting solely on the Job Object that
+  helper instance created). So the gap cannot be closed from the `cancel`/`worker` side — the tree must be
+  contained at spawn time. That is **ticket 78**, blocked on ticket 60.
+- Until then, the honest record is the contract: a hard timeout writes `kill_skipped: 'not_contained'` on the
+  `timed_out` detail, and an all-rungs-failed cancel records `cancel_rung_reached: 'containment_unavailable'`
+  rather than reusing the adapter rung name `hard_kill`. Neither ever reports a kill that did not happen.
+
 ---
 
 ## 15. Locking and concurrency

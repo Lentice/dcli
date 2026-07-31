@@ -44,6 +44,7 @@ class JobStore {
       worker_pid: null,
       worker_identity: null,
       containment: null,
+      kill_skipped: null,
       backend_pid: null,
       backend_session_id: null,
       backend_state: { schema_version: 1 },
@@ -143,6 +144,10 @@ class JobStore {
         if (d.findings_status !== undefined) updated.findings_status = d.findings_status;
         if (d.execution_root !== undefined) updated.execution_root = d.execution_root;
         if (d.containment !== undefined) updated.containment = d.containment;
+        // Append-only addition: records why a hard timeout did not escalate to a
+        // contained tree kill (e.g. 'not_contained'). Without it a timed_out job is
+        // indistinguishable from one whose backend tree was provably killed.
+        if (d.kill_skipped !== undefined) updated.kill_skipped = d.kill_skipped;
         if (d.phase !== undefined) updated.phase = d.phase;
         if (d.heartbeat_at !== undefined) updated.heartbeat_at = d.heartbeat_at;
         if (d.cancel_requested_at !== undefined) updated.cancel_requested_at = d.cancel_requested_at;
