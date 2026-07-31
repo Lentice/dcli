@@ -62,7 +62,7 @@ Options:
 Every recipe with a wait carries an explicit budget: set --timeout-sec and --hard-timeout-sec.
 
 Backends:
-  fake      Test double (used for development and testing)
+  fake      Test double (used for development and testing dcli itself)
   opencode  opencode serve per job over HTTP
   codex     codex exec --json, prompt on stdin
   claude    claude -p --output-format stream-json
@@ -82,6 +82,7 @@ const { computeRepoKeyWithPath } = require('../core/repo-key');
 const { Redactor } = require('../core/redactor');
 const { setRedactor } = require('../core/fs-text');
 const { AdmissionController } = require('../core/admission');
+const { getBackground, getBackendLimits, DEFAULT_BACKEND } = require('../adapters/registry');
 
 async function main() {
   const parsed = parseArgs(process.argv);
@@ -97,13 +98,15 @@ async function main() {
     process.exit(2);
   }
 
-  const backend = parsed.backend || 'fake';
+  const backend = parsed.backend || DEFAULT_BACKEND;
 
   let adapter;
   try {
     const adapterPath = path.resolve(__dirname, '..', 'adapters', backend, 'adapter');
+    const bg = getBackground(backend);
     const mod = require(adapterPath);
-    const AdapterClass = mod.ClaudeAdapter || mod.CodexAdapter || mod.OpencodeAdapter || mod.FakeAdapter || mod[Object.keys(mod)[0]];
+    const AdapterClass = mod[bg.class];
+    if (!AdapterClass) throw new Error(`Adapter module for "${backend}" does not export class ${bg.class}`);
     adapter = new AdapterClass({ facts: getDefaultFacts(), exitCode: 0, declaredRungs: ['hard_kill'], capabilities: getDefaultCapabilities(backend) });
   } catch (err) {
     console.error(`Failed to load adapter "${backend}": ${err.message}`);
@@ -126,7 +129,7 @@ async function main() {
 
   const admissionController = new AdmissionController({
     stateRoot,
-    backendLimits: { opencode: 3, codex: 3, claude: 3 },
+    backendLimits: getBackendLimits(),
   });
   admissionController.reconcile();
 

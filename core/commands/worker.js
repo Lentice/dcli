@@ -43,6 +43,7 @@ async function main() {
   const { JobStore } = require('../job-store');
   const { buildEnvelope } = require('./index');
   const { AdmissionController } = require('../admission');
+  const { getBackendLimits } = require('../../adapters/registry');
   const store = new JobStore({ stateRoot });
 
   const jobDir = store.getJobDir(repoKey, jobId);
@@ -66,7 +67,7 @@ async function main() {
   }
 
   // Acquire admission slot
-  const admission = new AdmissionController({ stateRoot, backendLimits: { opencode: 3, codex: 3, claude: 3 } });
+  const admission = new AdmissionController({ stateRoot, backendLimits: getBackendLimits() });
   admission.reconcile();
 
   // Set up dequeue spawning so queued jobs are re-launched when slots free
@@ -110,9 +111,12 @@ async function main() {
   let adapter;
   try {
     const adapterPath = path.resolve(__dirname, '..', '..', 'adapters', backendName, 'adapter');
+    const { getBackground } = require('../../adapters/registry');
+    const bg = getBackground(backendName);
     const mod = require(adapterPath);
     const adapterConfig = params._adapterScript || {};
-    const AdapterClass = mod.ClaudeAdapter || mod.CodexAdapter || mod.OpencodeAdapter || mod.FakeAdapter || mod[Object.keys(mod)[0]];
+    const AdapterClass = mod[bg.class];
+    if (!AdapterClass) throw new Error(`Adapter module for "${backendName}" does not export class ${bg.class}`);
     adapter = new AdapterClass(adapterConfig);
   } catch (err) {
     journalFailure(store, slotId, repoKey, jobId, null, 'worker_startup_failed', `Cannot load adapter: ${err.message}`);
