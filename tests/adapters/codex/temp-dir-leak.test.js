@@ -14,11 +14,11 @@ function countTempDirs() {
 async function main() {
 
 // ===========================================================================
-// 1. Sync spawn failure cleans up temp dir
-//    Create a temp .cmd and then delete it before spawn — the spawn will fail
-//    because the file no longer exists. Since it's a .cmd shim, buildCmdInvocation
-//    wraps it in cmd.exe /d /s /c, which starts successfully, but the inner
-//    command's stderr will contain an error. This tests the dispose cleanup path.
+// 1. Dispose cleans up the temp dir after a Start that launched a child
+//    CODEX_PATH points at cmd.exe, which spawns successfully — Start only has
+//    to launch and wire the child, so it must NOT throw here. (This case
+//    previously asserted `Start` failed, which was a false green: it only
+//    passed because of a ReferenceError in Start's own body.)
 // ===========================================================================
 {
   const before = countTempDirs();
@@ -28,9 +28,6 @@ async function main() {
 
   // Use a cmd.exe path as CODEX_PATH to avoid PATH resolution
   const savedPath = process.env.CODEX_PATH;
-  // 'cmd.exe /d /c echo stub' will spawn a cmd.exe that exits immediately
-  // with no server to listen on, so the startup sentinel will time out.
-  // The key assertion is that Dispose cleans up the temp dir after the error.
   process.env.CODEX_PATH = process.env.ComSpec || 'cmd.exe';
 
   let error;
@@ -43,8 +40,10 @@ async function main() {
     else process.env.CODEX_PATH = savedPath;
   }
 
-  // Start should fail because this isn't a real codex binary
-  assert.ok(error, 'Start must fail with non-codex binary');
+  assert.ok(!error, `Start must not throw when the spawn succeeds: ${error && error.stack}`);
+  assert.ok(adapter._tmpDirPath, 'Start must have created a temp dir to clean up');
+
+  try { adapter._childProcess.kill(); } catch {}
 
   // Dispose should clean up the temp dir
   adapter.Dispose({});
@@ -53,7 +52,7 @@ async function main() {
   assert.strictEqual(after - before, 0,
     `No dcli-codex-* dirs must be leaked. Before: ${before}, after: ${after}`);
 
-  console.log('PASS: Dispose cleans up temp dir after failed Start');
+  console.log('PASS: Dispose cleans up temp dir after Start launched a child');
 }
 
 // ===========================================================================

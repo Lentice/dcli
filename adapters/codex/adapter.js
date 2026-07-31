@@ -318,6 +318,10 @@ class CodexAdapter {
     // Create temp directory for result file
     this._tmpDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-'));
 
+    // Declared outside the try so the stream/exit wiring below the cleanup
+    // block can still reach it.
+    let child;
+
     try {
       this._resultFilePath = path.join(this._tmpDirPath, 'result.txt');
 
@@ -344,7 +348,7 @@ class CodexAdapter {
         cwd: workDir,
       });
 
-      const child = spawn(invocation.command, invocation.args, {
+      child = spawn(invocation.command, invocation.args, {
         cwd: invocation.cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: invocation.windowsHide,
