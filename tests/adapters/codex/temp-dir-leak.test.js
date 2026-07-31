@@ -3,13 +3,6 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { spawn } = require('node:child_process');
-
-function countTempDirs() {
-  try {
-    return fs.readdirSync(os.tmpdir()).filter(e => e.startsWith('dcli-codex-')).length;
-  } catch { return -1; }
-}
 
 async function main() {
 
@@ -19,9 +12,13 @@ async function main() {
 //    to launch and wire the child, so it must NOT throw here. (This case
 //    previously asserted `Start` failed, which was a false green: it only
 //    passed because of a ReferenceError in Start's own body.)
+//
+//    The leak is asserted against the exact path the adapter created. Counting
+//    dcli-codex-* entries in the shared os.tmpdir() and comparing a delta does
+//    not work: the suite runs files concurrently, so the count includes other
+//    tests' directories appearing and disappearing mid-case.
 // ===========================================================================
 {
-  const before = countTempDirs();
   const { CodexAdapter } = require('../../../adapters/codex/adapter');
 
   const adapter = new CodexAdapter({ _testMode: false, _mockVersion: '0.145.0' });
@@ -43,22 +40,30 @@ async function main() {
   assert.ok(!error, `Start must not throw when the spawn succeeds: ${error && error.stack}`);
   assert.ok(adapter._tmpDirPath, 'Start must have created a temp dir to clean up');
 
-  try { adapter._childProcess.kill(); } catch {}
+  const tmpDir = adapter._tmpDirPath;
+  assert.ok(fs.existsSync(tmpDir), `temp dir must exist after Start: ${tmpDir}`);
 
-  // Dispose should clean up the temp dir
-  adapter.Dispose({});
+  // Teardown in a finally: cmd.exe with codex's arguments is a hang-shaped
+  // fixture, and a leaked one poisons every later test on the machine.
+  try {
+    if (adapter._childProcess) {
+      try { adapter._childProcess.kill(); } catch {}
+    }
+  } finally {
+    adapter.Dispose({});
+  }
 
-  const after = countTempDirs();
-  assert.strictEqual(after - before, 0,
-    `No dcli-codex-* dirs must be leaked. Before: ${before}, after: ${after}`);
+  assert.ok(!fs.existsSync(tmpDir), `Dispose must remove its own temp dir: ${tmpDir}`);
 
   console.log('PASS: Dispose cleans up temp dir after Start launched a child');
 }
 
 // ===========================================================================
-// 2. _tmpDirPath is null when Start throws synchronously (verified via empty command)
-//    Test the try/catch cleanup path by creating an adapter and triggering
-//    the cleanup logic directly.
+// 2. fs.rmSync + null assignment behaves as the catch block expects.
+//    NOTE: this exercises the cleanup *idiom*, not the adapter -- it
+//    re-implements the catch block rather than calling into it, so it cannot
+//    catch a regression in Start(). The real sync-failure path is covered by
+//    start-child-scope.test.js case 2, which drives Start() itself.
 // ===========================================================================
 {
   const { CodexAdapter } = require('../../../adapters/codex/adapter');
