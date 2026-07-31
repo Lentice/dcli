@@ -127,7 +127,14 @@ await withTempDir(async (dir) => {
 {
   const { executeTail } = require('../../core/commands/tail');
   try {
-    await executeTail({ store: { regenerateStatus: () => { throw new Error('not found'); } }, repoKey: 'x', jobId: 'nonexistent' });
+    await executeTail({
+      store: {
+        getJobDir: () => path.join(os.tmpdir(), 'dcli-no-such-job-dir-' + process.pid),
+        regenerateStatus: () => { throw new Error('not found'); },
+      },
+      repoKey: 'x',
+      jobId: 'nonexistent',
+    });
     assert.fail('Should have thrown');
   } catch (err) {
     assert.strictEqual(err.exitCode, 3, 'not found must exit 3');

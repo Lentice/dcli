@@ -288,7 +288,7 @@ translated, never surfaced.
 |---:|---|
 | `0` | Success |
 | `2` | Usage / validation error, incl. unsupported-option rejection (ADR-004). No job created. **The `--json` output must carry a distinct `failure_class`** — `usage_error` ("your syntax is wrong") and `unsupported_capability` ("a valid request this backend cannot serve") are different problems for an agent, even though they share a shell exit code. |
-| `3` | Job not found |
+| `3` | Job not found. (2026-07-31) Determined by the job directory's existence, **not** by whether `regenerateStatus()` throws — an absent journal regenerates to the default projection (`job_id: null`, `state: "created"`), so a typo'd id used to read as a freshly created job at exit 0 and an agent would poll it forever. All read-side commands go through `loadJobOrThrow()`. |
 | `4` | Job not terminal (e.g. `read` on a running job) |
 | `10` | Backend/provider execution failed (see `failure_reason`) |
 | `11` | No usable assistant result |

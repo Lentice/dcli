@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { generateJobId } = require('../job-id');
 const { resolveDeadline } = require('../deadlines');
@@ -11,6 +12,19 @@ const { resolveDeadline } = require('../deadlines');
  * @returns {{ status:Object, attemptNum:number, jobDir:string, attemptDir:string }}
  */
 function loadJobOrThrow({ store, repoKey, jobId, regenerate = true }) {
+  const jobDir = store.getJobDir(repoKey, jobId);
+
+  // Existence is checked on disk, not inferred from regenerateStatus(). An
+  // absent journal regenerates to the DEFAULT status — job_id null, state
+  // "created" — so every caller that trusted the try/catch reported a
+  // non-existent job as a freshly created one, exit 0. An agent polling that
+  // waits forever for a job that was never there.
+  if (!fs.existsSync(jobDir)) {
+    const err = new Error(`Job not found: ${repoKey}/${jobId}`);
+    err.exitCode = 3;
+    throw err;
+  }
+
   let status;
   try {
     status = regenerate
@@ -25,7 +39,6 @@ function loadJobOrThrow({ store, repoKey, jobId, regenerate = true }) {
     throw err;
   }
 
-  const jobDir = store.getJobDir(repoKey, jobId);
   const attemptNum = status.attempt || 1;
   return {
     status,
