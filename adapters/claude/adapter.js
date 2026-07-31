@@ -45,7 +45,13 @@ function buildArgv(opts) {
   argv.push('--output-format', 'stream-json');
   argv.push('--verbose');
 
-  if (opts.sessionId) {
+  // `--session-id` names a NEW session; `--resume` continues an existing one.
+  // Passing the parent's id as --session-id started a fresh conversation that
+  // merely reused the uuid, so a continue_backend_session resume answered with
+  // no memory of the parent turn while reporting success.
+  if (opts.resumeSessionId) {
+    argv.push('--resume', opts.resumeSessionId);
+  } else if (opts.sessionId) {
     argv.push('--session-id', opts.sessionId);
   }
 
@@ -56,7 +62,14 @@ function buildArgv(opts) {
     argv.push('--disable-slash-commands');
   }
 
-  argv.push('--no-session-persistence');
+  // No `--no-session-persistence`. It and resume are mutually exclusive —
+  // docs/reference/cli-claude.md: "sessions not saved to disk and cannot be
+  // resumed" — and this adapter declares core.resume and records a
+  // backend_session_id. Passing it anyway meant the recorded id named a
+  // conversation that was never written, and every continue_backend_session
+  // resume died with "No conversation found with session ID". Isolation is
+  // enforced by --safe-mode, --permission-mode and the access mode, not by
+  // refusing to write the transcript.
 
   if (opts.maxBudgetUsd) {
     argv.push('--max-budget-usd', String(opts.maxBudgetUsd));
@@ -205,7 +218,9 @@ class ClaudeAdapter {
     // Recorded so the directory the child actually ran in is observable: it
     // reaches the child only as a spawn cwd, which ChildProcess does not expose.
     this._workDir = workDir;
-    this._sessionId = request.sessionId || crypto.randomUUID();
+    // A continued session keeps the parent's id; otherwise this is a new one.
+    this._resumeSessionId = request.resumeSessionId || null;
+    this._sessionId = this._resumeSessionId || request.sessionId || crypto.randomUUID();
 
     const access = request.access || 'read-only';
     const permissionMode = access === 'workspace' ? 'acceptEdits' : 'auto';
@@ -214,6 +229,7 @@ class ClaudeAdapter {
 
     const args = buildArgv({
       sessionId: this._sessionId,
+      resumeSessionId: this._resumeSessionId || undefined,
       permissionMode,
       safeMode: true,
       maxBudgetUsd: maxBudget,

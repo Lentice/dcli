@@ -231,6 +231,7 @@ class OpencodeAdapter {
     // absence from that map can be read as "turn over" rather than "no idea".
     this._sawLiveStatus = false;
     this._promptSentAt = null;
+    this._resumeSessionId = null;
 
     this._serversDir = this._stateRoot ? path.join(this._stateRoot, 'servers') : null;
   }
@@ -805,6 +806,8 @@ class OpencodeAdapter {
     if (request.access) {
       this._accessMode = request.access;
     }
+    // Set only for a continue_backend_session resume; see SendPrompt.
+    this._resumeSessionId = request.resumeSessionId || null;
     if (!this._accessMode) {
       this._accessMode = 'read-only';
     }
@@ -961,11 +964,19 @@ class OpencodeAdapter {
 
     await this._verifyProjectIdentity();
 
-    const sessionBody = this._buildSessionBody(prompt);
-
-    const session = await this._transportRequest('POST', '/session', sessionBody, SESSION_TIMEOUT_MS);
-    this._sessionId = session.id;
-    this._backendSessionId = session.id;
+    // Continuing the parent's session means posting into it, not creating a
+    // new one. Creating one regardless is why continue_backend_session used to
+    // answer with none of the parent's context while reporting success.
+    if (this._resumeSessionId) {
+      this._sessionId = this._resumeSessionId;
+      this._backendSessionId = this._resumeSessionId;
+    } else {
+      const sessionBody = this._buildSessionBody(prompt);
+      const session = await this._transportRequest('POST', '/session', sessionBody, SESSION_TIMEOUT_MS);
+      this._sessionId = session.id;
+      this._backendSessionId = session.id;
+    }
+    const session = { id: this._sessionId };
 
     const promptBody = {
       parts: [{ type: 'text', text: prompt }],

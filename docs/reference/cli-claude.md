@@ -36,7 +36,7 @@ Interactive by default. **`-p/--print` is the non-interactive mode** the wrapper
 | `--max-turns` | number | limit agentic turns; only with `--print` |
 | `--max-budget-usd <amount>` | number | cap API spend; only with `--print` |
 | `--fallback-model <model>` | string | comma-separated fallback list when the default is overloaded; retries the primary each user turn; only with `--print` |
-| `--no-session-persistence` | bool | sessions not saved to disk and cannot be resumed; only with `--print` |
+| `--no-session-persistence` | bool | sessions not saved to disk and cannot be resumed; only with `--print`. **The adapter must not pass it** — it is mutually exclusive with the `core.resume` capability this backend declares. It was passed unconditionally, so the `backend_session_id` recorded on every job named a conversation that was never written and `--kind continue_backend_session` always failed with *"No conversation found with session ID"*. |
 | `--prompt-suggestions [v]` | enum | emits a `prompt_suggestion` message after each turn |
 
 `--input-format stream-json` + `--output-format stream-json` is the **most promising candidate for a

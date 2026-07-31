@@ -198,7 +198,11 @@ async function main() {
   assert.ok(argv.includes('test-uuid'), 'Must include session id value');
   assert.ok(argv.includes('--safe-mode'), 'Must include safe-mode');
   assert.ok(argv.includes('--disable-slash-commands'), 'Must disable slash commands');
-  assert.ok(argv.includes('--no-session-persistence'), 'Must disable persistence');
+  // Sessions must be persisted: --no-session-persistence and resume are
+  // mutually exclusive, and this adapter declares core.resume and hands back a
+  // backend_session_id that continue_backend_session is expected to continue.
+  assert.ok(!argv.includes('--no-session-persistence'),
+    'must not disable persistence — it makes the recorded session id unresumable');
   assert.ok(argv.includes('--model'), 'Must include model flag');
   assert.ok(argv.includes('sonnet'), 'Must include model value');
   assert.ok(argv.includes('--add-dir'), 'Must include add-dir');

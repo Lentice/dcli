@@ -92,7 +92,17 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
     canonicalDir = worktreePath;
   }
 
-  const request = { model, canonicalDir, reasoningEffort, variant, effort, access: inheritedAccess };
+  // The session to continue must be on the request, because PrepareInvocation
+  // is the last point before Start() and some backends fix their session at
+  // process launch. Handing it to adapter.Resume() after Start() — which is
+  // when onStarted runs — is too late for those, and the job then ran in a
+  // brand new session while still reporting success: the continuation silently
+  // had none of the parent's context. Adapters that cannot continue a session
+  // ignore the field.
+  const request = {
+    model, canonicalDir, reasoningEffort, variant, effort, access: inheritedAccess,
+    ...(kind === 'continue_backend_session' ? { resumeSessionId: parentBackendSessionId } : {}),
+  };
   let prepared;
   try {
     prepared = prepareBackend({ adapter, request });
