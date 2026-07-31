@@ -66,7 +66,13 @@ function reduce(state, facts, evidence) {
 
   // 4. Process facts
   const processExited = facts.find(f => f && f.type === 'process_exited');
-  if (processExited) {
+  const backendError = facts.find(f => f && f.type === 'backend_error');
+  // A clean exit does not overrule a reported backend error. Where the backend
+  // process outlives the turn it always exits 0, so a provider refusal (a live
+  // 403 from the model) reduced to `done` with an empty result and exit 0 —
+  // the exact "a failure must never read as a clean result" defect. A non-zero
+  // exit still wins, because its code is the more specific fact.
+  if (processExited && !(processExited.code === 0 && backendError)) {
     return {
       state: processExited.code === 0 ? 'done' : 'failed',
       phase: 'terminal',
@@ -76,7 +82,6 @@ function reduce(state, facts, evidence) {
     };
   }
 
-  const backendError = facts.find(f => f && f.type === 'backend_error');
   if (backendError) {
     const classHint = backendError.class_hint || null;
     return {

@@ -33,6 +33,10 @@ const IDLE_CONFIRM_MS = 3000;
 // purely due to elapsed wall-clock time.
 const SSE_SOCKET_TIMEOUT_MS = 600000;
 const PROMPT_ASYNC_TIMEOUT_MS = 15000;
+// How long after the prompt a session may still be missing from
+// /session/status before its absence is taken to mean the turn is over.
+// Bounds the "turn failed instantly" case, which otherwise never terminates.
+const SESSION_REGISTRATION_GRACE_MS = 15000;
 const MESSAGES_TIMEOUT_MS = 30000;
 const SESSION_STATUS_TIMEOUT_MS = 10000;
 const MAX_SSE_RECONNECTS = 5;
@@ -223,6 +227,10 @@ class OpencodeAdapter {
     this._asyncResultUsage = { input: 0, output: 0, total: 0 };
     this._asyncResultCost = null;
     this._asyncBackendSessionId = null;
+    // Set once /session/status has actually reported our session, so its later
+    // absence from that map can be read as "turn over" rather than "no idea".
+    this._sawLiveStatus = false;
+    this._promptSentAt = null;
 
     this._serversDir = this._stateRoot ? path.join(this._stateRoot, 'servers') : null;
   }
@@ -563,6 +571,38 @@ class OpencodeAdapter {
       }
     }
     return facts;
+  }
+
+  /**
+   * The error an assistant turn ended on, from `/session/:id/message`.
+   *
+   * opencode records a failed turn as a normal message carrying `info.error`;
+   * there is no separate failure signal to observe, so this is the only place
+   * a provider refusal is visible once the SSE stream has closed.
+   *
+   * @param {*} messageResponse
+   * @returns {{ message:string, name:string|null, statusCode:number|null,
+   *             class_hint:string }|null}
+   */
+  _findMessageError(messageResponse) {
+    let messages = [];
+    if (Array.isArray(messageResponse)) messages = messageResponse;
+    else if (messageResponse && Array.isArray(messageResponse.messages)) messages = messageResponse.messages;
+    else return null;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const info = messages[i] && messages[i].info;
+      const err = info && info.error;
+      if (!err) continue;
+      const data = err.data || {};
+      return {
+        message: data.message || err.message || err.name || 'Backend reported an error',
+        name: err.name || null,
+        statusCode: typeof data.statusCode === 'number' ? data.statusCode : null,
+        class_hint: this._classifyBackendError(data) || this._classifyBackendError(err) || 'provider_error',
+      };
+    }
+    return null;
   }
 
   _selectFinalMessage(messageResponse) {
@@ -932,6 +972,9 @@ class OpencodeAdapter {
     };
 
     const response = await this._transportRequest('POST', `/session/${session.id}/prompt_async`, promptBody, PROMPT_ASYNC_TIMEOUT_MS);
+    // The turn is in flight from here, which is what makes a later absence from
+    // /session/status meaningful. See _fetchSessionStatus.
+    this._promptSentAt = Date.now();
     if (typeof response === 'object' && response !== null && response.statusCode) {
       if (response.statusCode !== 204) {
         throw new Error(`prompt_async returned HTTP ${response.statusCode}, expected 204`);
@@ -1069,6 +1112,18 @@ class OpencodeAdapter {
         this._asyncResultText = final.text;
         this._asyncResultUsage = final.usage;
         this._asyncResultCost = final.cost;
+        // An assistant turn that failed carries its error on the message, and
+        // nothing here used to read it — so a provider refusal surfaced as a
+        // successful job with an empty result. Emit it as a fact and let the
+        // engine decide the state.
+        const msgError = this._findMessageError(msgs);
+        if (msgError) {
+          yield {
+            type: 'backend_error',
+            class_hint: msgError.class_hint,
+            structured_payload: { message: msgError.message, name: msgError.name, status_code: msgError.statusCode },
+          };
+        }
         if (final.text) {
           yield { type: 'assistant_text', message_id: final.message_id || this._sessionId || 'msg_final', text: final.text };
         }
@@ -1134,11 +1189,31 @@ class OpencodeAdapter {
       if (sid && status[sid]) {
         const t = status[sid].type || status[sid];
         if (typeof t === 'string') {
+          this._sawLiveStatus = true;
           return t === 'retry' ? 'retrying' : t;
         }
         if (t && typeof t === 'object' && t.type) {
+          this._sawLiveStatus = true;
           return t.type === 'retry' ? 'retrying' : t.type;
         }
+      }
+
+      // `/session/status` lists only sessions with work in flight, so once the
+      // turn is over ours is simply absent and the map comes back `{}`.
+      // Reporting that as 'unknown' meant the reconciliation loop — which
+      // terminates only on a confirmed 'idle' — never terminated: a model turn
+      // that ended in an APIError (verified live: a 403 RegionError, five
+      // seconds in) was polled for the full hard-timeout budget and reported as
+      // `timed_out` with zero bytes, hiding the real error behind a fake stall.
+      //
+      // Guarded so a session that has not yet been registered is not read as
+      // finished. Observing it live once is the strong signal, but it cannot be
+      // the only one: a turn that fails in the first few seconds — the case
+      // this exists for — can be gone before the first poll ever sees it. So a
+      // registration grace period counted from the prompt also qualifies.
+      if (this._sawLiveStatus) return 'idle';
+      if (this._promptSentAt && Date.now() - this._promptSentAt > SESSION_REGISTRATION_GRACE_MS) {
+        return 'idle';
       }
     }
     return 'unknown';

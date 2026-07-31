@@ -113,14 +113,15 @@ async function main() {
     process.exit(12);
   }
 
-  // DCLI_STATE_ROOT is an explicit runtime override and must win even when a
-  // repository is supplied. This is required for callers that cannot write
-  // inside the target repository (and keeps state placement independently
-  // configurable from repository resolution).
+  // State placement is independent of repository resolution: the OS user-space
+  // root, never inside the repo. Deriving it from --repo made the root differ
+  // between invocations of the same job — `run --repo X` wrote to X\.dcli-state
+  // while a later `status <id>` without --repo read the user-space root and
+  // reported "Job not found". Jobs are already namespaced by repo_key inside
+  // the root, so the per-repo directory bought nothing.
   const stateRoot = process.env.DCLI_STATE_ROOT
-    || (parsed.repo ? path.resolve(parsed.repo, '.dcli-state')
-      : (process.env.NODE_ENV === 'test' ? process.env.DCLI_TEST_STATE_ROOT : null)
-      || getStateRoot());
+    || (process.env.NODE_ENV === 'test' ? process.env.DCLI_TEST_STATE_ROOT : null)
+    || getStateRoot();
 
   ensureStateRoot(stateRoot);
 

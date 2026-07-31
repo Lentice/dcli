@@ -124,6 +124,14 @@ macOS    ~/Library/Application Support/dcli/
 Linux    ${XDG_STATE_HOME:-~/.local/state}/dcli/
 ```
 
+**The state root is user-space and never derived from the repository.** `DCLI_STATE_ROOT` overrides it;
+nothing else does. In particular `--repo` must not influence it — jobs are already namespaced by
+`<repo-key>` inside the root, so a per-repo `<repo>\.dcli-state` buys no isolation, and it broke job
+identity: `run --repo X` wrote to `X\.dcli-state` while a later `status <job-id>` without `--repo` read
+the user-space root and reported **"Job not found"** for a job that had completed successfully. Never
+reintroduce a repo-derived state root, and never place state in a temp directory — job records must
+outlive the machine's temp cleanup to keep `status`, `read` and `resume` meaningful.
+
 ```
 <state-root>/
 ├── jobs/<repo-key>/<job-id>/

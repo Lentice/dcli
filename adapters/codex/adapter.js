@@ -142,8 +142,28 @@ function buildArgv(opts) {
   argv.push('--ignore-user-config');
   argv.push('--ignore-rules');
 
-  // Sandbox — maps to access mode
-  argv.push('-s', opts.sandbox || 'read-only');
+  // Sandbox — maps to access mode.
+  //
+  // `-s` alone is NOT enough, verified live against codex-cli 0.146.0: under
+  // `--ignore-user-config` the flag had no observable effect. `-s read-only`
+  // still wrote files (the user's config said workspace-write), and
+  // `-s workspace-write` was refused with "writing is blocked by read-only
+  // sandbox". So the flag was decorative in both directions — including the
+  // direction that matters, where `--access read-only` did not sandbox at all.
+  // `-c sandbox_mode=` does take effect, so it is the authoritative one; `-s`
+  // stays because it agrees and costs nothing if a later version honours it.
+  const sandbox = opts.sandbox || 'read-only';
+  argv.push('-s', sandbox);
+  argv.push('-c', `sandbox_mode="${sandbox}"`);
+
+  // Under --ignore-user-config the default reviewer auto-rejects every patch
+  // in workspace-write ("rejected by user approval settings"), so a write-mode
+  // job produced an empty diff and a job that read as cleanly done. There is
+  // no approval channel in `codex exec` to answer the prompt, so the reviewer
+  // must be the automatic one. Only ever for write access.
+  if (sandbox !== 'read-only') {
+    argv.push('-c', 'approvals_reviewer="auto_review"');
+  }
 
   // Working directory
   argv.push('-C', opts.workDir);
@@ -317,9 +337,14 @@ class CodexAdapter {
       this._resultFilePath = path.join(this._tmpDirPath, 'result.txt');
 
       const codexPath = resolveCodexPath();
-      const workDir = process.cwd();
 
       const request = this._lastRequest || {};
+      // The engine decides where the job runs — implement mode points
+      // canonicalDir at the job's isolated worktree. Using process.cwd()
+      // instead sent every implement-mode job at the invoking shell's
+      // directory, so the worktree stayed untouched and `diff` was empty.
+      const workDir = request.canonicalDir || process.cwd();
+      this._workDir = workDir;
       const access = request.access || 'read-only';
       const sandbox = access === 'workspace' ? 'workspace-write' : 'read-only';
       const argv = buildArgv({

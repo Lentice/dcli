@@ -260,13 +260,25 @@ opencode server listening on http://127.0.0.1:47311
 |---|---|---|
 | GET,POST | `/session` | create/list |
 | GET,DELETE,PATCH | `/session/{id}` | |
-| GET | `/session/status` | map of id → `idle` / `busy` / `retry{attempt,message,next,action{reason,provider,title,message,label,link}}` |
+| GET | `/session/status` | map of id → `idle` / `busy` / `retry{attempt,message,next,action{reason,provider,title,message,label,link}}` — **lists only sessions with work in flight**, see below |
 | GET,POST | `/session/{id}/message` | POST is **synchronous** for a whole turn |
 | POST | `/session/{id}/prompt_async` | **204**, fire-and-forget |
 | POST | `/session/{id}/abort`, `/interrupt` | |
 | POST | `/session/{id}/fork`, `/summarize`, `/init`, `/command`, `/shell` |  |
 | GET | `/session/{id}/diff` | `SnapshotFileDiff[]` |
 | POST | `/session/{id}/revert`, `/unrevert` | |
+
+**`/session/status` omits finished sessions entirely [verified live, 1.18.10].** Polled across one
+turn it returned `{"ses_…":{"type":"busy"}}` while the turn ran and then `{}` — not an `idle` entry —
+once it was over. So *absent from the map* is the completion signal, and reading absence as "unknown"
+means a completion is never observed: a turn that failed 5 s in (a 403 `RegionError` from the provider)
+was polled for the whole hard-timeout budget and reported as `timed_out` with zero bytes. Absence is
+only meaningful after the prompt has been accepted, hence the registration grace period in the adapter.
+
+**A failed turn is a normal message carrying `info.error` [verified live].** There is no separate
+failure event once the SSE stream has closed; `GET /session/{id}/message` is the only place the error
+is visible, as `info.error.data.{message,statusCode}`. Nothing else reports it, so a turn that the
+provider refused otherwise looks like a successful turn with no text.
 
 `POST /session` body **[observed]**:
 

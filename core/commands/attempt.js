@@ -232,7 +232,14 @@ async function runAttempt({
         await tryDisposeAdapter(adapter, attempt);
         releaseSlot();
         const finalStatus = store.readStatus({ repoKey, jobId });
-        return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus) };
+        // The exit code follows the reduced terminal state, not the child's.
+        // Omitting it defaulted the command to 0, which was indistinguishable
+        // from success as soon as a backend could exit 0 on a failed turn —
+        // an agent parsing the exit code read a provider refusal as a result.
+        return {
+          text: collected.text, jobId, envelope: buildEnvelope(finalStatus),
+          exitCode: (terminalState === 'done' || terminalState === 'interrupted') ? 0 : 1,
+        };
       }
     }
   } catch (err) {

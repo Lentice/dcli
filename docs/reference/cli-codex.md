@@ -183,9 +183,9 @@ as JSON).
 | event stream | `--json` → JSONL on stdout |
 | model | `-m/--model` |
 | reasoning effort | `-c model_reasoning_effort=<level>` — surfaced as `dcli-codex --reasoning-effort` |
-| access `read-only` | `-s read-only` |
-| access `workspace` | `-s workspace-write` |
-| approval policy | `-a never` (execution failures return to the model) |
+| access `read-only` | `-c sandbox_mode="read-only"` (plus `-s read-only`, see below) |
+| access `workspace` | `-c sandbox_mode="workspace-write"` **and** `-c approvals_reviewer="auto_review"` |
+| approval policy | no `-a` flag exists on `exec`; the reviewer config above is the only lever |
 | working directory | `-C/--cd <dir>` |
 | resume | `codex exec resume <SESSION_ID>` |
 | clean/reproducible run | `--ignore-user-config --ignore-rules --ephemeral` |
@@ -213,6 +213,18 @@ runtime permission reply, while opencode has both. A shared `--approval ask` or 
   invocation is wrapped `cmd /d /s /c "<inner line>"`; the inner line needs Win32 quoting **plus**
   force-quoting of cmd metacharacters (`& | < > ( ) ^ %`), assigned as one pre-quoted string so the
   runtime does not re-escape it. Do not fork a second quoting implementation for the detach path.
+- **`-s/--sandbox` is not load-bearing under `--ignore-user-config`.** Verified live on codex-cli
+  0.146.0, both directions: `-s read-only` still wrote files (the machine's `config.toml` said
+  `workspace-write`), and `-s workspace-write` was refused with *"writing is blocked by read-only
+  sandbox"*. `-c sandbox_mode="<mode>"` does take effect and is therefore authoritative; `-s` is kept
+  only because it agrees. The dangerous half is the first one: passing `-s read-only` and nothing else
+  does **not** sandbox the child.
+- **Write access additionally needs `-c approvals_reviewer="auto_review"`.** With `--ignore-user-config`,
+  `workspace-write` alone had every patch auto-rejected — *"rejected by user approval settings"* — and
+  `codex exec` has no approval channel to answer with, so the job completed cleanly having written
+  nothing. `approval_policy`, `projects.<dir>.trust_level` and `sandbox_workspace_write.writable_roots`
+  were each probed live and none of them lifted the rejection; only the reviewer setting did.
+  Never pass it for `read-only`.
 - **Sandbox spawn capability has changed across versions.** Under 0.142.5 the sandbox could not
   spawn child processes on this host (signature: `CreateProcessWithLogonW failed: 1385`), which made
   a wrapper-embedded diff mandatory. Re-verified working on 0.144.1. `--embed-diff` remains the

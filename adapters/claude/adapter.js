@@ -196,9 +196,15 @@ class ClaudeAdapter {
     }
 
     const claudePath = resolveClaudePath();
-    const workDir = process.cwd();
 
     const request = this._lastRequest || {};
+    // See the codex adapter: canonicalDir is the engine's decision about where
+    // the job runs, and in implement mode it is the isolated worktree, not the
+    // invoking shell's directory.
+    const workDir = request.canonicalDir || process.cwd();
+    // Recorded so the directory the child actually ran in is observable: it
+    // reaches the child only as a spawn cwd, which ChildProcess does not expose.
+    this._workDir = workDir;
     this._sessionId = request.sessionId || crypto.randomUUID();
 
     const access = request.access || 'read-only';
