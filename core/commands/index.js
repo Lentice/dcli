@@ -16,7 +16,7 @@ const KNOWN_FLAGS = new Set([
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'resume', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
 
-const KNOWN_BACKENDS = new Set(['opencode', 'codex', 'claude', 'fake']);
+const { KNOWN_BACKENDS, getBackendLimits } = require('../../adapters/registry');
 
 // Threshold below which a non-zero-exit result is treated as "no usable
 // result produced" (the backend emitted only a few dozen bytes of
@@ -442,16 +442,16 @@ function isVersionInRange(version, range) {
   return true;
 }
 
-function tryDisposeAdapter(adapter, attempt) {
+async function tryDisposeAdapter(adapter, attempt) {
   if (!adapter || typeof adapter.Dispose !== 'function') return { disposed: false, reason: 'no_adapter' };
   const ms = resolveDeadline('ADAPTER_DISPOSE_MS');
-  const deadline = Date.now() + ms;
   try {
-    adapter.Dispose(attempt);
-    if (Date.now() > deadline) {
-      return { disposed: true, exceeded: true };
-    }
-    return { disposed: true };
+    const disposeWork = adapter.Dispose(attempt);
+    const completed = await Promise.race([
+      (async () => { await disposeWork; return true; })(),
+      new Promise(resolve => setTimeout(() => resolve(false), ms)),
+    ]);
+    return { disposed: true, exceeded: !completed };
   } catch (err) {
     return { disposed: false, reason: err.message || 'dispose_error' };
   }

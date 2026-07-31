@@ -252,7 +252,7 @@ async function main() {
   } catch (err) {
     clearTimeout(hardTimeoutTimer);
     clearTimeout(cancelWatcherTimer);
-    tryDisposeAdapter(adapter, attempt);
+    await tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
     if (hardTimedOut) {
       store.journalTransition(jobId, repoKey, {
@@ -318,7 +318,7 @@ async function main() {
               failure: { class: 'artifact_persistence', message: 'Unable to persist result artifact' },
             },
           });
-          tryDisposeAdapter(adapter, attempt);
+          await tryDisposeAdapter(adapter, attempt);
           admission.releaseSlot(slotId);
           process.exit(11);
         }
@@ -348,7 +348,7 @@ async function main() {
           },
         });
 
-        tryDisposeAdapter(adapter, attempt);
+        await tryDisposeAdapter(adapter, attempt);
         admission.releaseSlot(slotId);
         process.exit(0);
       }
@@ -361,7 +361,7 @@ async function main() {
     // Collect partial result before dispose so adapter state is intact
     let partialResult = null;
     try { partialResult = adapter.CollectResult(attempt); } catch {}
-    tryDisposeAdapter(adapter, attempt);
+    await tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
     if (hardTimedOut) {
       // Flush partial output before journaling timed_out
@@ -410,7 +410,7 @@ async function main() {
       to: 'cancelled',
       detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal' },
     });
-    tryDisposeAdapter(adapter, attempt);
+    await tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
     process.exit(0);
   }
@@ -441,7 +441,7 @@ async function main() {
       result_bytes: resultBytes,
     },
   });
-  tryDisposeAdapter(adapter, attempt);
+  await tryDisposeAdapter(adapter, attempt);
   admission.releaseSlot(slotId);
   process.exit(terminalState === 'interrupted' ? 0 : 1);
 }

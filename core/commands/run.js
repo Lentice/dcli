@@ -182,12 +182,12 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           ...finalizeWorktreeSnapshot(),
         },
       });
-      tryDisposeAdapter(adapter, attempt);
+      await tryDisposeAdapter(adapter, attempt);
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
       return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
-    tryDisposeAdapter(adapter, attempt);
+    await tryDisposeAdapter(adapter, attempt);
     if (worktreePath) removeWorktree(repoRoot, worktreePath);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
@@ -223,7 +223,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
               ...finalizeWorktreeSnapshot(),
             },
           });
-          tryDisposeAdapter(adapter, attempt);
+          await tryDisposeAdapter(adapter, attempt);
           if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
           const finalStatus = store.readStatus({ repoKey, jobId });
           return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 11 };
@@ -255,7 +255,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           },
         });
 
-        tryDisposeAdapter(adapter, attempt);
+        await tryDisposeAdapter(adapter, attempt);
         if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
         const finalStatus = store.readStatus({ repoKey, jobId });
         return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus) };
@@ -277,12 +277,12 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
           ...finalizeWorktreeSnapshot(),
         },
       });
-      tryDisposeAdapter(adapter, attempt);
+      await tryDisposeAdapter(adapter, attempt);
       if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
       const finalStatus = store.readStatus({ repoKey, jobId });
       return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
     }
-    tryDisposeAdapter(adapter, attempt);
+    await tryDisposeAdapter(adapter, attempt);
     if (worktreePath) removeWorktree(repoRoot, worktreePath);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     throw err;
@@ -304,7 +304,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
         ...finalizeWorktreeSnapshot(),
       },
     });
-    tryDisposeAdapter(adapter, attempt);
+    await tryDisposeAdapter(adapter, attempt);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
     const finalStatus = store.readStatus({ repoKey, jobId });
     return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
@@ -338,7 +338,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     },
   });
 
-  tryDisposeAdapter(adapter, attempt);
+  await tryDisposeAdapter(adapter, attempt);
   if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
   const finalStatus = store.readStatus({ repoKey, jobId });
   return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus), exitCode: terminalState === 'interrupted' ? 0 : 1 };

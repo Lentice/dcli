@@ -31,11 +31,11 @@ async function main() {
     facts: [{ type: 'started', backend_pid: 1 }, { type: 'process_exited', code: 0 }],
     exitCode: 0,
   });
-  const result = tryDisposeAdapter(adapter, {});
+  const result = await tryDisposeAdapter(adapter, {});
   assert.strictEqual(result.disposed, true, 'tryDisposeAdapter must succeed for fake adapter');
   assert.strictEqual(adapter._disposed, true, 'fake adapter must be marked disposed');
   // Second call is idempotent
-  const result2 = tryDisposeAdapter(adapter, {});
+  const result2 = await tryDisposeAdapter(adapter, {});
   assert.strictEqual(result2.disposed, true, 'second tryDisposeAdapter call must still succeed');
   assert.strictEqual(adapter._disposed, true, 'adapter must still be disposed after second call');
   console.log('PASS: dispose test 1 — tryDisposeAdapter works');
@@ -205,6 +205,53 @@ await withTempDir(async (dir) => {
   assert.strictEqual(adapter._disposed, true, 'adapter must be disposed');
   console.log('PASS: dispose test 6 — Dispose called exactly once');
 });
+
+// ===========================================================================
+// 7. tryDisposeAdapter returns within timeout when Dispose never resolves
+// ===========================================================================
+{
+  process.env.DCLI_TEST_DISPOSE_TIMEOUT_MS = '100';
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+  });
+  let disposeStarted = false;
+  adapter.Dispose = () => {
+    disposeStarted = true;
+    return new Promise(() => {});
+  };
+
+  const start = Date.now();
+  const result = await tryDisposeAdapter(adapter, {});
+  const elapsed = Date.now() - start;  delete process.env.DCLI_TEST_DISPOSE_TIMEOUT_MS;
+
+  assert.strictEqual(result.disposed, true, 'must report disposed');
+  assert.strictEqual(result.exceeded, true, 'hanging dispose must report exceeded');
+  assert.ok(disposeStarted, 'dispose must have started');
+  assert.ok(elapsed < 1000, `Must return within 1s, took ${elapsed}ms`);
+
+  console.log('PASS: dispose test 7 — tryDisposeAdapter times out hanging Dispose');
+}
+
+// ===========================================================================
+// 8. tryDisposeAdapter returns promptly when Dispose is fast
+// ===========================================================================
+{
+  process.env.DCLI_TEST_DISPOSE_TIMEOUT_MS = '5000';
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+  });
+  const start = Date.now();
+  const result = await tryDisposeAdapter(adapter, {});
+  const elapsed = Date.now() - start;  delete process.env.DCLI_TEST_DISPOSE_TIMEOUT_MS;
+
+  assert.strictEqual(result.disposed, true);
+  assert.ok(!result.exceeded, 'fast dispose must not report exceeded');
+  assert.ok(elapsed < 1000, `Fast dispose must complete quickly, took ${elapsed}ms`);
+
+  console.log('PASS: dispose test 8 — tryDisposeAdapter returns promptly for fast Dispose');
+}
 
 }
 
