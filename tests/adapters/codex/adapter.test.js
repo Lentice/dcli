@@ -411,6 +411,38 @@ async function main() {
   console.log('PASS: Resume stores kind for continue_backend_session');
 }
 
+// ===========================================================================
+// 22. Observe yields facts in temporal order (process_exited last)
+// ===========================================================================
+{
+  const adapter = new CodexAdapter({ _testMode: true, _mockFacts: [
+    { type: 'started', backend_pid: 1 },
+    { type: 'assistant_text', message_id: 'm1', text: 'chunk 1' },
+    { type: 'assistant_text', message_id: 'm2', text: 'chunk 2' },
+    { type: 'usage_reported', tokens: { input: 10, output: 20, total: 30 } },
+    { type: 'process_exited', code: 0 },
+  ], _mockExitCode: 0 });
+
+  const facts = [];
+  for await (const f of adapter.Observe({})) {
+    facts.push(f);
+  }
+
+  assert.strictEqual(facts.length, 5, `Should yield exactly 5 facts, got ${facts.length}`);
+  assert.strictEqual(facts[0].type, 'started');
+  assert.strictEqual(facts[1].type, 'assistant_text');
+  assert.strictEqual(facts[2].type, 'assistant_text');
+  assert.strictEqual(facts[3].type, 'usage_reported');
+  assert.strictEqual(facts[4].type, 'process_exited',
+    `process_exited must be last, got ${facts[4].type}`);
+
+  const textFacts = facts.filter(f => f.type === 'assistant_text');
+  assert.ok(textFacts.length >= 2,
+    `Must yield >= 2 assistant_text facts, got ${textFacts.length}`);
+
+  console.log('PASS: Observe yields facts in temporal order (process_exited last)');
+}
+
 }
 
 main().catch(err => {

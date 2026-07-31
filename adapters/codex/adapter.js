@@ -205,6 +205,9 @@ class CodexAdapter {
     this._cancelRungReached = null;
     this._stdoutContent = '';
     this._stderrContent = '';
+    this._liveFacts = [];
+    this._liveFactsResolve = null;
+    this._lineBuffer = '';
     this._resultFilePath = null;
     this._tmpDirPath = null;
     this._lastRequest = null;
@@ -367,6 +370,21 @@ class CodexAdapter {
 
     child.stdout.on('data', (chunk) => {
       this._stdoutContent += chunk;
+      this._lineBuffer += chunk;
+      const lines = this._lineBuffer.split('\n');
+      this._lineBuffer = lines.pop();
+      for (const line of lines) {
+        if (!line) continue;
+        const parsed = this._parseJsonlEvent(line);
+        if (parsed) {
+          for (const f of parsed) this._liveFacts.push(f);
+        }
+      }
+      if (this._liveFactsResolve) {
+        const r = this._liveFactsResolve;
+        this._liveFactsResolve = null;
+        r();
+      }
     });
 
     child.stderr.on('data', (chunk) => {
@@ -416,35 +434,36 @@ class CodexAdapter {
       return;
     }
 
-    // The real child runs asynchronously — wait for it to actually exit
-    // (or error out) before parsing its output. Without this, the
-    // generator would return immediately after Start()/SendPrompt(),
-    // long before the process has produced any output, since exit is
-    // signalled by the 'exit'/'error' event handlers registered in
-    // Start(), not by anything synchronous in this function.
-    await this._waitForExit();
+    yield* this._drainLiveQueue();
 
-    // Wait for stdout/stderr streams to fully close (EOF), bounded.
-    // Data can arrive after the 'exit' event if a descendant holds a
-    // pipe open or OS buffering delays delivery.
+    await this._waitForExit();
     await this._waitForStreamDrain();
 
-    // Yield accumulated facts including process_exited/backend_error
+    if (this._lineBuffer) {
+      const parsed = this._parseJsonlEvent(this._lineBuffer);
+      if (parsed) {
+        for (const f of parsed) yield f;
+      }
+      this._lineBuffer = '';
+    }
+
     for (const fact of this._facts) {
       yield { ...fact };
     }
+  }
 
-    // Parse JSONL events from stdout
-    if (this._stdoutContent) {
-      const lines = this._stdoutContent.split('\n').filter(Boolean);
-      for (const line of lines) {
-        const yielded = this._parseJsonlEvent(line);
-        if (yielded) {
-          for (const fact of yielded) {
-            yield fact;
-          }
-        }
+  async *_drainLiveQueue() {
+    while (!this._observedExited) {
+      if (this._liveFacts.length > 0) {
+        yield this._liveFacts.shift();
+      } else {
+        await new Promise((resolve) => {
+          this._liveFactsResolve = resolve;
+        });
       }
+    }
+    while (this._liveFacts.length > 0) {
+      yield this._liveFacts.shift();
     }
   }
 

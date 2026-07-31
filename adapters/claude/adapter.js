@@ -101,6 +101,9 @@ class ClaudeAdapter {
     this._cancelRungReached = null;
     this._stdoutContent = '';
     this._stderrContent = '';
+    this._liveFacts = [];
+    this._liveFactsResolve = null;
+    this._lineBuffer = '';
     this._observedExited = false;
     this._drainTimedOut = false;
     this._lastRequest = null;
@@ -249,6 +252,21 @@ class ClaudeAdapter {
 
     child.stdout.on('data', (chunk) => {
       this._stdoutContent += chunk;
+      this._lineBuffer += chunk;
+      const lines = this._lineBuffer.split('\n');
+      this._lineBuffer = lines.pop();
+      for (const line of lines) {
+        if (!line) continue;
+        const parsed = this._parseStreamEvent(line);
+        if (parsed) {
+          for (const f of parsed) this._liveFacts.push(f);
+        }
+      }
+      if (this._liveFactsResolve) {
+        const r = this._liveFactsResolve;
+        this._liveFactsResolve = null;
+        r();
+      }
     });
 
     child.stderr.on('data', (chunk) => {
@@ -296,23 +314,36 @@ class ClaudeAdapter {
       return;
     }
 
+    yield* this._drainLiveQueue();
+
     await this._waitForExit();
     await this._waitForStreamDrain();
+
+    if (this._lineBuffer) {
+      const parsed = this._parseStreamEvent(this._lineBuffer);
+      if (parsed) {
+        for (const f of parsed) yield f;
+      }
+      this._lineBuffer = '';
+    }
 
     for (const fact of this._facts) {
       yield { ...fact };
     }
+  }
 
-    if (this._stdoutContent) {
-      const lines = this._stdoutContent.split('\n').filter(Boolean);
-      for (const line of lines) {
-        const yielded = this._parseStreamEvent(line);
-        if (yielded) {
-          for (const fact of yielded) {
-            yield fact;
-          }
-        }
+  async *_drainLiveQueue() {
+    while (!this._observedExited) {
+      if (this._liveFacts.length > 0) {
+        yield this._liveFacts.shift();
+      } else {
+        await new Promise((resolve) => {
+          this._liveFactsResolve = resolve;
+        });
       }
+    }
+    while (this._liveFacts.length > 0) {
+      yield this._liveFacts.shift();
     }
   }
 
