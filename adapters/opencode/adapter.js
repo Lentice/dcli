@@ -37,75 +37,59 @@ const MESSAGES_TIMEOUT_MS = 30000;
 const SESSION_STATUS_TIMEOUT_MS = 10000;
 const MAX_SSE_RECONNECTS = 5;
 
-function httpRequest(method, url, body, timeoutMs, password) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const effectiveTimeout = timeoutMs || 10000;
-    const headers = body ? { 'Content-Type': 'application/json' } : {};
-    if (password) {
-      headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + password).toString('base64');
-    }
-    const options = {
-      hostname: u.hostname,
-      port: u.port,
-      path: u.pathname + u.search,
+/**
+ * One bounded JSON request to the per-job opencode server.
+ *
+ * The single AbortSignal.timeout bounds connect, response and body read
+ * together — a stalled body is inside the budget, which is what the old
+ * hand-rolled socket-timeout-plus-wall-clock-timer pair was for.
+ *
+ * Resolves the parsed JSON body (or the raw text when it is not JSON).
+ * A non-2xx rejects with statusCode/body attached, and classHint set when
+ * the payload identifies a credits/quota failure.
+ */
+async function httpRequest(method, url, body, timeoutMs, password) {
+  const effectiveTimeout = timeoutMs || 10000;
+  const headers = body ? { 'Content-Type': 'application/json' } : {};
+  if (password) {
+    headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + password).toString('base64');
+  }
+
+  let res;
+  let raw;
+  try {
+    res = await fetch(url, {
       method,
       headers,
-      timeout: effectiveTimeout,
-    };
-
-    let settled = false;
-    function settle(err, result) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(wallClock);
-      if (err) reject(err);
-      else resolve(result);
-    }
-
-    const req = http.request(options, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        const raw = Buffer.concat(chunks).toString('utf8');
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try {
-            settle(null, JSON.parse(raw));
-          } catch {
-            settle(null, raw);
-          }
-        } else {
-          const err = new Error(`HTTP ${res.statusCode} from ${method} ${url}: ${raw.slice(0, 500)}`);
-          err.statusCode = res.statusCode;
-          err.body = raw;
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed && parsed.error && parsed.error.type === 'CreditsError') {
-              err.classHint = 'quota_or_rate_limit';
-            }
-          } catch {}
-          settle(err);
-        }
-      });
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(effectiveTimeout),
     });
-
-    req.on('error', (err) => settle(err));
-    req.on('timeout', () => {
-      req.destroy();
-      settle(new Error(`Request timed out after ${effectiveTimeout}ms: ${method} ${url}`));
-    });
-
-    const wallClock = setTimeout(() => {
-      req.destroy();
-      settle(new Error(`Request wall-clock timeout after ${effectiveTimeout + 5000}ms: ${method} ${url}`));
-    }, effectiveTimeout + 5000);
-    if (wallClock.unref) wallClock.unref();
-
-    if (body) {
-      req.write(JSON.stringify(body));
+    raw = await res.text();
+  } catch (err) {
+    if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      throw new Error(`Request timed out after ${effectiveTimeout}ms: ${method} ${url}`);
     }
-    req.end();
-  });
+    throw err;
+  }
+
+  if (res.ok) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+
+  const err = new Error(`HTTP ${res.status} from ${method} ${url}: ${raw.slice(0, 500)}`);
+  err.statusCode = res.status;
+  err.body = raw;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.error && parsed.error.type === 'CreditsError') {
+      err.classHint = 'quota_or_rate_limit';
+    }
+  } catch {}
+  throw err;
 }
 
 function httpGet(url, opts = {}) {
@@ -1605,4 +1589,4 @@ class OpencodeAdapter {
   }
 }
 
-module.exports = { OpencodeAdapter };
+module.exports = { OpencodeAdapter, httpRequest };
