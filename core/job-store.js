@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./fs-text');
 const { maybeInject } = require('./inject-points');
-const { reduce } = require('./reducer');
+const { reduce, TERMINAL } = require('./reducer');
 const { isProcessAlive } = require('./process-identity');
 
 const ATOMIC_WRITE_MAX_RETRIES = 10;
@@ -194,7 +194,6 @@ class JobStore {
   }
 
   _applyReducerBackstop(status, entries) {
-    const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
     if (TERMINAL.has(status.state)) return status;
 
     // Hard timeout deadline check for non-terminal jobs
@@ -257,7 +256,6 @@ class JobStore {
 
   reconcileStatus({ repoKey, jobId }) {
     const status = this.readStatus({ repoKey, jobId });
-    const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
     if (TERMINAL.has(status.state)) return status;
 
     const evidence = this.gatherEvidence({ repoKey, jobId });

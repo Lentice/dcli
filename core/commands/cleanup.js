@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 
-const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
+const { TERMINAL } = require('../reducer');
 
 /**
  * Parse a duration string like "30d" or "12h" into milliseconds.

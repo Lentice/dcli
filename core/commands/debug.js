@@ -1,22 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const { isProcessAlive, parseWorkerIdentity } = require('../process-identity');
+const { loadJobOrThrow } = require('./index');
 
 const STDER_TAIL_BYTES = 4096;
 
 async function executeDebug({ store, repoKey, jobId }) {
-  let status;
-  try {
-    status = store.regenerateStatus({ repoKey, jobId });
-  } catch (err) {
-    const e = new Error(`Job not found: ${repoKey}/${jobId}`);
-    e.exitCode = 3;
-    throw e;
-  }
-
-  const jobDir = store.getJobDir(repoKey, jobId);
-  const attempt = status.attempt || 1;
-  const attemptDir = path.join(jobDir, 'attempts', String(attempt));
+  const { status, attemptNum: attempt, jobDir, attemptDir } = loadJobOrThrow({ store, repoKey, jobId });
 
   const report = {
     job_id: status.job_id || jobId,

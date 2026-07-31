@@ -2,13 +2,12 @@ const crypto = require('crypto');
 const path = require('path');
 const { DEFAULT_BACKEND } = require('../../adapters/registry');
 const { generateJobId } = require('../job-id');
-const { reduce } = require('../reducer');
+const { reduce, TERMINAL } = require('../reducer');
 const { buildEnvelope, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure } = require('./index');
 const { validateTimeoutMs, resolveDeadline, resolveHardTimeoutMs } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 
-const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
 async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, mode, stateRoot }) {
   const jobId = generateJobId();

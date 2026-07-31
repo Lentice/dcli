@@ -212,4 +212,4 @@ function validateFindingsData(data) {
   return null;
 }
 
-module.exports = { parseFindings, APPENDIX_MARKER, MAX_APPENDIX_BYTES, MAX_ITEMS, KNOWN_SEVERITIES };
+module.exports = { parseFindings, APPENDIX_MARKER, MAX_ITEMS, KNOWN_SEVERITIES };

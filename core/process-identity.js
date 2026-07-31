@@ -135,6 +135,5 @@ module.exports = {
   identitiesMatch,
   isProcessAlive,
   isSameProcessAlive,
-  getProcessStartTime,
   PROCESS_START_TIME,
 };

@@ -214,4 +214,4 @@ function pick(state, fields) {
   return result;
 }
 
-module.exports = { reduce };
+module.exports = { reduce, TERMINAL };

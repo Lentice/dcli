@@ -1,7 +1,7 @@
 const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 const { getDiff } = require('../worktree');
 
-const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
+const { TERMINAL } = require('../reducer');
 
 function executeDiff({ store, repoKey, jobId, stat, nameOnly }) {
   let status;

@@ -25,7 +25,6 @@ const {
   stageAll,
   snapshotCommit,
   finalizeSnapshot,
-  getChangedFiles,
   getDiff,
   hasResidualGitState,
   clearResidualGitState,
@@ -209,7 +208,7 @@ async function main() {
       const { resultCommit } = finalizeSnapshot(wtPath);
       const diffText = getDiff(repoRoot, baseCommit, resultCommit);
       assert.ok(diffText.includes('feature.txt'));
-      const files = getChangedFiles(repoRoot, baseCommit, resultCommit);
+      const files = getDiff(repoRoot, baseCommit, resultCommit, 'name-only').trim().split(/\r?\n/).filter(Boolean);
       assert.ok(files.includes('feature.txt'));
       assert.strictEqual(files.length, 1);
       removeWorktree(repoRoot, wtPath);
@@ -341,7 +340,7 @@ async function main() {
       const diffText = getDiff(repoRoot, baseCommit, resultCommit);
       assert.ok(diffText.includes('e2e-feature.txt'));
       assert.ok(diffText.includes('another.js'));
-      const files = getChangedFiles(repoRoot, baseCommit, resultCommit);
+      const files = getDiff(repoRoot, baseCommit, resultCommit, 'name-only').trim().split(/\r?\n/).filter(Boolean);
       assert.strictEqual(files.length, 2);
       cherryPickCommits(repoRoot, baseCommit, resultCommit);
       const landed = createApplyCommit(repoRoot, 'feat: e2e');

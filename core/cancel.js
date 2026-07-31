@@ -3,11 +3,10 @@ const path = require('path');
 const { writeTextFileAtomic } = require('./fs-text');
 const { isProcessAlive } = require('./process-identity');
 const { maybeInject } = require('./inject-points');
+const { TERMINAL } = require('./reducer');
 
 const DEFAULT_RUNG_WAIT_MS = 2000;
 const DEFAULT_HARD_KILL_WAIT_MS = 3000;
-
-const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
 
 /**
  * Cancel a job by walking adapter-declared escalation rungs.
@@ -134,4 +133,4 @@ function boundedSleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-module.exports = { cancelJob, DEFAULT_RUNG_WAIT_MS, DEFAULT_HARD_KILL_WAIT_MS };
+module.exports = { cancelJob };

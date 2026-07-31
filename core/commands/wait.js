@@ -1,6 +1,6 @@
-const { buildEnvelope } = require('./index');
+const { buildEnvelope, loadJobOrThrow } = require('./index');
 
-const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
+const { TERMINAL } = require('../reducer');
 
 function boundedSleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -10,14 +10,7 @@ async function executeWait({ store, repoKey, jobId, timeoutSec, pollMs }) {
   const deadline = Date.now() + (timeoutSec || 30) * 1000;
   const interval = pollMs || 200;
 
-  let status;
-  try {
-    status = store.regenerateStatus({ repoKey, jobId });
-  } catch (err) {
-    const e = new Error(`Job not found: ${repoKey}/${jobId}`);
-    e.exitCode = 3;
-    throw e;
-  }
+  let { status } = loadJobOrThrow({ store, repoKey, jobId });
 
   while (Date.now() < deadline) {
     if (TERMINAL.has(status.state)) {
@@ -25,13 +18,7 @@ async function executeWait({ store, repoKey, jobId, timeoutSec, pollMs }) {
     }
 
     await boundedSleep(interval);
-    try {
-      status = store.regenerateStatus({ repoKey, jobId });
-    } catch {
-      const e = new Error(`Job not found: ${repoKey}/${jobId}`);
-      e.exitCode = 3;
-      throw e;
-    }
+    ({ status } = loadJobOrThrow({ store, repoKey, jobId }));
   }
 
   status = store.regenerateStatus({ repoKey, jobId });

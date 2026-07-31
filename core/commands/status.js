@@ -1,14 +1,7 @@
-const { buildEnvelope } = require('./index');
+const { buildEnvelope, loadJobOrThrow } = require('./index');
 
 async function executeStatus({ store, repoKey, jobId }) {
-  let status;
-  try {
-    status = store.regenerateStatus({ repoKey, jobId });
-  } catch (err) {
-    const e = new Error(`Job not found: ${repoKey}/${jobId}`);
-    e.exitCode = 3;
-    throw e;
-  }
+  const { status } = loadJobOrThrow({ store, repoKey, jobId });
 
   return { envelope: buildEnvelope(status), status };
 }

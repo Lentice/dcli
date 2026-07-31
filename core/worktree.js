@@ -181,13 +181,6 @@ function finalizeSnapshot(worktreePath, deadlineMs) {
   return { resultCommit: commitHash };
 }
 
-function getChangedFiles(repoRoot, baseCommit, resultCommit, timeoutMs) {
-  const result = _gitOk(['diff', '--name-only', `${baseCommit}..${resultCommit}`], { cwd: repoRoot, timeoutMs });
-  const stdout = result.stdout.trim();
-  if (!stdout) return [];
-  return stdout.split('\n').filter(Boolean);
-}
-
 function getDiff(repoRoot, baseCommit, resultCommit, format, timeoutMs) {
   const args = ['diff'];
   if (format === 'stat') {
@@ -323,11 +316,7 @@ module.exports = {
   stageAll,
   snapshotCommit,
   finalizeSnapshot,
-  getChangedFiles,
   getDiff,
-  isCherryPickInProgress,
-  isRebaseInProgress,
-  isAmInProgress,
   hasResidualGitState,
   clearResidualGitState,
   getStatusPorcelain,

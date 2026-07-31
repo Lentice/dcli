@@ -22,9 +22,8 @@ const crypto = require('crypto');
 const { resolveDeadline } = require('../deadlines');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 const { tryDisposeAdapter, classifyTerminalFailure } = require('./index');
-const { reduce } = require('../reducer');
+const { reduce, TERMINAL } = require('../reducer');
 
-const TERMINAL = new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']);
 
 async function main() {
   const stateRoot = process.env.DCLI_STATE_ROOT;

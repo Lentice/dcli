@@ -1,5 +1,39 @@
+const path = require('path');
 const { generateJobId } = require('../job-id');
 const { resolveDeadline } = require('../deadlines');
+
+/**
+ * Load a job's status, or throw the canonical exit-3 "not found" error.
+ * Every read-side command routes through here so the message and the exit
+ * code cannot drift between them.
+ *
+ * @param {{ store:Object, repoKey:string, jobId:string, regenerate?:boolean }} args
+ * @returns {{ status:Object, attemptNum:number, jobDir:string, attemptDir:string }}
+ */
+function loadJobOrThrow({ store, repoKey, jobId, regenerate = true }) {
+  let status;
+  try {
+    status = regenerate
+      ? store.regenerateStatus({ repoKey, jobId })
+      : store.readStatus({ repoKey, jobId });
+  } catch {
+    status = null;
+  }
+  if (!status) {
+    const err = new Error(`Job not found: ${repoKey}/${jobId}`);
+    err.exitCode = 3;
+    throw err;
+  }
+
+  const jobDir = store.getJobDir(repoKey, jobId);
+  const attemptNum = status.attempt || 1;
+  return {
+    status,
+    attemptNum,
+    jobDir,
+    attemptDir: path.join(jobDir, 'attempts', String(attemptNum)),
+  };
+}
 
 const KNOWN_FLAGS = new Set([
   '--backend', '--repo', '--prompt-file', '--hard-timeout-sec', '--group', '--label',
@@ -421,4 +455,4 @@ async function tryDisposeAdapter(adapter, attempt) {
   }
 }
 
-module.exports = { buildEnvelope, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure, maybeAccessHint, NO_RESULT_BYTE_THRESHOLD };
+module.exports = { buildEnvelope, loadJobOrThrow, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure, maybeAccessHint, NO_RESULT_BYTE_THRESHOLD };

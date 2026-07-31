@@ -1,5 +1,5 @@
 const { cancelJob } = require('../cancel');
-const { buildEnvelope } = require('./index');
+const { buildEnvelope, loadJobOrThrow } = require('./index');
 const { isProcessAlive, parseWorkerIdentity } = require('../process-identity');
 
 async function executeCancel({ store, adapter, repoKey, jobId, json }) {
@@ -9,17 +9,7 @@ async function executeCancel({ store, adapter, repoKey, jobId, json }) {
     throw err;
   }
 
-  let status;
-  try {
-    status = store.readStatus({ repoKey, jobId });
-  } catch {
-    const err = new Error(`Job not found: ${repoKey}/${jobId}`);
-    err.exitCode = 3;
-    throw err;
-  }
-
-  const jobDir = store.getJobDir(repoKey, jobId);
-  const attemptNum = status.attempt || 1;
+  const { status, attemptNum, jobDir } = loadJobOrThrow({ store, repoKey, jobId, regenerate: false });
 
   let pid = null;
   if (status.worker_identity) {
