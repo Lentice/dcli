@@ -19,23 +19,43 @@ function loadJobOrThrow({ store, repoKey, jobId, regenerate = true }) {
   // "created" — so every caller that trusted the try/catch reported a
   // non-existent job as a freshly created one, exit 0. An agent polling that
   // waits forever for a job that was never there.
-  if (!fs.existsSync(jobDir)) {
-    const err = new Error(`Job not found: ${repoKey}/${jobId}`);
-    err.exitCode = 3;
+  // Absence must be proven, not inferred from a failed stat. fs.existsSync()
+  // returns false for *any* stat error, including the EPERM/EBUSY Windows hands
+  // out on a tree that is being written or scanned — so it cannot distinguish
+  // "no such job" from "could not look". Exit 3 tells an agent to stop looking,
+  // which is the wrong instruction for a job that is sitting right there.
+  try {
+    fs.statSync(jobDir);
+  } catch (cause) {
+    if (cause && (cause.code === 'ENOENT' || cause.code === 'ENOTDIR')) {
+      const err = new Error(`Job not found: ${repoKey}/${jobId}`);
+      err.exitCode = 3;
+      throw err;
+    }
+    const err = new Error(`Job directory could not be read: ${repoKey}/${jobId}: ${cause && cause.message}`);
+    err.exitCode = 17;
+    err.cause = cause;
     throw err;
   }
 
+  // The directory exists, so from here the job is NOT absent. An unreadable or
+  // unprojectable record is a corrupt-state failure (17) and must say so: the
+  // previous catch-all turned every read error into "Job not found", which
+  // tells an agent to stop looking for a job that is sitting right there.
   let status;
   try {
     status = regenerate
       ? store.regenerateStatus({ repoKey, jobId })
       : store.readStatus({ repoKey, jobId });
-  } catch {
-    status = null;
+  } catch (cause) {
+    const err = new Error(`Job record could not be read: ${repoKey}/${jobId}: ${cause && cause.message}`);
+    err.exitCode = 17;
+    err.cause = cause;
+    throw err;
   }
   if (!status) {
-    const err = new Error(`Job not found: ${repoKey}/${jobId}`);
-    err.exitCode = 3;
+    const err = new Error(`Job record could not be read: ${repoKey}/${jobId}`);
+    err.exitCode = 17;
     throw err;
   }
 

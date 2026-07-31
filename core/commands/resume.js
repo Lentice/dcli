@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { generateJobId } = require('../job-id');
 const { runAttempt, prepareBackend } = require('./attempt');
+const { loadJobOrThrow } = require('./index');
 const { resolveHardTimeoutMs } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree } = require('../worktree');
 const { persistInitFiles } = require('../result-artifact');
@@ -21,17 +22,16 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
     throw err;
   }
 
+  // Existence is the job directory's, per the exit-3 contract, and a record
+  // that exists but cannot be read is exit 17 — not a claim that the parent
+  // does not exist. The shared read-side loader is the single place that rule
+  // lives; resume, submit --resume, diff and apply each had their own
+  // catch-all before this.
   let parentStatus;
   try {
-    parentStatus = store.readStatus({ repoKey, jobId: parentJobId });
-  } catch {
-    const err = new Error(`Parent job not found: ${parentJobId}`);
-    err.exitCode = 3;
-    throw err;
-  }
-  if (!parentStatus) {
-    const err = new Error(`Parent job not found: ${parentJobId}`);
-    err.exitCode = 3;
+    parentStatus = loadJobOrThrow({ store, repoKey, jobId: parentJobId, regenerate: false }).status;
+  } catch (err) {
+    if (err && err.exitCode === 3) err.message = `Parent job not found: ${parentJobId}`;
     throw err;
   }
 

@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
+const { loadJobOrThrow } = require('./index');
 const {
   getHeadCommit,
   getStatusPorcelain,
@@ -53,13 +54,9 @@ function checkNoAppliedDescendant(store, repoKey, jobId) {
 }
 
 function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntracked }) {
-  let status;
-  try {
-    status = store.readStatus({ repoKey, jobId });
-  } catch (readErr) {
-    const e = new Error(`Job not found: ${jobId}`);
-    e.exitCode = 3; throw e;
-  }
+  // Shared loader: absence is the job directory's, and an unreadable record is
+  // exit 17, never a claim that the job does not exist.
+  const { status } = loadJobOrThrow({ store, repoKey, jobId, regenerate: false });
 
   const wi = status.worktree;
   if (!wi) {

@@ -1,7 +1,7 @@
 const path = require('path');
 const { spawn } = require('child_process');
 const { generateJobId } = require('../job-id');
-const { buildEnvelope } = require('./index');
+const { buildEnvelope, loadJobOrThrow } = require('./index');
 const { prepareBackend } = require('./attempt');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { persistInitFiles } = require('../result-artifact');
@@ -13,10 +13,9 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   let parentRootJobId = null;
   if (resumeJobId) {
     try {
-      parentStatus = store.readStatus({ repoKey, jobId: resumeJobId });
-    } catch {
-      const err = new Error(`Parent job not found for --resume: ${resumeJobId}`);
-      err.exitCode = 3;
+      parentStatus = loadJobOrThrow({ store, repoKey, jobId: resumeJobId, regenerate: false }).status;
+    } catch (err) {
+      if (err && err.exitCode === 3) err.message = `Parent job not found for --resume: ${resumeJobId}`;
       throw err;
     }
     parentRootJobId = parentStatus.root_job_id || resumeJobId;

@@ -2,16 +2,12 @@ const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 const { getDiff } = require('../worktree');
 
 const { TERMINAL } = require('../reducer');
+const { loadJobOrThrow } = require('./index');
 
 function executeDiff({ store, repoKey, jobId, stat, nameOnly }) {
-  let status;
-  try {
-    status = store.readStatus({ repoKey, jobId });
-  } catch (readErr) {
-    const err = new Error(`Job not found: ${jobId}`);
-    err.exitCode = 3;
-    throw err;
-  }
+  // Shared loader: absence is the job directory's, and an unreadable record is
+  // exit 17, never a claim that the job does not exist.
+  const { status } = loadJobOrThrow({ store, repoKey, jobId, regenerate: false });
 
   const worktreeInfo = status.worktree;
   if (!worktreeInfo) {
