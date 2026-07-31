@@ -1,12 +1,10 @@
 const crypto = require('crypto');
 const path = require('path');
-const { DEFAULT_BACKEND } = require('../../adapters/registry');
 const { generateJobId } = require('../job-id');
-const { reduce, TERMINAL } = require('../reducer');
-const { buildEnvelope, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure } = require('./index');
-const { validateTimeoutMs, resolveDeadline, resolveHardTimeoutMs } = require('../deadlines');
-const { createDetachedWorktree, removeWorktree, finalizeSnapshot } = require('../worktree');
-const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
+const { runAttempt, prepareBackend } = require('./attempt');
+const { resolveHardTimeoutMs } = require('../deadlines');
+const { createDetachedWorktree, removeWorktree } = require('../worktree');
+const { persistInitFiles } = require('../result-artifact');
 
 
 async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, mode, stateRoot }) {
@@ -32,40 +30,16 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   }
 
   const request = { model, canonicalDir, reasoningEffort, variant, effort, access };
-  let detectedVersion;
-  let manifest;
+  let prepared;
   try {
-    adapter.ValidateRequest(request);
-
-    detectedVersion = adapter.DetectVersion();
-    manifest = adapter.ProbeCapabilities();
-    if (manifest.supported_version_range) {
-      if (!isVersionInRange(detectedVersion, manifest.supported_version_range)) {
-        const range = manifest.supported_version_range;
-        const err = new Error(
-          `Backend version ${detectedVersion} is outside supported range ` +
-          `${range.min || 'any'} - ${range.max || 'any'}. Cannot create job.`
-        );
-        err.code = 'VERSION_OUT_OF_RANGE';
-        err.exitCode = 12;
-        throw err;
-      }
-    }
+    prepared = prepareBackend({ adapter, request });
   } catch (err) {
     if (worktreePath) removeWorktree(repoRoot, worktreePath);
-    if (err.code === 'VALIDATION_FAILED') {
-      err.exitCode = 2;
-      throw err;
-    }
     throw err;
   }
+  const { manifest, backend, backendVersion, adapterVersion } = prepared;
 
   const capabilitiesSnapshot = manifest;
-
-  const identity = adapter.GetIdentity();
-  const backend = identity.backend || DEFAULT_BACKEND;
-  const backendVersion = detectedVersion || '1.0.0';
-  const adapterVersion = identity.adapter_version || '1.0.0';
   if (admission) {
     const result = admission.acquireSlot(backend);
     if (!result.acquired) {
@@ -123,224 +97,10 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
       : { started_at: isoNow, phase: 'agent_running' },
   });
 
-  function finalizeWorktreeSnapshot() {
-    if (!worktreePath) return {};
-    try {
-      const { resultCommit } = finalizeSnapshot(worktreePath, resolveDeadline('SNAPSHOT_FINALIZE_MS'));
-      return { worktree_result_commit: resultCommit || worktreeBaseCommit };
-    } catch (err) {
-      return { worktree_finalize_error: err.message };
-    }
-  }
-
-  const attempt = {};
-
-  const hardTimeoutMs = resolveHardTimeoutMs(hardTimeoutSec);
-  let hardTimedOut = false;
-  let hardTimeoutTimer = null;
-
-  async function cancelThroughRungs() {
-    try {
-      const rungs = adapter.DeclareCancelRungs();
-      if (rungs && rungs.length > 0) {
-        for (const rung of rungs) {
-          try { await adapter.RequestCancel(attempt, rung); } catch {}
-        }
-      }
-    } catch {}
-  }
-
-  if (hardTimeoutMs > 0) {
-    hardTimeoutTimer = setTimeout(async () => {
-      if (hardTimedOut) return;
-      hardTimedOut = true;
-      await cancelThroughRungs();
-    }, hardTimeoutMs);
-    if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
-  }
-
-  try {
-    adapter.PrepareInvocation(attempt, request);
-    await adapter.Start(attempt);
-    if (hardTimedOut) throw null;
-    await adapter.SendPrompt(attempt, prompt);
-    if (hardTimedOut) throw null;
-  } catch (err) {
-    clearTimeout(hardTimeoutTimer);
-    if (hardTimedOut) {
-      store.journalTransition(jobId, repoKey, {
-        kind: 'attempt_state_changed',
-        attempt: attemptNum,
-        from: 'running',
-        to: 'timed_out',
-        detail: {
-          finished_at: new Date().toISOString(),
-          command_exit_code: null,
-          phase: 'terminal',
-          failure_reason: 'hard_timeout',
-          ...finalizeWorktreeSnapshot(),
-        },
-      });
-      await tryDisposeAdapter(adapter, attempt);
-      if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-      const finalStatus = store.readStatus({ repoKey, jobId });
-      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
-    }
-    await tryDisposeAdapter(adapter, attempt);
-    if (worktreePath) removeWorktree(repoRoot, worktreePath);
-    if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-    throw err;
-  }
-
-  const facts = [];
-  try {
-    for await (const fact of adapter.Observe(attempt)) {
-      if (hardTimedOut) throw null;
-      facts.push(fact);
-
-      if (fact.type === 'process_exited') {
-        const status = store.regenerateStatus({ repoKey, jobId });
-        const result = reduce(status, facts, {});
-        const collected = adapter.CollectResult(attempt);
-        const terminalState = result.state;
-        let resultBytes;
-
-        try {
-          resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected });
-        } catch {
-          store.journalTransition(jobId, repoKey, {
-            kind: 'attempt_state_changed',
-            attempt: attemptNum,
-            from: 'running',
-            to: 'failed',
-            detail: {
-              finished_at: new Date().toISOString(),
-              command_exit_code: fact.code !== undefined ? fact.code : null,
-              phase: 'terminal',
-              failure_reason: 'result_persistence_failed',
-              failure: { class: 'artifact_persistence', message: 'Unable to persist result artifact' },
-              ...finalizeWorktreeSnapshot(),
-            },
-          });
-          await tryDisposeAdapter(adapter, attempt);
-          if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-          const finalStatus = store.readStatus({ repoKey, jobId });
-          return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 11 };
-        }
-        try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
-        try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
-
-        const terminalFailure = classifyTerminalFailure({
-          exitCode: fact.code !== undefined ? fact.code : null,
-          resultBytes,
-          reducerResult: result,
-        });
-
-        store.journalTransition(jobId, repoKey, {
-          kind: 'attempt_state_changed',
-          attempt: attemptNum,
-          from: 'running',
-          to: terminalState,
-          detail: {
-            finished_at: new Date().toISOString(),
-            command_exit_code: fact.code !== undefined ? fact.code : null,
-            phase: 'terminal',
-            failure_reason: terminalFailure.failure_reason,
-            failure: terminalFailure.failure,
-            ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
-            ...(collected.usage ? { tokens: collected.usage } : {}),
-            result_bytes: resultBytes,
-            ...finalizeWorktreeSnapshot(),
-          },
-        });
-
-        await tryDisposeAdapter(adapter, attempt);
-        if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-        const finalStatus = store.readStatus({ repoKey, jobId });
-        return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus) };
-      }
-    }
-  } catch (err) {
-    clearTimeout(hardTimeoutTimer);
-    if (hardTimedOut) {
-      store.journalTransition(jobId, repoKey, {
-        kind: 'attempt_state_changed',
-        attempt: attemptNum,
-        from: 'running',
-        to: 'timed_out',
-        detail: {
-          finished_at: new Date().toISOString(),
-          command_exit_code: null,
-          phase: 'terminal',
-          failure_reason: 'hard_timeout',
-          ...finalizeWorktreeSnapshot(),
-        },
-      });
-      await tryDisposeAdapter(adapter, attempt);
-      if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-      const finalStatus = store.readStatus({ repoKey, jobId });
-      return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
-    }
-    await tryDisposeAdapter(adapter, attempt);
-    if (worktreePath) removeWorktree(repoRoot, worktreePath);
-    if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-    throw err;
-  }
-
-  clearTimeout(hardTimeoutTimer);
-
-  if (hardTimedOut) {
-    store.journalTransition(jobId, repoKey, {
-      kind: 'attempt_state_changed',
-      attempt: attemptNum,
-      from: 'running',
-      to: 'timed_out',
-      detail: {
-        finished_at: new Date().toISOString(),
-        command_exit_code: null,
-        phase: 'terminal',
-        failure_reason: 'hard_timeout',
-        ...finalizeWorktreeSnapshot(),
-      },
-    });
-    await tryDisposeAdapter(adapter, attempt);
-    if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-    const finalStatus = store.readStatus({ repoKey, jobId });
-    return { text: '', jobId, envelope: buildEnvelope(finalStatus), exitCode: 24 };
-  }
-
-  const collected = adapter.CollectResult(attempt);
-  const status = store.regenerateStatus({ repoKey, jobId });
-  const result = reduce(status, facts, {});
-  let resultBytes = null;
-  try { resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected }); } catch {}
-  try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
-  try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
-
-  const terminalState = TERMINAL.has(result.state) ? result.state : 'interrupted';
-
-  store.journalTransition(jobId, repoKey, {
-    kind: 'attempt_state_changed',
-    attempt: attemptNum,
-    from: 'running',
-    to: terminalState,
-    detail: {
-      finished_at: new Date().toISOString(),
-      command_exit_code: result.command_exit_code !== undefined ? result.command_exit_code : null,
-      phase: 'terminal',
-      failure_reason: result.failure_reason || (terminalState === 'interrupted' ? 'observe_ended' : null),
-      failure: result.failure || null,
-      ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
-      ...(collected.usage ? { tokens: collected.usage } : {}),
-      result_bytes: resultBytes,
-      ...finalizeWorktreeSnapshot(),
-    },
+  return runAttempt({
+    store, adapter, repoKey, repoRoot, jobId, attemptNum, prompt, request,
+    worktreePath, worktreeBaseCommit, hardTimeoutSec, admission, acquiredSlotId,
   });
-
-  await tryDisposeAdapter(adapter, attempt);
-  if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-  const finalStatus = store.readStatus({ repoKey, jobId });
-  return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus), exitCode: terminalState === 'interrupted' ? 0 : 1 };
 }
 
 module.exports = { executeRun };

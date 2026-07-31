@@ -1,10 +1,32 @@
+// The default script is what `dcli --backend fake <command>` runs on: a single
+// successful turn. It lives here, with the fake, rather than in the CLI entry
+// point, so no real adapter is ever constructed with scripted fixtures.
+function DEFAULT_FACTS() {
+  return [
+    { type: 'started', backend_pid: 1, backend_session_id: 'ses_default' },
+    { type: 'assistant_text', message_id: 'm1', text: 'Hello from dcli' },
+    { type: 'usage_reported', tokens: { input: 10, output: 20, total: 30 } },
+    { type: 'process_exited', code: 0 },
+  ];
+}
+
+function DEFAULT_CAPABILITIES() {
+  return {
+    schema_version: 1,
+    backend: 'fake',
+    backend_version: '1.0.0',
+    core: { run: true, submit: true, resume: true, cancel: true, wrapper_worktree: true },
+    extensions: {},
+  };
+}
+
 class FakeAdapter {
   constructor(script) {
     this._script = {
-      facts: [],
+      facts: DEFAULT_FACTS(),
       exitCode: 0,
       declaredRungs: ['hard_kill'],
-      capabilities: { schema_version: 1, backend: 'fake', core: {} },
+      capabilities: DEFAULT_CAPABILITIES(),
       behaviors: {},
       rungFailures: {},
       detectedVersion: '1.0.0',

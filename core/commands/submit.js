@@ -1,8 +1,8 @@
 const path = require('path');
 const { spawn } = require('child_process');
-const { DEFAULT_BACKEND } = require('../../adapters/registry');
 const { generateJobId } = require('../job-id');
-const { buildEnvelope, isVersionInRange } = require('./index');
+const { buildEnvelope } = require('./index');
+const { prepareBackend } = require('./attempt');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { persistInitFiles } = require('../result-artifact');
 
@@ -23,37 +23,12 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   }
 
   const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
-  try {
-    adapter.ValidateRequest(request);
-  } catch (err) {
-    if (err.code === 'VALIDATION_FAILED') {
-      err.exitCode = 2;
-      throw err;
-    }
-    throw err;
-  }
-
-  const detectedVersion = adapter.DetectVersion();
-  const manifest = adapter.ProbeCapabilities();
-  if (manifest.supported_version_range) {
-    if (!isVersionInRange(detectedVersion, manifest.supported_version_range)) {
-      const range = manifest.supported_version_range;
-      const err = new Error(
-        `Backend version ${detectedVersion} is outside supported range ` +
-        `${range.min || 'any'} - ${range.max || 'any'}. Cannot create job.`
-      );
-      err.code = 'VERSION_OUT_OF_RANGE';
-      err.exitCode = 12;
-      throw err;
-    }
-  }
-
-  const capabilitiesSnapshot = manifest;
-
-  const identity = adapter.GetIdentity();
-  const resolvedBackend = identity.backend || DEFAULT_BACKEND;
-  const backendVersion = detectedVersion || '1.0.0';
-  const adapterVersion = identity.adapter_version || '1.0.0';
+  const {
+    manifest: capabilitiesSnapshot,
+    backend: resolvedBackend,
+    backendVersion,
+    adapterVersion,
+  } = prepareBackend({ adapter, request });
   const effectiveAccess = access || 'read-only';
 
   const inheritedGroup = group || (parentStatus ? parentStatus.group : null);

@@ -107,7 +107,7 @@ async function main() {
     const mod = require(adapterPath);
     const AdapterClass = mod[bg.class];
     if (!AdapterClass) throw new Error(`Adapter module for "${backend}" does not export class ${bg.class}`);
-    adapter = new AdapterClass({ facts: getDefaultFacts(), exitCode: 0, declaredRungs: ['hard_kill'], capabilities: getDefaultCapabilities(backend) });
+    adapter = new AdapterClass();
   } catch (err) {
     console.error(`Failed to load adapter "${backend}": ${err.message}`);
     process.exit(12);
@@ -615,25 +615,6 @@ async function main() {
 }
 
 const path = require('path');
-
-function getDefaultFacts() {
-  return [
-    { type: 'started', backend_pid: 1, backend_session_id: 'ses_default' },
-    { type: 'assistant_text', message_id: 'm1', text: 'Hello from dcli' },
-    { type: 'usage_reported', tokens: { input: 10, output: 20, total: 30 } },
-    { type: 'process_exited', code: 0 },
-  ];
-}
-
-function getDefaultCapabilities(backendName) {
-  return {
-    schema_version: 1,
-    backend: backendName,
-    backend_version: '1.0.0',
-    core: { run: true, submit: true, resume: true, cancel: true, wrapper_worktree: true },
-    extensions: {},
-  };
-}
 
 main().catch(err => {
   console.error(err.message);

@@ -84,7 +84,9 @@ dcli/
     bounded-tail.js  inject-points.js
     worktree.js  snapshot.js  results.js  exit-codes.js
     capabilities.js  validate.js
-    commands/                # one file per core command
+    commands/                # one file per core command, plus attempt.js
+                             # (prepareBackend + runAttempt, shared by
+                             #  run / resume / submit — see 2026-07-31)
   adapters/
     codex/     adapter.js  event-parser.js  capabilities.json  compatibility.json
     opencode/  adapter.js  server-manager.js  http-client.js  sse.js
