@@ -12,5 +12,15 @@
     "dcli-codex": "cli/dcli-codex.js",
     "dcli-opencode": "cli/dcli-opencode.js",
     "dcli-claude": "cli/dcli-claude.js"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node tests/run-tests.js",
+    "test:full": "node tests/run-tests.js --suite full",
+    "check": "npm run lint && npm run test:full"
+  },
+  "devDependencies": {
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0"
   }
 }
