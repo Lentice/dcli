@@ -94,6 +94,30 @@ function buildEnvelope(status) {
   };
 }
 
+// Valueless flags: token -> result key set to true.
+const BOOL_FLAGS = {
+  '--json': 'json',
+  '--all': 'waitAll',
+  '--dry-run': 'dryRun',
+  '--scrub-session-ids': 'scrubSessionIds',
+  '--staged': 'staged',
+  '--working': 'working',
+  '--include-untracked': 'includeUntracked',
+  '--embed-diff': 'embedDiff',
+  '--stat': 'stat',
+  '--name-only': 'nameOnly',
+  '--reset-author': 'resetAuthor',
+  '--allow-untracked': 'allowUntracked',
+};
+
+// Flags that consume the next argv token. A flag here missing its value is a
+// hard error — never silently accepted.
+const VALUE_FLAGS = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
+  '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
+  '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
+  '--access', '--range', '--path', '--intent', '--focus',
+  '--message', '--mode', '--kind', '--resume']);
+
 function parseArgs(argv) {
   const args = argv.slice(2);
   const result = {
@@ -126,74 +150,14 @@ function parseArgs(argv) {
     }
 
     if (arg.startsWith('--')) {
-      if (arg === '--json') {
-        result.json = true;
-        i++;
-        continue;
-      }
-      if (arg === '--all') {
-        result.waitAll = true;
-        i++;
-        continue;
-      }
-      if (arg === '--dry-run') {
-        result.dryRun = true;
-        i++;
-        continue;
-      }
-      if (arg === '--scrub-session-ids') {
-        result.scrubSessionIds = true;
-        i++;
-        continue;
-      }
-      if (arg === '--staged') {
-        result.staged = true;
-        i++;
-        continue;
-      }
-      if (arg === '--working') {
-        result.working = true;
-        i++;
-        continue;
-      }
-      if (arg === '--include-untracked') {
-        result.includeUntracked = true;
-        i++;
-        continue;
-      }
-      if (arg === '--embed-diff') {
-        result.embedDiff = true;
-        i++;
-        continue;
-      }
-      if (arg === '--stat') {
-        result.stat = true;
-        i++;
-        continue;
-      }
-      if (arg === '--name-only') {
-        result.nameOnly = true;
-        i++;
-        continue;
-      }
-      if (arg === '--reset-author') {
-        result.resetAuthor = true;
-        i++;
-        continue;
-      }
-      if (arg === '--allow-untracked') {
-        result.allowUntracked = true;
+      const boolKey = BOOL_FLAGS[arg];
+      if (boolKey) {
+        result[boolKey] = true;
         i++;
         continue;
       }
 
-      const valueFlag = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
-        '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
-        '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
-        '--access', '--range', '--path', '--intent', '--focus',
-        '--message', '--mode', '--kind', '--resume']);
-
-      if (valueFlag.has(arg)) {
+      if (VALUE_FLAGS.has(arg)) {
         i++;
         if (i >= args.length || args[i].startsWith('--')) {
           const err = new Error(`Flag ${arg} requires a value`);

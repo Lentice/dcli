@@ -50,20 +50,9 @@ function readTail(filePath, maxBytes) {
       content = TRUNCATION_MARKER.trimStart() + content;
     }
 
-    // Check for oversized lines — if any single line exceeds maxBytes,
-    // truncate it with a marker (this is about line-level truncation).
-    // We already have a truncated indicator from seeking.
-    // Additional line-level check: if any line in the result is very long
-    // (exceeding maxBytes), we truncate the first such line.
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].length > maxBytes * 2) {
-        const excess = lines[i].length - maxBytes;
-        lines[i] = lines[i].slice(0, maxBytes) + `... [${excess} more bytes]`;
-        truncated = true;
-      }
-    }
-    content = lines.join('\n');
+    // No line-level truncation pass: at most maxBytes bytes were read, and a
+    // UTF-8 decode never yields more characters than bytes, so no line here
+    // can exceed maxBytes characters. The seek above is the only bound needed.
 
     return {
       content,

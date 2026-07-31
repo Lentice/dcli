@@ -22,10 +22,4 @@ function computeRepoKeyWithPath(repoPath) {
   return { repoKey, fullPath: normalized };
 }
 
-function checkRepoKeyPath(repoKey, fullPath) {
-  const normalized = normalizePath(fullPath);
-  const computed = computeRepoKey(normalized);
-  return computed === repoKey;
-}
-
-module.exports = { computeRepoKey, computeRepoKeyWithPath, checkRepoKeyPath, normalizePath };
+module.exports = { computeRepoKey, computeRepoKeyWithPath, normalizePath };

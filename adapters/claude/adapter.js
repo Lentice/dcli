@@ -4,15 +4,9 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
+const { applyProcessLifecycle } = require('../shared/process-lifecycle');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
-const POST_EXIT_DRAIN_MS = 3000;
-// How often a parked live-fact drain re-checks its own terminal condition.
-// This bound is not a performance knob: the timer behind it is the only refed
-// libuv handle that exists while the drain is parked and the child has closed
-// its pipes, so it is what stops the process from silently exiting 0 mid-drain.
-// See _waitForFactsOrRecheck and docs/tickets/79.
-const LIVE_DRAIN_RECHECK_MS = 250;
 const LIVE_SMOKE_TIMEOUT_MS = 30000;
 
 function resolveClaudePath() {
@@ -174,10 +168,6 @@ class ClaudeAdapter {
     };
   }
 
-  DeclareCancelRungs() {
-    return ['hard_kill'];
-  }
-
   ValidateRequest(request) {
     if (!request || typeof request !== 'object') return;
 
@@ -196,10 +186,6 @@ class ClaudeAdapter {
       err.backendName = 'claude';
       throw err;
     }
-  }
-
-  PrepareInvocation(attempt, request) {
-    this._lastRequest = request ? { ...request } : this._lastRequest;
   }
 
   async Start(attempt) {
@@ -350,86 +336,6 @@ class ClaudeAdapter {
     }
   }
 
-  /**
-   * Park until new live facts arrive, the child terminates, or the re-check
-   * bound elapses — whichever comes first. The loop condition above is only
-   * re-evaluated after this settles, so this must never be able to park
-   * forever.
-   *
-   * Two independent guarantees, because either alone has already failed here:
-   *
-   * 1. `_wakeObservers()` on child exit/error wakes this waiter, not only
-   *    `_waitForExit`'s. Waking only the latter was the actual defect: the
-   *    drain stayed parked on a promise nothing would ever settle.
-   * 2. The `setTimeout` is deliberately left REFED. While the drain is parked
-   *    and the child has closed its pipes, this timer is the only libuv handle
-   *    keeping the event loop alive. Unref it and Node drains the loop and
-   *    exits the whole process with code 0 in the middle of the caller's
-   *    `for await` — which is exactly how `dcli-codex run` came to return exit
-   *    0 with zero bytes and no error. A dropped wake-up must degrade to one
-   *    re-check interval of delay, never to a hang and never to process
-   *    evaporation.
-   *
-   * @returns {Promise<void>}
-   */
-  _waitForFactsOrRecheck() {
-    return new Promise((resolve) => {
-      let settled = false;
-      const done = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (this._liveFactsResolve === done) this._liveFactsResolve = null;
-        resolve();
-      };
-      const timer = setTimeout(done, LIVE_DRAIN_RECHECK_MS);
-      this._liveFactsResolve = done;
-    });
-  }
-
-  /**
-   * Wake the live-fact drain. Called whenever stdout produced new facts.
-   */
-  _wakeFactWaiter() {
-    if (this._liveFactsResolve) {
-      const r = this._liveFactsResolve;
-      this._liveFactsResolve = null;
-      r();
-    }
-  }
-
-  /**
-   * Wake every waiter after the child has terminated. Both terminal handlers
-   * call this single method on purpose: the defect it fixes was one terminal
-   * handler waking one of two waiters, so a future third waiter must not be
-   * something a handler can forget.
-   */
-  _wakeObservers() {
-    this._wakeFactWaiter();
-    if (this._exitResolve) {
-      const r = this._exitResolve;
-      this._exitResolve = null;
-      r();
-    }
-  }
-
-  /**
-   * Resolve once the child has exited or errored. A bare promise refs nothing;
-   * what keeps the event loop alive is the child's own handles while open, and
-   * the refed re-check timer in `_waitForFactsOrRecheck` once they are not.
-   * Reaching here normally means `_drainLiveQueue` already observed
-   * termination, so it resolves immediately. The caller owns the hard-timeout
-   * bound.
-   *
-   * @returns {Promise<void>}
-   */
-  _waitForExit() {
-    if (this._observedExited) return Promise.resolve();
-    return new Promise((resolve) => {
-      this._exitResolve = resolve;
-    });
-  }
-
   Resume(attempt, kind, prompt) {
     if (kind === 'continue_backend_session') {
       this._resumeKind = kind;
@@ -443,26 +349,6 @@ class ClaudeAdapter {
       'Claude has no interactive permission/response mechanism in -p/--print mode. ' +
       'No job was created.'
     );
-  }
-
-  RequestCancel(attempt, rung) {
-    if (this._cancelled) return { success: true };
-
-    if (rung !== 'hard_kill') {
-      return { success: false, error: `Unknown rung: ${rung}` };
-    }
-
-    if (this._childProcess && !this._childProcess.killed) {
-      try {
-        this._childProcess.kill('SIGKILL');
-      } catch {
-        try { this._childProcess.kill(); } catch {}
-      }
-    }
-
-    this._cancelRungReached = 'hard_kill';
-    this._cancelled = true;
-    return { success: true };
   }
 
   CollectResult(attempt) {
@@ -535,17 +421,6 @@ class ClaudeAdapter {
     };
   }
 
-  _resolveExitCode() {
-    if (this._mockExitCode !== null) return this._mockExitCode;
-    const facts = this._facts || [];
-    for (let i = facts.length - 1; i >= 0; i--) {
-      if (facts[i].type === 'process_exited') {
-        return facts[i].code !== undefined ? facts[i].code : null;
-      }
-    }
-    return null;
-  }
-
   Dispose(attempt) {
     if (this._disposed) return;
     this._disposed = true;
@@ -557,18 +432,6 @@ class ClaudeAdapter {
     }
 
     this._childProcess = null;
-  }
-
-  Recover(attempt) {
-    if (this._cancelled) return { state: 'cancelled' };
-    const facts = this._facts || [];
-    const processExited = facts.find(f => f && f.type === 'process_exited');
-    if (processExited) {
-      return { state: processExited.code === 0 ? 'done' : 'failed' };
-    }
-    const backendError = facts.find(f => f && f.type === 'backend_error');
-    if (backendError) return { state: 'failed' };
-    return { state: 'interrupted' };
   }
 
   async LiveSmoke(timeoutMs) {
@@ -588,17 +451,6 @@ class ClaudeAdapter {
     } catch (err) {
       throw new Error(`claude not available: ${err.message}`);
     }
-  }
-
-  async _waitForStreamDrain() {
-    if (this._stdoutClosed && this._stderrClosed) return;
-    const deadline = Date.now() + POST_EXIT_DRAIN_MS;
-    while (Date.now() < deadline) {
-      if (this._stdoutClosed && this._stderrClosed) return;
-      await new Promise(r => setTimeout(r, 10));
-    }
-    this._drainTimedOut = true;
-    this._facts.push({ type: 'drain_timeout', message: 'stdout/stderr did not close within POST_EXIT_DRAIN_MS' });
   }
 
   _parseStreamEvent(line) {
@@ -674,5 +526,7 @@ class ClaudeAdapter {
     return facts.length > 0 ? facts : null;
   }
 }
+
+applyProcessLifecycle(ClaudeAdapter);
 
 module.exports = { ClaudeAdapter, buildArgv, resolveClaudePath, EFFORT_LEVELS };

@@ -28,7 +28,7 @@ function writeFixture(path, content) {
 
 // For now, require the modules we're about to implement
 let getStateRoot;
-let computeRepoKey, computeRepoKeyWithPath, checkRepoKeyPath;
+let computeRepoKey, computeRepoKeyWithPath;
 let generateJobId;
 let JobStore;
 
@@ -37,7 +37,6 @@ function loadModules() {
   const repoKey = require('../../core/repo-key');
   computeRepoKey = repoKey.computeRepoKey;
   computeRepoKeyWithPath = repoKey.computeRepoKeyWithPath;
-  checkRepoKeyPath = repoKey.checkRepoKeyPath;
   generateJobId = require('../../core/job-id').generateJobId;
   JobStore = require('../../core/job-store').JobStore;
 }
@@ -99,12 +98,8 @@ console.log('PASS: state root discovery');
     assert.strictEqual(keyLower, key1, 'On Windows, casing must produce same key');
   }
   
-  // Mismatch detection
-  const checkOk = checkRepoKeyPath(key1, 'C:\\Projects\\MyRepo');
-  assert.strictEqual(checkOk, true, 'Matching path must pass check');
-  
-  const checkFail = checkRepoKeyPath(key1, 'D:\\Other\\Repo');
-  assert.strictEqual(checkFail, false, 'Different path must fail check');
+  // Mismatch detection: a different path must not collide onto the same key
+  assert.notStrictEqual(computeRepoKey('D:\Other\Repo'), key1, 'Different path must yield a different key');
 }
 
 console.log('PASS: repo-key computation');
@@ -557,16 +552,14 @@ console.log('PASS: attempt directory creation');
     access: 'read-only',
   });
   
-  // Verify checkRepoKeyPath catches the mismatch
+  // A different repo path must not map onto this job's repo key
   const differentPath = process.platform === 'win32'
-    ? 'D:\\different\\repo\\path'
+    ? 'D:\different\repo\path'
     : '/different/repo/path';
-  assert.strictEqual(checkRepoKeyPath(repoKeyResult1.repoKey, differentPath), false,
-    'Different full path must fail check');
-  
-  // Same path must pass
-  assert.strictEqual(checkRepoKeyPath(repoKeyResult1.repoKey, repoKeyResult1.fullPath), true,
-    'Same full path must pass check');
+  assert.notStrictEqual(computeRepoKey(differentPath), repoKeyResult1.repoKey,
+    'Different full path must yield a different repo key');
+  assert.strictEqual(computeRepoKey(repoKeyResult1.fullPath), repoKeyResult1.repoKey,
+    'Same full path must yield the same repo key');
   
   clean(root);
 }

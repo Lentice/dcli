@@ -34,7 +34,7 @@ class Redactor {
 
   redactValue(value) {
     if (value === null || value === undefined) return value;
-    if (typeof value === 'string') return this._redactStringValue(value);
+    if (typeof value === 'string') return this.redactText(value);
     if (Array.isArray(value)) {
       return value.map(v => this.redactValue(v));
     }
@@ -51,30 +51,6 @@ class Redactor {
       return result;
     }
     return value;
-  }
-
-  redactJson(value) {
-    return this.redactValue(value);
-  }
-
-  createSanitizingRedactor() {
-    const r = new Redactor();
-    for (const [value, placeholder] of this._exactValues) {
-      r._exactValues.set(value, placeholder);
-    }
-    r._keyPatterns = this._keyPatterns;
-    return r;
-  }
-
-  _redactStringValue(str) {
-    for (const [value, placeholder] of this._exactValues) {
-      let idx = -1;
-      while ((idx = str.indexOf(value, idx + 1)) !== -1) {
-        str = str.slice(0, idx) + placeholder + str.slice(idx + value.length);
-        idx += placeholder.length - 1;
-      }
-    }
-    return str;
   }
 
   _matchKeyPattern(key) {

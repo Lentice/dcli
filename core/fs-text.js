@@ -3,33 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 const ENCODING = 'utf8';
-const BOM = '\uFEFF';
 
-let atomicRenameSupported = null;
 let _redactor = null;
-
-/**
- * @returns {boolean}
- */
-function detectAtomicRename() {
-  const tmpDir = require('os').tmpdir();
-  const rnd = () => crypto.randomBytes(4).toString('hex');
-  const src = path.join(tmpDir, `.dcli-atom-${rnd()}`);
-  const dst = path.join(tmpDir, `.dcli-atom-${rnd()}`);
-  try {
-    fs.writeFileSync(src, '');
-    fs.writeFileSync(dst, '');
-    fs.renameSync(src, dst);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    try { fs.unlinkSync(dst); } catch {}
-    try { fs.unlinkSync(src); } catch {}
-  }
-}
-
-atomicRenameSupported = detectAtomicRename();
 
 /**
  * @param {string} filePath
@@ -77,7 +52,7 @@ function writeTextFileAtomic(filePath, content) {
  * @param {unknown} value
  */
 function writeJsonFileAtomic(filePath, value) {
-  const toWrite = _redactor ? _redactor.redactJson(value) : value;
+  const toWrite = _redactor ? _redactor.redactValue(value) : value;
   const json = JSON.stringify(toWrite, stableKeyReplacer, 2) + '\n';
   writeTextFileAtomic(filePath, json);
 }
@@ -87,7 +62,7 @@ function writeJsonFileAtomic(filePath, value) {
  * @param {unknown} value
  */
 function appendJsonLine(filePath, value) {
-  const toWrite = _redactor ? _redactor.redactJson(value) : value;
+  const toWrite = _redactor ? _redactor.redactValue(value) : value;
   const line = JSON.stringify(toWrite) + '\n';
   fs.appendFileSync(filePath, line, ENCODING);
 }
@@ -114,5 +89,4 @@ module.exports = {
   appendJsonLine,
   setRedactor,
   getRedactor,
-  __detect: detectAtomicRename,
 };

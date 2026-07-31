@@ -126,7 +126,7 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
       // Try to acquire per-job lock
       let perJobLock;
       try {
-        perJobLock = lockManager.tryAcquire('per-job', jobId, { operation: 'cleanup' });
+        perJobLock = lockManager.tryAcquire(LOCK_SCOPES.PER_JOB, jobId, { operation: 'cleanup' });
       } catch {
         perJobLock = null;
       }
@@ -161,7 +161,7 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
       }
 
       // Check lease and hold through deletion to prevent race
-      const leaseLock = lockManager.tryAcquire('job-lease', jobId, { operation: 'cleanup-lease-check' });
+      const leaseLock = lockManager.tryAcquire(LOCK_SCOPES.JOB_LEASE, jobId, { operation: 'cleanup-lease-check' });
       if (!leaseLock) {
         // Lease is held by someone else (e.g. diff/apply)
         lockManager.release(perJobLock);

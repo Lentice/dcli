@@ -81,7 +81,7 @@ dcli/
   core/
     job-store.js  job-schema.js  lifecycle.js  locking.js
     process-identity.js  containment.js  deadlines.js
-    child-process.js  bounded-tail.js  inject-points.js
+    bounded-tail.js  inject-points.js
     worktree.js  snapshot.js  results.js  exit-codes.js
     capabilities.js  validate.js
     commands/                # one file per core command
@@ -879,8 +879,8 @@ key-name pattern matching.
 automatically redact content before persistence. A call site cannot bypass it — every write goes through
 the same path.
 
-`createSanitizingRedactor()` returns a copy of the redactor for the `--sanitize` export path (ticket TBD),
-preserving the same registered secrets and key patterns.
+(2026-07-31) A `createSanitizingRedactor()` copy-for-export helper was specified here for a `--sanitize`
+path that was never built, and is removed. Build it with the export path, not before it.
 
 Rules:
 
@@ -894,8 +894,8 @@ Rules:
   command line or in a normal log.
 - The state root gets restrictive ACLs (owner-only) on creation via `ensureStateRoot()`. On Windows this
   uses `icacls /inheritance:r /grant <user>:(OI)(CI)F`; on Unix `chmod 700`. Tested.
-- Prompts and results are user content, not secrets, but `createSanitizingRedactor()` is available
-  for sharing a job's artifacts.
+- Prompts and results are user content, not secrets, and are persisted unredacted apart from any
+  registered secret value that happens to appear inside them.
 - A planted-token test registers a known secret, writes through every channel, and verifies the secret
   never reaches disk.
 

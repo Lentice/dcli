@@ -183,34 +183,6 @@ console.log('PASS: null/undefined handled');
 console.log('PASS: arrays redacted');
 
 // ===========================================================================
-// 11. Sanitizing export — less aggressive
-// ===========================================================================
-
-{
-  loadModules();
-  const r = new Redactor();
-  r.registerSecret('user_token', 'supersecret');
-  const sanitizing = r.createSanitizingRedactor();
-  assert.ok(sanitizing !== r, 'Sanitizing redactor must be a different instance');
-
-  // Sanitizing redactor should still redact exact registered values
-  const text = sanitizing.redactText('My token is supersecret');
-  assert.strictEqual(text, 'My token is \u00abredacted:user_token\u00bb');
-
-  // Key-name pattern matching should still work for credentials
-  const obj = sanitizing.redactValue({
-    authorization: 'Bearer xyz',
-    prompt: 'user query text',
-    result: 'some output',
-  });
-  assert.strictEqual(obj.authorization, '\u00abredacted:authorization\u00bb');
-  assert.strictEqual(obj.prompt, 'user query text', 'prompt must not be redacted');
-  assert.strictEqual(obj.result, 'some output', 'result must not be redacted');
-}
-
-console.log('PASS: sanitizing export');
-
-// ===========================================================================
 // 12. redactText is plain-text only — does not parse JSON structure
 // ===========================================================================
 

@@ -2,13 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const { getOwnIdentity, generateExecutionToken, isProcessAlive, isSameProcessAlive } = require('./process-identity');
 
+// Only scopes with a real caller. Lock names are persisted as filenames, so a
+// scope is a contract the moment something takes it — add one when a caller
+// exists, never speculatively.
 const LOCK_SCOPES = Object.freeze({
-  ATTEMPT: 'attempt',
-  JOB_INDEX: 'job-index',
-  WORKTREE: 'worktree',
   APPLY: 'apply',
-  CLEANUP: 'cleanup',
-  SERVER_LIFECYCLE: 'server-lifecycle',
   JOB_LEASE: 'job-lease',
   PER_JOB: 'per-job',
 });
@@ -114,25 +112,7 @@ class LockManager {
 
     while (Date.now() < deadline) {
       try {
-        const fd = fs.openSync(lockPath, 'wx');
-        try {
-          this._writeMetadata(lockPath, extra);
-        } catch (writeErr) {
-          try { fs.closeSync(fd); } catch {}
-          try { fs.unlinkSync(lockPath); } catch {}
-          throw writeErr;
-        }
-        const lock = {
-          scope,
-          key,
-          lockPath,
-          fd,
-          released: false,
-          acquiredAt: new Date().toISOString(),
-          executionToken: this._ownToken,
-        };
-        this._heldLocks.set(lockKey, lock);
-        return lock;
+        return this._createLockFile(scope, key, lockPath, extra);
       } catch (err) {
         if (err.code !== 'EEXIST') {
           throw err;
@@ -157,6 +137,35 @@ class LockManager {
   }
 
   /**
+   * Create the lock file exclusively and register the handle. Throws EEXIST
+   * when the lock is already held — the single place both acquire() and
+   * tryAcquire() go through, so their handle shape cannot drift apart.
+   *
+   * @returns {object} lock handle
+   */
+  _createLockFile(scope, key, lockPath, extra) {
+    const fd = fs.openSync(lockPath, 'wx');
+    try {
+      this._writeMetadata(lockPath, extra);
+    } catch (writeErr) {
+      try { fs.closeSync(fd); } catch {}
+      try { fs.unlinkSync(lockPath); } catch {}
+      throw writeErr;
+    }
+    const lock = {
+      scope,
+      key,
+      lockPath,
+      fd,
+      released: false,
+      acquiredAt: new Date().toISOString(),
+      executionToken: this._ownToken,
+    };
+    this._heldLocks.set(`${scope}:${key}`, lock);
+    return lock;
+  }
+
+  /**
    * Non-blocking acquire. Returns lock handle or null.
    * @param {string} scope
    * @param {string} key
@@ -173,25 +182,7 @@ class LockManager {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
 
     try {
-      const fd = fs.openSync(lockPath, 'wx');
-      try {
-        this._writeMetadata(lockPath, extra);
-      } catch (writeErr) {
-        try { fs.closeSync(fd); } catch {}
-        try { fs.unlinkSync(lockPath); } catch {}
-        throw writeErr;
-      }
-      const lock = {
-        scope,
-        key,
-        lockPath,
-        fd,
-        released: false,
-        acquiredAt: new Date().toISOString(),
-        executionToken: this._ownToken,
-      };
-      this._heldLocks.set(lockKey, lock);
-      return lock;
+      return this._createLockFile(scope, key, lockPath, extra);
     } catch (err) {
       if (err.code === 'EEXIST' && this._isStale(lockPath)) {
         for (let attempt = 0; attempt < 3; attempt++) {

@@ -30,12 +30,13 @@ function clean(dir) {
 {
   loadModules();
   const scopeValues = new Set(Object.values(LOCK_SCOPES));
-  const required = ['attempt', 'job-index', 'worktree', 'apply', 'cleanup', 'server-lifecycle', 'job-lease'];
+  // Only the scopes something actually takes. A scope nobody acquires is a
+  // typo waiting to happen, not future-proofing — add one when a caller does.
+  const required = ['apply', 'job-lease', 'per-job'];
   for (const name of required) {
     assert.ok(scopeValues.has(name), `Lock scope "${name}" must exist`);
   }
-  // Also verify our own per-job scope
-  assert.ok(scopeValues.has('per-job'), 'Lock scope "per-job" must exist');
+  assert.strictEqual(scopeValues.size, required.length, 'no unused lock scopes');
   console.log('PASS: lock scopes');
 }
 
