@@ -1119,6 +1119,120 @@ console.log('PASS: path-traversal backend rejected');
 console.log('PASS: double --backend rejected');
 
 // ===========================================================================
+// 35. Observe ending without process_exited → interrupted (stream_closed, no error)
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeRun } = require('../../core/commands/run');
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_sc' },
+      { type: 'assistant_text', message_id: 'm1', text: 'got text' },
+      { type: 'stream_closed', reason: 'session_ended' },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const output = await executeRun({
+    store, adapter, repoKey: 'obs-test1', repoRoot: dir,
+    prompt: 'test', hardTimeoutSec: 60,
+  });
+
+  assert.strictEqual(output.envelope.state, 'interrupted',
+    `stream_closed-only observe must end interrupted, got ${output.envelope.state}`);
+  assert.ok(output.text.length > 0, 'interrupted observe must still return collected text');
+  assert.strictEqual(output.exitCode, 0, 'interrupted exit code must be 0');
+
+  console.log('PASS: stream_closed-only Observe ends interrupted (not failed)');
+
+// ===========================================================================
+// 35b. stream_closed with error reason → failed
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeRun } = require('../../core/commands/run');
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_sce' },
+      { type: 'assistant_text', message_id: 'm1', text: 'partial' },
+      { type: 'stream_closed', reason: 'sse_disconnect' },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const output = await executeRun({
+    store, adapter, repoKey: 'obs-test1b', repoRoot: dir,
+    prompt: 'test', hardTimeoutSec: 60,
+  });
+
+  assert.strictEqual(output.envelope.state, 'failed',
+    `stream_closed(error) must end failed, got ${output.envelope.state}`);
+  assert.strictEqual(output.exitCode, 1, 'stream_closed(error) exit code must be 1');
+  assert.ok(output.envelope.failure_reason === 'stream_closed',
+    `failure_reason must be stream_closed, got ${output.envelope.failure_reason}`);
+
+  console.log('PASS: stream_closed(error) Observe ends failed');
+});
+});
+
+// ===========================================================================
+// 36. Observe yielding nothing (empty facts) → interrupted
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeRun } = require('../../core/commands/run');
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const output = await executeRun({
+    store, adapter, repoKey: 'obs-test2', repoRoot: dir,
+    prompt: 'test', hardTimeoutSec: 60,
+  });
+
+  assert.strictEqual(output.envelope.state, 'interrupted',
+    `empty Observe must end interrupted, got ${output.envelope.state}`);
+  assert.strictEqual(output.exitCode, 0, 'interrupted exit code must be 0');
+
+  console.log('PASS: empty Observe ends interrupted (not failed with exit 1)');
+});
+
+// ===========================================================================
+// 37. Observe with process_exited {code: 0} still resolves to done (regression)
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const { executeRun } = require('../../core/commands/run');
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = new FakeAdapter({
+    facts: [
+      { type: 'started', backend_pid: 1, backend_session_id: 'ses_done' },
+      { type: 'assistant_text', message_id: 'm1', text: 'success' },
+      { type: 'process_exited', code: 0 },
+    ],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+    capabilities: { schema_version: 1, backend: 'fake', core: { run: true } },
+  });
+
+  const output = await executeRun({
+    store, adapter, repoKey: 'obs-test3', repoRoot: dir,
+    prompt: 'test', hardTimeoutSec: 60,
+  });
+
+  assert.strictEqual(output.envelope.state, 'done',
+    `process_exited(code=0) must stay done, got ${output.envelope.state}`);
+
+  console.log('PASS: process_exited(code=0) Observe stays done');
+});
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll core command tests passed.');

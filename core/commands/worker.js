@@ -416,22 +416,34 @@ async function main() {
   }
 
   const collected = adapter.CollectResult(attempt);
+  const status = store.regenerateStatus({ repoKey, jobId });
+  const result = reduce(status, facts, {});
+  let resultBytes = null;
+  try { resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected }); } catch {}
+  try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
+  try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
+
+  const terminalState = TERMINAL.has(result.state) ? result.state : 'interrupted';
+
   store.journalTransition(jobId, repoKey, {
     kind: 'attempt_state_changed',
     attempt: attemptNum,
     from: 'running',
-    to: 'failed',
+    to: terminalState,
     detail: {
       finished_at: new Date().toISOString(),
-      command_exit_code: 1,
+      command_exit_code: result.command_exit_code !== undefined ? result.command_exit_code : null,
       phase: 'terminal',
+      failure_reason: result.failure_reason || (terminalState === 'interrupted' ? 'observe_ended' : null),
+      failure: result.failure || null,
       ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
       ...(collected.usage ? { tokens: collected.usage } : {}),
+      result_bytes: resultBytes,
     },
   });
   tryDisposeAdapter(adapter, attempt);
   admission.releaseSlot(slotId);
-  process.exit(1);
+  process.exit(terminalState === 'interrupted' ? 0 : 1);
 }
 
 const HARD_TIMEOUT_ERROR = Symbol('hard_timeout');

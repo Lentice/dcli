@@ -11,6 +11,7 @@
  */
 
 const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
+const STREAM_CLOSED_ERROR_REASONS = new Set(['sse_disconnect', 'interaction_reject_failed', 'finalization_error']);
 
 /**
  * Engine-owned lifecycle reducer. Takes current state + adapter facts + durable
@@ -85,6 +86,19 @@ function reduce(state, facts, evidence) {
       failure_reason: classHint || state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
     };
+  }
+
+  const streamClosed = facts.find(f => f && f.type === 'stream_closed');
+  if (streamClosed) {
+    if (STREAM_CLOSED_ERROR_REASONS.has(streamClosed.reason)) {
+      return {
+        state: 'failed',
+        phase: 'terminal',
+        failure: { class: 'stream_closed', reason: streamClosed.reason },
+        failure_reason: 'stream_closed',
+        backend_session_id: state.backend_session_id || null,
+      };
+    }
   }
 
   // 5. Reconciliation — only for non-terminal states (running/created)

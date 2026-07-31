@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const path = require('path');
+const { DEFAULT_BACKEND } = require('../../adapters/registry');
 const { generateJobId } = require('../job-id');
 const { reduce } = require('../reducer');
 const { buildEnvelope, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure } = require('./index');
@@ -63,7 +64,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   const capabilitiesSnapshot = manifest;
 
   const identity = adapter.GetIdentity();
-  const backend = identity.backend || 'fake';
+  const backend = identity.backend || DEFAULT_BACKEND;
   const backendVersion = detectedVersion || '1.0.0';
   const adapterVersion = identity.adapter_version || '1.0.0';
   if (admission) {
@@ -310,15 +311,29 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   }
 
   const collected = adapter.CollectResult(attempt);
+  const status = store.regenerateStatus({ repoKey, jobId });
+  const result = reduce(status, facts, {});
+  let resultBytes = null;
+  try { resultBytes = persistCollectedResult({ store, repoKey, jobId, attemptNum, collected }); } catch {}
+  try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
+  try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
+
+  const terminalState = TERMINAL.has(result.state) ? result.state : 'interrupted';
+
   store.journalTransition(jobId, repoKey, {
     kind: 'attempt_state_changed',
     attempt: attemptNum,
     from: 'running',
-    to: 'failed',
+    to: terminalState,
     detail: {
       finished_at: new Date().toISOString(),
-      command_exit_code: 1,
+      command_exit_code: result.command_exit_code !== undefined ? result.command_exit_code : null,
       phase: 'terminal',
+      failure_reason: result.failure_reason || (terminalState === 'interrupted' ? 'observe_ended' : null),
+      failure: result.failure || null,
+      ...(collected.backend_session_id ? { backend_session_id: collected.backend_session_id } : {}),
+      ...(collected.usage ? { tokens: collected.usage } : {}),
+      result_bytes: resultBytes,
       ...finalizeWorktreeSnapshot(),
     },
   });
@@ -326,7 +341,7 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   tryDisposeAdapter(adapter, attempt);
   if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
   const finalStatus = store.readStatus({ repoKey, jobId });
-  return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus), exitCode: 1 };
+  return { text: collected.text, jobId, envelope: buildEnvelope(finalStatus), exitCode: terminalState === 'interrupted' ? 0 : 1 };
 }
 
 module.exports = { executeRun };
