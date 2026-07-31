@@ -90,6 +90,7 @@ so the breakdown survives as part of the project handoff.
 | [74](74-installer-worker-prompts-and-staging.md) | Installer: atomic staging + worker prompt isolation | — | Code review |
 | [75](75-docs-mode-promptfile-scrub-drift.md) | Docs drift: --mode, --prompt-file, scrub-session-ids in skills | — | Code review |
 | [76](76-dcli-claude-silent-failure-read-only.md) | dcli-claude run silently fails tasks needing Task/subagent tool | — | Code review |
+| [77](77-load-flaky-test-time-budgets.md) | Suite dominated by ~200ms process-spawn cost; time budgets fail unpredictably | — | Tooling |
 
 Tickets **14 and 15 are built in parallel** — they are two halves of one proof.
 

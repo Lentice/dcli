@@ -14,6 +14,7 @@
 // the binary at cmd.exe makes the child exit immediately, which trips the
 // premature-exit branch fast instead of burning the 30s startup budget.
 const assert = require('node:assert');
+const { assertRealFailure } = require('../../helpers/assert-failure');
 
 async function main() {
 
@@ -43,16 +44,13 @@ async function main() {
     else process.env.OPENCODE_PATH = savedPath;
   }
 
-  assert.ok(error, 'Start must fail when the server never binds a port');
-
-  // The whole point: the failure must be the *real* one, not a crash in our
-  // own code masquerading as a backend failure.
-  assert.ok(!(error instanceof ReferenceError),
-    `Failure must be the server error, not a ReferenceError: ${error.stack}`);
-  assert.ok(!(error instanceof TypeError),
-    `Failure must be the server error, not a TypeError: ${error.stack}`);
-  assert.match(error.message, /exited prematurely|startup timed out|ENOENT|EINVAL/i,
-    `Unexpected failure reason: ${error.message}`);
+  // The failure must be the *real* one, not a crash in our own code
+  // masquerading as a backend failure.
+  assertRealFailure(
+    error,
+    { match: /exited prematurely|startup timed out|ENOENT|EINVAL/i },
+    'Start with a server that never binds a port'
+  );
 
   // It must reject on the observed exit, not by burning the full startup
   // budget -- a dead worker has to fail fast (AGENTS.md: startup sentinels

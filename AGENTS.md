@@ -247,8 +247,27 @@ The family is **`dcli`**: umbrella `dcli`, shims `dcli-codex` / `dcli-opencode` 
 - **Test false greens are real and have shipped.** A whole commit was needed to fix tests that passed
   while asserting nothing. Prefer assertions on observable artifacts: exit code, byte-exact stdout, and
   on-disk job state.
+- **A mocked-out path is an uncovered path, and no test count reveals it.** Every adapter's `Start()`
+  opens with `if (this._testMode) { …; return }`. Because every adapter test set `_testMode`, the 80–110
+  real lines below that guard were executed by *nothing* — which is how a `ReferenceError: child is not
+  defined` shipped in the codex adapter and broke **every** codex job while 16 adapter tests stayed green.
+  **Every branch a test-mode short-circuit skips needs at least one test that does not take the
+  short-circuit.** See `tests/adapters/*/start-*-scope.test.js` for the shape. This generalizes beyond
+  `_testMode`: any mock, stub, or injected override draws the same cliff.
+- **Never assert only that something threw.** `assert.ok(err, 'must fail')` is satisfied by a crash in
+  our own code — that bare assertion was the *sole* reason the codex temp-dir test passed, and it hid the
+  bug above for two commits. Assert the failure's identity: `exitCode`, `code`, `failureClass`, or a
+  message match, and explicitly reject `ReferenceError`/`TypeError`, which are programmer errors wearing
+  the costume of the failure under test. Use `tests/helpers/assert-failure.js`.
 - **Never leave a hang-shaped fixture process alive.** Terminate and *verify* fixture trees in a `finally`.
-  A leaked fixture poisons every later test on the machine.
+  A leaked fixture poisons every later test on the machine. Choose the fixture binary deliberately:
+  `cmd.exe` given unrecognized switches becomes an *interactive shell that never exits*, which silently
+  waited out opencode's entire 30 s startup sentinel. `process.execPath` with a bad script argument dies
+  immediately, which is usually what a "backend died at startup" test actually wants.
+- **Never assert a delta against shared global state.** The runner executes files concurrently, so a
+  count of `dcli-*` entries in `os.tmpdir()` includes other tests' directories: two leak tests running
+  together produced `Before: 17, after: 16`. Assert against the exact path or id the code under test
+  created.
 - **Synchronize on observed state, not sleeps.** Fixed `sleep` delays make suites slow and load-flaky; use
   ready/release markers.
 - Fault injection comes **before** broad feature tests. Kill the controller at each defined crash point
@@ -270,10 +289,27 @@ A change is not done until the docs reflect it, **in the same commit** — never
 Stale integration sources mean every future agent session is taught the old behavior. That is the most
 expensive kind of doc rot in this project, because it is invisible.
 
+## The lint gate
+
+`npm run check` = `npm run lint` + the full suite. Both must be green before a commit.
+
+`eslint.config.js` is **deliberately narrow** and exists for one class of defect: syntactically valid
+code that references a name which does not exist at runtime (`no-undef`). That class is invisible to
+`node --check` and invisible to the suite whenever the path is mocked out, and it broke every codex job
+once already.
+
+- **Keep it green.** A permanently-red lint run is decoration, and nobody reads decoration. Adding a rule
+  is a real decision: it must pass across the whole repo **in the same commit that enables it**.
+- **Rules that are off say why, inline.** `no-fallthrough` and `no-unused-vars` are currently `'off'` with
+  their violation counts and reasons recorded in the config. Do not silently drop a rule, and do not
+  enable one red.
+- Full `tsc --checkJs` is **not** used: it reports 20+ implicit-any errors in a single adapter file, and
+  that signal-to-noise ratio guarantees nobody looks.
+
 ## Git
 
-One commit per ticket. TDD order: write failing tests → verify red → implement → verify green → full
-suite → commit. **No co-author trailers.** Never commit agent scratch directories.
+One commit per ticket. TDD order: write failing tests → verify red → implement → verify green → lint +
+full suite → commit. **No co-author trailers.** Never commit agent scratch directories.
 
 ## Dogfooding
 

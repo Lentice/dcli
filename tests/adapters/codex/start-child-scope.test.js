@@ -11,6 +11,7 @@
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
+const { assertRealFailure } = require('../../helpers/assert-failure');
 
 // cmd.exe launched with codex's arguments is a hang-shaped fixture (an
 // interactive shell). Teardown runs in a finally in every case below: a leaked
@@ -103,8 +104,7 @@ async function main() {
 
   try {
     if (error) {
-      assert.ok(!(error instanceof ReferenceError),
-        `Failure must surface the spawn error, not a ReferenceError: ${error.stack}`);
+      assertRealFailure(error, {}, 'Start with a non-executable CODEX_PATH');
       assert.strictEqual(adapter._tmpDirPath, null,
         '_tmpDirPath must be cleared when Start fails synchronously');
     }
