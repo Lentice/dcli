@@ -5,6 +5,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 
 const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
+const ownedTmpDirs = new Set();
 
 function makeBaseAdapter() {
   return new OpencodeAdapter({ _testMode: true, _mockVersion: '1.18.8', _mockFacts: [], _mockExitCode: 0 });
@@ -13,6 +14,7 @@ function makeBaseAdapter() {
 function tmpDir() {
   const d = path.join(os.tmpdir(), `dcli-perm-${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(d, { recursive: true });
+  ownedTmpDirs.add(d);
   return d;
 }
 
@@ -689,7 +691,14 @@ await (async () => {
 
 }
 
-main().catch(err => {
-  console.error('FAIL:', err.message);
-  process.exit(1);
-});
+main()
+  .finally(() => {
+    for (const dir of ownedTmpDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      assert.ok(!fs.existsSync(dir), `owned fixture directory must be removed: ${dir}`);
+    }
+  })
+  .catch(err => {
+    console.error('FAIL:', err.message);
+    process.exit(1);
+  });

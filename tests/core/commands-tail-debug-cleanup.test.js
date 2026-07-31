@@ -425,9 +425,28 @@ await withTempDir(async (dir) => {
   assert.strictEqual(before.backend_session_id, 'ses_should_be_scrubbed', 'session_id must exist before scrub');
 
   const { executeCleanup } = require('../../core/commands/cleanup');
-  await executeCleanup({ store, scrubSessionIds: true });
+  const realRename = fs.renameSync;
+  let injectedFailure = false;
+  fs.renameSync = (source, destination) => {
+    if (!injectedFailure && destination === statusPath) {
+      injectedFailure = true;
+      const err = new Error('injected transient projection rename failure');
+      err.code = 'EPERM';
+      throw err;
+    }
+    return realRename(source, destination);
+  };
+  let result;
+  try {
+    result = await executeCleanup({ store, scrubSessionIds: true });
+  } finally {
+    fs.renameSync = realRename;
+  }
 
   const after = store.readStatus({ repoKey, jobId: 'clean-scrub-1' });
+  assert.ok(injectedFailure, 'test must exercise the transient rename fault');
+  assert.deepStrictEqual(result.errors, [], 'scrub must not silently swallow projection write failures');
+  assert.strictEqual(result.scrubbed, 1, 'scrub must report the projection it persisted');
   assert.strictEqual(after.backend_session_id, null, 'session_id must be null after scrub');
   console.log('PASS: cleanup test 8 — --scrub-session-ids blanks session ids');
 });

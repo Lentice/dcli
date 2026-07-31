@@ -1,6 +1,6 @@
 // @suite full
 // @serial  runs git against the real repository
-// @timeout-ms 180000  Git worktree/apply coverage is intentionally comprehensive
+// @timeout-ms 180000  measured 90.1 s standalone on 2026-07-31; 2x budget for spawn variance
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
@@ -38,6 +38,8 @@ const {
   revParse,
   getHeadCommit,
 } = require('../../core/worktree');
+const { createGitRepoTemplate } = require('../helpers/git-repo-template');
+let repoTemplate;
 
 function git(args, cwd, opts = {}) {
   return spawnSync('git', args, {
@@ -57,11 +59,7 @@ function withTempDir(fn) {
 }
 
 function initRepo(dir) {
-  fs.mkdirSync(dir, { recursive: true });
-  git(['init', '-b', 'main'], dir);
-  git(['config', 'user.email', 'test@test.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
-  git(['config', 'commit.gpgSign', 'false'], dir);
+  repoTemplate.copyTo(dir);
   fs.writeFileSync(path.join(dir, 'README.md'), '# Test\n', 'utf8');
   git(['add', '-A'], dir);
   git(['commit', '-m', 'initial commit'], dir);
@@ -78,6 +76,7 @@ function addCommit(repo, message) {
 }
 
 async function main() {
+  repoTemplate = createGitRepoTemplate('dcli-worktree-template-');
   let passed = 0;
   let failed = 0;
 
@@ -436,11 +435,13 @@ async function main() {
   // 17. diff/apply reject nonexistent jobs
   // ===========================================================================
   await testAsync('17. diff/apply reject nonexistent jobs', async () => {
-    const store = new JobStore({ stateRoot: fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-nojob-')) });
-    const { executeDiff } = require('../../core/commands/diff');
-    assert.throws(() => executeDiff({ store, repoKey: 'rk', jobId: 'nonexistent' }), /not found/i);
-    const { executeApply } = require('../../core/commands/apply');
-    assert.throws(() => executeApply({ store, repoKey: 'rk', jobId: 'nonexistent' }), /not found/i);
+    await withTempDir(async (root) => {
+      const store = new JobStore({ stateRoot: root });
+      const { executeDiff } = require('../../core/commands/diff');
+      assert.throws(() => executeDiff({ store, repoKey: 'rk', jobId: 'nonexistent' }), /not found/i);
+      const { executeApply } = require('../../core/commands/apply');
+      assert.throws(() => executeApply({ store, repoKey: 'rk', jobId: 'nonexistent' }), /not found/i);
+    });
   });
 
   // ===========================================================================
@@ -708,7 +709,9 @@ async function main() {
   if (failed > 0) process.exit(1);
 }
 
-main().catch(err => {
-  console.error('FATAL:', err.message);
-  process.exit(1);
-});
+main()
+  .finally(() => repoTemplate?.cleanup())
+  .catch(err => {
+    console.error('FATAL:', err.message);
+    process.exit(1);
+  });

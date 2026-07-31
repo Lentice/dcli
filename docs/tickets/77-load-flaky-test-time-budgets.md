@@ -138,8 +138,30 @@ node tests/integration/installer.test.js
   `dcli-test` 115, `dcli-nojob` 107).
 - Defender exclusion list could not be read — `Get-MpPreference` requires an elevated shell. Worth checking whether
   the repo and temp paths are excluded before concluding anything about the host.
-- Remaining measurement — standalone cost of every other file versus its budget — is left to the implementer; only
-  the observed victims have been measured.
+- Implemented measurement, 2026-07-31:
+  - First default-concurrency full-pool run after fixture-template optimization: green in 207.8 s.
+  - Files within approximately 3× of their budget: `core/test-runner.test.js` 41.5 s / 120 s.
+  - `core/worktree.test.js` measured 50.2 s / 180 s in-pool and 90.1 s standalone. Its 180 s override is
+    retained at 2× the measured standalone cost to cover the observed process-creation variance.
+  - Previously observed victims after optimization: `core/review.test.js` 10.4 s / 120 s in-pool and
+    28.3 s standalone; `core/commands.test.js` 16.6 s / 120 s; `integration/installer.test.js`
+    16.6 s / 120 s. No budget increase was needed.
+  - All remaining files completed below 40 s against the 120 s default and therefore were not within
+    approximately 3× of their budget.
+  - The first consecutive gate stopped after seven green runs when run 8 exposed a non-timeout Windows
+    projection-write flake in `core/commands-tail-debug-cleanup.test.js` (0.77 s elapsed): session-id
+    scrubbing used one atomic rename and silently recorded a transient rename failure. Cleanup now uses
+    `JobStore`'s existing bounded atomic-write retry, and the test asserts both the persisted value and
+    an empty error list.
+  - After that fix, 10 consecutive default-concurrency full suites passed with zero failures:
+    172.4 s, 187.2 s, 170.5 s, 170.8 s, 169.7 s, 170.5 s, 185.2 s, 169.4 s, 170.2 s, and 173.4 s.
+  - Review follow-up reduced each template's setup to one `git init` process by writing the known test
+    config directly, added fault injection for the transient rename retry, and fixed exact-path teardown
+    for the observed `dcli-perm-*`, `dcli-long-*`, and `dcli-nojob-*` leak sites. The `dcli-test-prompt-*`
+    and `dcli-test-resume-*` fixtures already had explicit `finally`/teardown cleanup.
+  - Final post-review gate, on the final source state: 10/10 consecutive default-concurrency full
+    suites green in 182.3 s, 168.8 s, 168.1 s, 167.8 s, 168.0 s, 173.1 s, 180.3 s, 183.1 s, 182.0 s,
+    and 177.6 s.
 
 ## Commit message
 

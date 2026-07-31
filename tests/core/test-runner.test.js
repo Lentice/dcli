@@ -10,16 +10,15 @@ const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
 // The nested runner starts several child Node processes; 5 s flakes when the
 // outer full suite is concurrently creating git and backend fixtures.
 const FIXTURE_TIMEOUT = 10000;
-const MARKER = path.join(os.tmpdir(), 'dcli-serial-marker-test');
-const HANG_PID = path.join(os.tmpdir(), 'dcli-hang-pid.txt');
-
 const RUNNER_BIN = process.execPath;
 
 async function main() {
   const { runTests, createOutputCapture } = require(RUNNER);
-
-  try { fs.unlinkSync(MARKER); } catch {}
-  try { fs.unlinkSync(HANG_PID); } catch {}
+  const fixtureTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-runner-fixtures-'));
+  const marker = path.join(fixtureTmp, 'serial-marker');
+  const hangPidFile = path.join(fixtureTmp, 'hang-pid.txt');
+  const previousFixtureTmp = process.env.DCLI_TEST_RUNNER_TMP;
+  process.env.DCLI_TEST_RUNNER_TMP = fixtureTmp;
 
   try {
     // -----------------------------------------------------------------------
@@ -28,14 +27,27 @@ async function main() {
     {
       const r1 = await runTests({ root: FIXTURES_DIR, concurrency: 1, timeoutMs: FIXTURE_TIMEOUT, suite: 'full' });
       const r2 = await runTests({ root: FIXTURES_DIR, concurrency: 3, timeoutMs: FIXTURE_TIMEOUT, suite: 'full' });
-      assert.strictEqual(r1.output, r2.output, 'Byte-exact output must match at different concurrency');
+      const withoutTimings = (output) => output.replace(/\d+ ms \/ \d+ ms/g, '<timing>');
+      assert.strictEqual(
+        withoutTimings(r1.output),
+        withoutTimings(r2.output),
+        'Output other than measured timings must match at different concurrency',
+      );
 
-      assert.ok(!r1.output.includes('parallel-check.test.js'), 'Serial exclusivity: parallel-check must not appear in failures');
+      assert.ok(
+        !/parallel-check\.test\.js\s+\((?:exit code|timed out)/.test(r1.output),
+        'Serial exclusivity: parallel-check must not appear in failures',
+      );
       assert.ok(r1.output.includes('fail.test.js'), 'fail fixture should appear in failures');
       assert.ok(r1.output.includes('HANG: about to hang'), 'hang fixture stdout should appear in output');
       assert.ok(r1.output.includes('exit code: 1'), 'Exit code 1 must be reported');
       assert.ok(r1.output.includes('FAIL_OUT'), 'Failing stdout must appear in output');
       assert.ok(r1.output.includes('FAIL_ERR'), 'Failing stderr must appear in output');
+      assert.match(
+        r1.output,
+        /pass\.test\.js\s+\(\d+ ms \/ 10000 ms\)/,
+        'each file must report elapsed time next to its effective budget',
+      );
     }
 
     // -----------------------------------------------------------------------
@@ -53,8 +65,12 @@ async function main() {
     // -----------------------------------------------------------------------
     {
       const r = await runTests({ root: FIXTURES_DIR, concurrency: 1, timeoutMs: 1000, suite: 'full' });
-      assert.ok(r.output.includes('5 passed, 2 failed'), 'file-level timeout must let the slow fixture finish');
       assert.ok(!r.output.includes('slow-timeout.test.js  (timed out'), 'slow fixture must not use the shorter suite timeout');
+      assert.match(
+        r.output,
+        /slow-timeout\.test\.js\s+\(\d+ ms \/ 10000 ms\)/,
+        'the slow fixture must finish within its finite file-level override',
+      );
     }
 
     // -----------------------------------------------------------------------
@@ -114,12 +130,10 @@ async function main() {
 
     console.log('PASS: all test-runner tests');
   } finally {
-    try { fs.unlinkSync(MARKER); } catch {}
-
     // Verify hang fixture process tree is gone
     let hangPid;
     try {
-      const text = fs.readFileSync(HANG_PID, 'utf8').trim();
+      const text = fs.readFileSync(hangPidFile, 'utf8').trim();
       hangPid = parseInt(text, 10);
     } catch {
       // PID file missing — fixture may have been killed before writing
@@ -131,8 +145,12 @@ async function main() {
         console.error('FAIL: hang fixture process still alive after timeout');
         process.exit(1);
       } catch {}
-      try { fs.unlinkSync(HANG_PID); } catch {}
     }
+    if (previousFixtureTmp === undefined) delete process.env.DCLI_TEST_RUNNER_TMP;
+    else process.env.DCLI_TEST_RUNNER_TMP = previousFixtureTmp;
+    fs.rmSync(fixtureTmp, { recursive: true, force: true });
+    assert.ok(!fs.existsSync(fixtureTmp), 'owned fixture temp directory must be removed');
+    assert.ok(!fs.existsSync(marker), 'serial marker must not leak');
   }
 }
 

@@ -263,7 +263,7 @@ function validateRunOptions({ suite, timeoutMs, concurrency }) {
 /**
  * @param {{ path: string, rel: string, group: string }[]} files
  * @param {number} concurrency
- * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, stdout: string, stderr: string }[]>}
+ * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, elapsedMs: number, stdout: string, stderr: string }[]>}
  */
 function runParallelBatch(files, concurrency) {
   return new Promise((resolve) => {
@@ -303,10 +303,11 @@ function runParallelBatch(files, concurrency) {
 /**
  * @param {{ path: string, rel: string }} fileMeta
  * @param {number} timeoutMs
- * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, stdout: string, stderr: string }>}
+ * @returns {Promise<{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, elapsedMs: number, stdout: string, stderr: string }>}
  */
 function runSingle(fileMeta, timeoutMs) {
   return new Promise((resolve) => {
+    const startedAt = Date.now();
     const child = spawn(process.execPath, [fileMeta.path], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -330,6 +331,7 @@ function runSingle(fileMeta, timeoutMs) {
         exitCode: exitCode != null ? exitCode : -1,
         timedOut,
         timeoutMs,
+        elapsedMs: Date.now() - startedAt,
         stdout: stdout.render(),
         stderr: stderr.render(),
       });
@@ -375,7 +377,7 @@ function runSingle(fileMeta, timeoutMs) {
 
 /**
  * @param {{ path: string, rel: string, group: string }[]} active
- * @param {{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, stdout: string, stderr: string }[]} results
+ * @param {{ rel: string, passed: boolean, exitCode: number, timedOut: boolean, timeoutMs: number, elapsedMs: number, stdout: string, stderr: string }[]} results
  * @param {'quick'|'full'} suite
  * @returns {{ output: string, anyFailed: boolean }}
  */
@@ -425,6 +427,9 @@ function formatResults(active, results, suite) {
         failedCount++;
         anyFailed = true;
         failures.push(r);
+      }
+      if (r) {
+        lines.push(`  ${f.rel}  (${r.elapsedMs} ms / ${r.timeoutMs} ms)`);
       }
     }
 

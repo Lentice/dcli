@@ -9,6 +9,8 @@ const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { JobStore } = require('../../core/job-store');
 const { buildReviewPrompt, generateDiff, executeReview, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT } = require('../../core/commands/review');
 const { parseFindings, APPENDIX_MARKER, KNOWN_SEVERITIES } = require('../../core/findings');
+const { createGitRepoTemplate } = require('../helpers/git-repo-template');
+let repoTemplate;
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-review-test-'));
@@ -22,9 +24,7 @@ function withTempDir(fn) {
 }
 
 function initGitRepo(dir) {
-  spawnSync('git', ['init'], { cwd: dir, encoding: 'utf8', windowsHide: true });
-  spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir, encoding: 'utf8', windowsHide: true });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, encoding: 'utf8', windowsHide: true });
+  repoTemplate.copyTo(dir);
 }
 
 function gitAddCommit(dir, msg) {
@@ -33,6 +33,7 @@ function gitAddCommit(dir, msg) {
 }
 
 async function main() {
+repoTemplate = createGitRepoTemplate('dcli-review-template-');
 
 // ===========================================================================
 // 1. buildReviewPrompt includes the diff and framing text
@@ -501,7 +502,9 @@ await withTempDir(async (dir) => {
 console.log('\nAll review command tests passed.');
 }
 
-main().catch(err => {
-  console.error('FATAL:', err.message);
-  process.exit(1);
-});
+main()
+  .finally(() => repoTemplate?.cleanup())
+  .catch(err => {
+    console.error('FATAL:', err.message);
+    process.exit(1);
+  });

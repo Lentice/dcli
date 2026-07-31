@@ -141,6 +141,9 @@ one of these, **the test is right and your change is wrong.**
 - **One commit per ticket**, TDD order: write failing tests → verify red → implement → verify green →
   full suite → commit. **No co-author trailers.**
 - **Docs are updated in the same commit** as the behavior they describe.
+- On Windows, real-time antivirus scanning can make each process creation unusually expensive. A local
+  exclusion for this repository and the test temp area may improve development speed, but the suite must
+  remain correct without one. Do not weaken concurrency, budgets, or assertions to compensate.
 
 ## 9. How to work your ticket
 

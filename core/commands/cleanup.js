@@ -96,9 +96,10 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
         if (TERMINAL.has(status.state) && status.backend_session_id) {
           if (!dryRun) {
             status.backend_session_id = null;
-            const { writeJsonFileAtomic } = require('../fs-text');
             try {
-              writeJsonFileAtomic(statusPath, status);
+              // Use the store's bounded atomic-write retry. Antivirus and concurrent
+              // readers can transiently hold the projection on Windows.
+              store._atomicWriteJsonWithRetry(statusPath, status);
               result.scrubbed++;
             } catch (err) {
               result.errors.push(`Failed to scrub session id for ${repoKey}/${jobId}: ${err.message}`);

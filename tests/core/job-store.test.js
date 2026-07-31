@@ -937,6 +937,8 @@ console.log('PASS: atomic write cleanup');
       clean(root);
       clean(dir);
     }
+    clean(base);
+    assert.ok(!fs.existsSync(base), 'long-path fixture root must be removed');
   }
 
   // ---------------------------------------------------------------------------
