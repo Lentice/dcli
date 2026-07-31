@@ -285,8 +285,7 @@ class JobStore {
         lastErr = err;
         if (i < ATOMIC_WRITE_MAX_RETRIES) {
           const delay = ATOMIC_WRITE_DELAY_MS + Math.floor(Math.random() * 15);
-          const start = Date.now();
-          while (Date.now() - start < delay) {}
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
         }
       }
     }

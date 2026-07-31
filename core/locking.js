@@ -20,6 +20,17 @@ const DEFAULT_TIMEOUT_MS = 10000;
 const BACKOFF_MIN_MS = 10;
 const BACKOFF_MAX_MS = 200;
 
+const SLEEP_SAB = new Int32Array(new SharedArrayBuffer(4));
+
+function synchronousSleep(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(SLEEP_SAB, 0, 0, Math.max(1, ms));
+}
+
+function getBackoffDelay(remaining) {
+  return Math.min(BACKOFF_MAX_MS, Math.max(BACKOFF_MIN_MS, Math.floor(remaining / 10)));
+}
+
 /**
  * @param {string} key
  * @returns {string}
@@ -133,9 +144,8 @@ class LockManager {
         lastError = err;
         const remaining = deadline - Date.now();
         if (remaining <= BACKOFF_MIN_MS) break;
-        const delay = Math.min(BACKOFF_MAX_MS, Math.max(BACKOFF_MIN_MS, remaining / 10));
-        const start = Date.now();
-        while (Date.now() - start < delay) {}
+        const delay = getBackoffDelay(remaining);
+        synchronousSleep(delay);
       }
     }
 
@@ -184,8 +194,18 @@ class LockManager {
       return lock;
     } catch (err) {
       if (err.code === 'EEXIST' && this._isStale(lockPath)) {
-        this._quarantine(lockPath);
-        return this.tryAcquire(scope, key, extra);
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            this._quarantine(lockPath);
+            if (!fs.existsSync(lockPath)) break;
+          } catch {
+            synchronousSleep(BACKOFF_MIN_MS);
+          }
+        }
+        if (!fs.existsSync(lockPath)) {
+          return this.tryAcquire(scope, key, extra);
+        }
+        return null;
       }
       return null;
     }
@@ -229,8 +249,12 @@ class LockManager {
 
   _isStale(lockPath) {
     try {
+      if (!fs.existsSync(lockPath)) return false;
       const meta = this._readMetadata(lockPath);
-      if (!meta || !meta.pid) return false;
+      if (!meta || !meta.pid) {
+        this._quarantine(lockPath);
+        return true;
+      }
 
       if (meta.pid === this._ownIdentity.pid) {
         if (meta.executionToken === this._ownToken) {
