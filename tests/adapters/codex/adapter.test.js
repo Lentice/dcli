@@ -260,11 +260,11 @@ async function main() {
   assert.deepStrictEqual(rungs, ['hard_kill']);
 
   // Unknown rungs are rejected
-  const resultBad = adapter.RequestCancel({}, 'session_abort');
+  const resultBad = await adapter.RequestCancel({}, 'session_abort');
   assert.strictEqual(resultBad.success, false);
 
   // hard_kill succeeds
-  const resultGood = adapter.RequestCancel({}, 'hard_kill');
+  const resultGood = await adapter.RequestCancel({}, 'hard_kill');
   assert.strictEqual(resultGood.success, true);
   assert.strictEqual(adapter.cancelRungReached, 'hard_kill');
   assert.strictEqual(adapter.cancelled, true);

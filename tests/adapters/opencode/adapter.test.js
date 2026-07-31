@@ -225,7 +225,7 @@ async function main() {
   const rungs = adapter.DeclareCancelRungs();
 
   for (const rung of rungs) {
-    const result = adapter.RequestCancel({}, rung);
+    const result = await adapter.RequestCancel({}, rung);
     assert.ok(result && typeof result === 'object');
     assert.ok('success' in result);
   }

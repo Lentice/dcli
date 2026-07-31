@@ -69,7 +69,7 @@ async function cancelJob(opts) {
   let cancelRungReached = null;
 
   for (const rung of rungs) {
-    adapter.RequestCancel(attempt, rung);
+    await adapter.RequestCancel(attempt, rung);
     await boundedSleep(rungWaitMs);
     if (!isProcessAliveFn(pid)) {
       cancelRungReached = rung;

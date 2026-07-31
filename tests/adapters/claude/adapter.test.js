@@ -235,7 +235,7 @@ async function main() {
 // ===========================================================================
 {
   const adapter = makeMinimalAdapter();
-  const result = adapter.RequestCancel({}, 'graceful_stop');
+  const result = await adapter.RequestCancel({}, 'graceful_stop');
   assert.strictEqual(result.success, false);
   assert.ok(result.error);
   console.log('PASS: RequestCancel rejects unknown rung');
@@ -246,7 +246,7 @@ async function main() {
 // ===========================================================================
 {
   const adapter = makeMinimalAdapter();
-  const result = adapter.RequestCancel({}, 'hard_kill');
+  const result = await adapter.RequestCancel({}, 'hard_kill');
   assert.strictEqual(result.success, true);
   assert.strictEqual(adapter.cancelled, true);
   assert.strictEqual(adapter.cancelRungReached, 'hard_kill');

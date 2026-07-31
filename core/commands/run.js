@@ -140,22 +140,22 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
   let hardTimedOut = false;
   let hardTimeoutTimer = null;
 
-  function cancelThroughRungs() {
+  async function cancelThroughRungs() {
     try {
       const rungs = adapter.DeclareCancelRungs();
       if (rungs && rungs.length > 0) {
         for (const rung of rungs) {
-          try { adapter.RequestCancel(attempt, rung); } catch {}
+          try { await adapter.RequestCancel(attempt, rung); } catch {}
         }
       }
     } catch {}
   }
 
   if (hardTimeoutMs > 0) {
-    hardTimeoutTimer = setTimeout(() => {
+    hardTimeoutTimer = setTimeout(async () => {
       if (hardTimedOut) return;
       hardTimedOut = true;
-      cancelThroughRungs();
+      await cancelThroughRungs();
     }, hardTimeoutMs);
     if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
   }

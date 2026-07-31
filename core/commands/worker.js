@@ -202,20 +202,20 @@ async function main() {
 
   const attempt = {};
 
-  function requestCancelRungs() {
+  async function requestCancelRungs() {
     try {
       const rungs = adapter.DeclareCancelRungs();
       if (rungs && rungs.length > 0) {
         for (const rung of rungs) {
-          try { adapter.RequestCancel(attempt, rung); } catch {}
+          try { await adapter.RequestCancel(attempt, rung); } catch {}
         }
       }
     } catch {}
   }
 
-  hardTimeoutTimer = setTimeout(() => {
+  hardTimeoutTimer = setTimeout(async () => {
     hardTimedOut = true;
-    requestCancelRungs();
+    await requestCancelRungs();
   }, hardTimeoutMs);
   if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
 
@@ -224,14 +224,14 @@ async function main() {
   let cancelWatcherTimer = null;
   const CANCEL_WATCH_MS = 2000;
 
-  function checkCancelRequest() {
+  async function checkCancelRequest() {
     if (cancelled || hardTimedOut) return;
     try {
       const cancelPath = path.join(jobDir, 'cancel.request');
       if (fs.existsSync(cancelPath)) {
         cancelled = true;
         clearTimeout(cancelWatcherTimer);
-        requestCancelRungs();
+        await requestCancelRungs();
       }
     } catch {}
     if (!cancelled && !hardTimedOut) {

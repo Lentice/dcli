@@ -1378,7 +1378,7 @@ class OpencodeAdapter {
     }
   }
 
-  RequestCancel(attempt, rung) {
+  async RequestCancel(attempt, rung) {
     if (this._cancelled) return { success: true };
 
     switch (rung) {
@@ -1386,8 +1386,13 @@ class OpencodeAdapter {
         if (this._sessionId && this._serverBaseUrl) {
           try {
             const abortUrl = this._buildUrl(`/session/${this._sessionId}/abort`);
-            httpPost(abortUrl, {}, { responseTimeout: 5000, password: this._password });
-          } catch {}
+            await httpPost(abortUrl, {}, { responseTimeout: 5000, password: this._password });
+            this._cancelRungReached = 'session_abort';
+            this._cancelled = true;
+            return { success: true };
+          } catch {
+            return { success: false, error: 'session_abort HTTP failed' };
+          }
         }
         this._cancelRungReached = 'session_abort';
         this._cancelled = true;
@@ -1396,10 +1401,13 @@ class OpencodeAdapter {
       case 'server_dispose':
         if (this._serverBaseUrl) {
           try {
-            httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password });
-          } catch {}
+            await httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password });
+          } catch {
+            return { success: false, error: 'server_dispose HTTP failed' };
+          }
         }
         this._killServer();
+        this._serverBaseUrl = null;
         this._cancelRungReached = 'server_dispose';
         this._cancelled = true;
         return { success: true };
