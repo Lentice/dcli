@@ -1,5 +1,6 @@
 const path = require('path');
 const { spawn } = require('child_process');
+const { DEFAULT_BACKEND } = require('../../adapters/registry');
 const { generateJobId } = require('../job-id');
 const { buildEnvelope, isVersionInRange } = require('./index');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
@@ -50,7 +51,7 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   const capabilitiesSnapshot = manifest;
 
   const identity = adapter.GetIdentity();
-  const resolvedBackend = identity.backend || 'fake';
+  const resolvedBackend = identity.backend || DEFAULT_BACKEND;
   const backendVersion = detectedVersion || '1.0.0';
   const adapterVersion = identity.adapter_version || '1.0.0';
   const effectiveAccess = access || 'read-only';
