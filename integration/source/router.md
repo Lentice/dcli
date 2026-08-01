@@ -27,6 +27,9 @@ Choose a backend, then load that backend's skill:
 ## Rules
 
 1. **Always pass both budgets:** `--hard-timeout-sec` and `wait --timeout-sec`.
+   The outer shell or agent tool also needs a finite timeout longer than the
+   hard budget; if it cannot set one, use `submit` and collect later with the
+   bounded `wait` command.
 2. **Never auto-apply.** Inspect `diff` before `apply`.
 3. **Independently verify every finding** from a delegated review.
 4. **Never retry** quota, auth, permission, or timeout failures.

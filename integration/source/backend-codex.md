@@ -29,6 +29,11 @@ dcli-codex review [--working|--staged|--range <base>..<head>] [--path <p>] [--in
 echo "Question or prompt" | dcli-codex run --hard-timeout-sec <n>
 ```
 
+`run` has an execution budget, but the shell or agent tool invoking it must
+also have a finite outer timeout longer than `<n>` plus startup/cleanup slack.
+If that outer timeout cannot be set reliably, use `submit` and collect the
+result with `wait --timeout-sec <n>` instead.
+
 ### implement
 
 ```
@@ -43,6 +48,9 @@ dcli-codex apply [--reset-author] [--message <s>] <job-id>
 ```
 echo "Follow-up" | dcli-codex resume <job-id> --kind continue_backend_session --hard-timeout-sec <n>
 ```
+
+The same outer-timeout rule applies to synchronous `resume`. For a long
+follow-up, submit a new attempt and use a bounded `wait` from the caller.
 
 ### jobs (status / list / wait)
 

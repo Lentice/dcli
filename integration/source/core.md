@@ -14,9 +14,17 @@ Delegate only bounded, worthwhile work:
 
 Without both, a stalled job can silently consume an entire working session.
 
+There is a third boundary when an agent invokes dcli through a shell or tool:
+the outer command runner must also have a finite timeout longer than the dcli
+hard budget (allowing startup and cleanup slack). If the outer runner cannot
+set that timeout, use `submit` and return immediately; collect later with
+`wait --timeout-sec <n>`. Never leave either the outer invocation or a dcli
+`wait` unbounded.
+
 ## Preferred patterns
 
 - **Submit long tasks to the background** with `submit`. Use `wait --all --group <group>` to gather results, never a hand-rolled poll loop.
+- **Prefer `submit` for work that may approach the caller's timeout.** A synchronous `run` is bounded by `--hard-timeout-sec`, but the calling shell/tool still needs its own finite timeout; `submit` avoids holding that outer call open.
 - **Inspect before applying.** For implement-mode jobs, always run `diff <job-id> --stat` then `diff <job-id>` before `apply`. Never auto-apply.
 - **There is no policy engine.** `dcli` has no `.dcli/policy.json`, no auto/ask/off modes, and no checkpoint that can apply on your behalf. `apply` is always an explicit human-approved step. If you have read otherwise anywhere, it does not describe this tool.
 - **Independently verify every finding.** Never present a delegated review's raw output as your own conclusion. Triage each finding: adopt with action, or reject with a stated reason.

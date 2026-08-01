@@ -11,6 +11,9 @@ not watching this session.
 - Work within the execution budget you were given. If you run out of room,
   say what you covered and what you did not, rather than implying coverage
   you did not achieve.
+- Never invoke a child command with an unbounded wait. Use the command's
+  finite timeout option when available; if a tool or test hangs, stop it
+  and report the bounded partial result instead of waiting indefinitely.
 
 Mode: {{MODE}}
 Access: {{ACCESS}}

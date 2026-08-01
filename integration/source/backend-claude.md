@@ -29,6 +29,11 @@ dcli-claude review [--working|--staged|--range <base>..<head>] [--path <p>] [--i
 echo "Question" | dcli-claude run --hard-timeout-sec <n>
 ```
 
+`run` has an execution budget, but the shell or agent tool invoking it must
+also have a finite outer timeout longer than `<n>` plus startup/cleanup slack.
+If that outer timeout cannot be set reliably, use `submit` and collect the
+result with `wait --timeout-sec <n>` instead.
+
 ### implement
 
 ```
