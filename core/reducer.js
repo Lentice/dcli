@@ -173,7 +173,7 @@ function reduce(state, facts, evidence) {
         phase: 'terminal',
         failure: lostResult
           ? { reason: 'worker_lost_no_result' }
-          : failureClass ? { class: failureClass, reason: 'worker_lost_no_result', code: sentinelExitCode }
+          : failureClass ? { class: failureClass, reason: 'backend_error', code: sentinelExitCode }
             : (state.failure || null),
         failure_reason: failureClass || state.failure_reason || null,
         backend_session_id: state.backend_session_id || null,

@@ -125,6 +125,7 @@ async function main() {
     process.exit(0);
   }
   const slotId = slotResult.slotId;
+  process.env.DCLI_SLOT_ID = slotId;
   if (queueClaimPath) {
     try { fs.unlinkSync(queueClaimPath); } catch {}
   }
@@ -618,5 +619,14 @@ main().catch(err => {
     1,
     'failed'
   );
+  try {
+    const { AdmissionController } = require('../admission');
+    const { getBackendLimits } = require('../../adapters/registry');
+    const admission = new AdmissionController({
+      stateRoot: process.env.DCLI_STATE_ROOT,
+      backendLimits: getBackendLimits(),
+    });
+    admission.releaseSlot(process.env.DCLI_SLOT_ID);
+  } catch {}
   process.exit(1);
 });
