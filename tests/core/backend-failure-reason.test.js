@@ -197,6 +197,21 @@ await withTempDir(async (dir) => {
   console.log('PASS: classifyTerminalFailure unit cases');
 }
 
+// A cancelled worker may have no result artifact because the kill raced its
+// write. The reducer's intentional cancellation remains authoritative.
+{
+  const r = classifyTerminalFailure({
+    exitCode: 1,
+    resultBytes: 0,
+    resultStatus: 'missing',
+    reducerResult: { state: 'cancelled', failure_reason: null, failure: null },
+  });
+  assert.strictEqual(r.terminalState, undefined,
+    'missing result must not override a reduced cancellation');
+  assert.strictEqual(r.failure_reason, null);
+  console.log('PASS: cancelled state survives missing result classification');
+}
+
 // =============================================================================
 // 6. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
 //    access, does NOT fire on plain questions or non-read-only access, and

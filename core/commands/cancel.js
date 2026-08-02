@@ -1,6 +1,6 @@
 const { cancelJob } = require('../cancel');
 const { buildEnvelope, loadJobOrThrow } = require('./index');
-const { isProcessAlive, parseWorkerIdentity } = require('../process-identity');
+const { isProcessAlive, isSameProcessAlive, parseWorkerIdentity } = require('../process-identity');
 
 async function executeCancel({ store, adapter, repoKey, jobId, json }) {
   if (!jobId) {
@@ -12,11 +12,26 @@ async function executeCancel({ store, adapter, repoKey, jobId, json }) {
   const { status, attemptNum, jobDir } = loadJobOrThrow({ store, repoKey, jobId, regenerate: false });
 
   let pid = null;
-  if (status.worker_identity) {
-    const parsed = parseWorkerIdentity(status.worker_identity);
-    if (parsed) pid = parsed.pid;
-  }
-  if (pid === null && status.worker_pid) {
+  // Liveness must be judged against the recorded identity, not the bare pid.
+  // A reused pid otherwise reads as "the worker is still running" — or, after
+  // a rung, as "it is gone" — for a process that was never the worker, which
+  // is exactly the confirmation this command exists to give honestly.
+  const identity = parseWorkerIdentity(status.worker_identity);
+  let isProcessAliveFn = isProcessAlive;
+  if (identity) {
+    pid = identity.pid;
+    // Verify ownership once before signalling. Repeating the Windows identity
+    // query for every rung would spawn PowerShell and consume the rung budget.
+    let identityVerified = false;
+    isProcessAliveFn = () => {
+      if (!identityVerified) {
+        const alive = isSameProcessAlive(identity);
+        if (alive) identityVerified = true;
+        return alive;
+      }
+      return isProcessAlive(identity.pid);
+    };
+  } else if (status.worker_pid) {
     pid = status.worker_pid;
   }
 
@@ -27,7 +42,7 @@ async function executeCancel({ store, adapter, repoKey, jobId, json }) {
     containment: null,
     executionToken: status.execution_token || null,
     pid,
-    isProcessAliveFn: isProcessAlive,
+    isProcessAliveFn,
   });
 
   if (json) {

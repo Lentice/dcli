@@ -44,8 +44,14 @@ function loadJobOrThrow({ store, repoKey, jobId, regenerate = true }) {
   // tells an agent to stop looking for a job that is sitting right there.
   let status;
   try {
+    // reconcileStatus() regenerates from the journal and, when the worker is
+    // provably gone, journals the terminal transition the worker never got to
+    // write. Without it a crashed or killed worker leaves the job `running`
+    // forever: `wait` polls to its budget and `status` reports a job that
+    // nothing is executing. It is a no-op (one journal read) for terminal jobs
+    // and for jobs whose worker is alive.
     status = regenerate
-      ? store.regenerateStatus({ repoKey, jobId })
+      ? store.reconcileStatus({ repoKey, jobId })
       : store.readStatus({ repoKey, jobId });
   } catch (cause) {
     const err = new Error(`Job record could not be read: ${repoKey}/${jobId}: ${cause && cause.message}`);
@@ -112,9 +118,25 @@ const ACCESS_HINT_PATTERNS = [
  * @param {{ exitCode:number|null, resultBytes:number, reducerResult:Object }} args
  * @returns {{ failure_reason:string|null, failure:Object|null }}
  */
-function classifyTerminalFailure({ exitCode, resultBytes, reducerResult }) {
+function classifyTerminalFailure({ exitCode, resultBytes, reducerResult, resultStatus }) {
   const failure_reason = (reducerResult && reducerResult.failure_reason) || null;
   const failure = (reducerResult && reducerResult.failure) || null;
+  // A hard kill commonly races the result-file write. Preserve an intentional
+  // cancellation instead of relabelling it as a backend artifact failure.
+  if (reducerResult && reducerResult.state === 'cancelled') {
+    return { failure_reason, failure };
+  }
+  // The adapter could not read back the result the backend was told to write.
+  // A backend that exits 0 having produced nothing is not a clean run, and
+  // reporting it as one is the "a failure must never read as a clean result"
+  // defect: the caller gets `done` with an empty result and no reason.
+  if (resultStatus === 'missing') {
+    return {
+      failure_reason: failure_reason || 'result_missing',
+      failure: failure || { class: 'artifact_persistence', message: 'Backend produced no result file' },
+      terminalState: 'failed',
+    };
+  }
   if (exitCode && exitCode !== 0 &&
       typeof resultBytes === 'number' && resultBytes < NO_RESULT_BYTE_THRESHOLD) {
     if (!failure_reason) return { failure_reason: 'backend_exited_no_result', failure };
