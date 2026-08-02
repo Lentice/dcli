@@ -889,7 +889,7 @@ class OpencodeAdapter {
       env: { ...process.env, OPENCODE_SERVER_PASSWORD: this._password },
       windowsHide: invocation.windowsHide,
       // Forward the invocation's own value: it is the single source of truth
-      // for how its command line was quoted (docs/tickets/80).
+      // for how its command line is quoted (adapters/codex/cmd-quoting.js).
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
 

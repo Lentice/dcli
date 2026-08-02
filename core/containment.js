@@ -246,7 +246,7 @@ class ContainmentContext {
 //
 // The debt-free fix is for adapters to spawn the backend THROUGH a ContainmentContext
 // so the tree is contained from birth; then `context.terminate()` above is all the
-// worker's hard timeout needs. See docs/tickets/69 and docs/tickets/78.
+// worker's hard timeout needs. See docs/tickets/78.
 // `tests/core/hard-kill-honesty.test.js` pins the absence of this export.
 
 module.exports = { ContainmentContext, isAvailable, resolveHelperPath, HELPER_PATH };

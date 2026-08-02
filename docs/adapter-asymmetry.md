@@ -7,25 +7,25 @@ contract violations.
 
 ## Contract operations
 
-| Operation | fake | opencode | codex | Notes |
-|---|---|---|---|---|
-| `GetIdentity` | yes | yes | yes | — |
-| `DetectVersion` | yes | yes | yes | — |
-| `ProbeCapabilities` | yes | yes | yes | — |
-| `DeclareCancelRungs` | yes | yes | yes | — |
-| `ValidateRequest` | yes | yes | yes | — |
-| `PrepareInvocation` | yes | yes | yes | — |
-| `Start` | yes | yes | yes | — |
-| `Observe` | yes | yes | yes | — |
-| `SendPrompt` | yes | yes | yes | — |
-| `Resume` | yes | yes | yes | stub-only in thin slice; not implemented for any backend |
-| `Respond` | yes (if capability declared) | no | no | Requires backend HTTP interface for interactive permissions. Neither opencode thin slice nor codex exec mode provides this. |
-| `RequestCancel` | yes | yes | yes | Rung count differs (see below) |
-| `CollectResult` | yes | yes | yes | — |
-| `CollectDiagnostics` | yes | yes | yes | — |
-| `Dispose` | yes | yes | yes | — |
-| `Recover` | yes | yes | yes | — |
-| `LiveSmoke` | yes | yes | yes | — |
+| Operation | fake | opencode | codex | claude | Notes |
+|---|---|---|---|---|---|
+| `GetIdentity` | yes | yes | yes | yes | — |
+| `DetectVersion` | yes | yes | yes | yes | — |
+| `ProbeCapabilities` | yes | yes | yes | yes | — |
+| `DeclareCancelRungs` | yes | yes | yes | yes | — |
+| `ValidateRequest` | yes | yes | yes | yes | — |
+| `PrepareInvocation` | yes | yes | yes | yes | — |
+| `Start` | yes | yes | yes | yes | — |
+| `Observe` | yes | yes | yes | yes | — |
+| `SendPrompt` | yes | yes | yes | yes | — |
+| `Resume` | yes | yes | yes | yes | Explicit continuation, fork, and retry kinds are engine-owned. |
+| `Respond` | yes (if capability declared) | yes | no | no | Only opencode exposes a live permission/question response API. |
+| `RequestCancel` | yes | yes | yes | yes | Rung count differs (see below) |
+| `CollectResult` | yes | yes | yes | yes | — |
+| `CollectDiagnostics` | yes | yes | yes | yes | — |
+| `Dispose` | yes | yes | yes | yes | — |
+| `Recover` | yes | yes | yes | yes | — |
+| `LiveSmoke` | yes | yes | yes | yes | — |
 
 ## Fact types
 
@@ -52,13 +52,15 @@ contract violations.
 |---|---|---|
 | opencode | emitted via `GET /session/status` → `idle`/`busy`/`retry` | The HTTP server exposes a real status endpoint the adapter polls. |
 | codex | never emitted | `codex exec` is a one-shot CLI process with no status API. Process-alive is the only liveness signal. The adapter must not fabricate a status. |
+| claude | never emitted | The current `claude -p --output-format stream-json` path has no equivalent status API. |
 
 ### `Respond` (interactive permissions)
 
 | Backend | Support | Reason |
 |---|---|---|
-| opencode | declared via `extensions.interactive_permissions` capability when the thin slice implements permission polling over HTTP | `GET /permission` + `POST /permission/{id}/reply` exist in the opencode HTTP API. |
-| codex | impossible | `codex exec` has no CLI flag for permission approval/rejection (verified against `codex exec --help` in 0.145.0). The sandbox mode (`--sandbox read-only`) is the only access control. |
+| opencode | declared via `extensions.interactive_permissions` capability | `GET /permission` + `POST /permission/{id}/reply` exist in the opencode HTTP API. |
+| codex | impossible | `codex exec` has no CLI flag for permission approval/rejection. The sandbox mode is the only access control. |
+| claude | impossible | The current noninteractive stream path has no supported response channel. |
 
 ### Cancel rung count
 
@@ -110,6 +112,8 @@ All three adapters declare `core.resume: true` and implement the `Resume()` meth
 - A resumed run with no session identity of its own falls back to the parent's recorded id.
 - An `implement` continuation gets a **new** worktree seeded from the parent's snapshot commit.
 - Codex backend supports `continue_backend_session` via `codex exec resume <SESSION_ID>`.
+- Claude's declared resume support uses `fork_from_artifacts` and `retry_attempt`; it does not persist a
+  backend session for `continue_backend_session`.
 - A resumed review does not re-compose the review prompt or findings appendix — if structured findings
   are wanted from a follow-up, the appendix instruction must be restated in the follow-up text.
 

@@ -3,7 +3,9 @@
 Delegate bounded work from Claude Code to a *different* coding-agent CLI, and get a durable, inspectable result
 back.
 
-**Status: core commands implemented (run, submit, status, wait, read, list, resume, tail, debug, cleanup).** Start at [`docs/tickets/`](docs/tickets/).
+**Status: core commands and all three adapters are implemented.** Codex and Claude pass live result paths;
+opencode has one open lifecycle blocker: repeated `unknown` session status can run until the hard timeout
+([ticket 81](docs/tickets/81-opencode-unknown-status-never-terminates.md)). Start at [`docs/tickets/`](docs/tickets/).
 
 ## Why
 
@@ -103,8 +105,9 @@ user eight hours.
 
 ## Design principles
 
-- **It does not hang.** Every wait, read, lock, HTTP call, and drain has a finite default. A job blocked on a
-  permission decision is reported as *blocked*, with the permission named — not as a timeout.
+- **Every wait is bounded.** Every wait, read, lock, HTTP call, and drain has a finite default. A job blocked on a
+  permission decision is reported as *blocked*, with the permission named — not as a timeout. The known opencode
+  `unknown`-status lifecycle defect remains tracked in ticket 81.
 - **Nothing is applied automatically.** Delegated changes land in an isolated git worktree. You inspect the diff
   and decide. There is no automatic path to `apply`, at any policy checkpoint.
 - **Differences are stated, not hidden.** An option a backend cannot serve fails immediately, naming the

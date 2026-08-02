@@ -1,6 +1,9 @@
 # dcli — design specification
 
-Date: 2026-07-28. Status: implemented: core job commands; resume with lineage; capabilities manifest, doctor framework, option validation.
+Date: 2026-07-28. Status: implemented: core commands, lifecycle/state contracts, worktree/review/apply,
+resume lineage, all three adapters, generated integration, installer, redaction, admission, and bounded test
+runner. Known blockers: opencode `unknown` status termination (ticket 81); containment is specified but not yet
+wired into production adapter launches (ticket 78).
 Companion documents: [CLI study](2026-07-28-opencode-cli-study.md) (cited *study §n*),
 [ADRs](2026-07-28-architecture-decisions.md) (cited *ADR-n*),
 [development guide](2026-07-28-development-guide.md).
@@ -649,10 +652,10 @@ Containment failure is **fail-closed**: if containment is requested and the help
 version-incompatible, the job does not start. `taskkill`-based cleanup is a **declared degraded
 capability** recorded in the job record — never a transparent fallback.
 
-### Amendment 2026-07-31 — implementation status of this section
+### Amendment 2026-08-02 — implementation status of this section
 
-Everything above remains the binding target. **None of it is wired up yet**, and the gap is recorded here so
-no future reader assumes otherwise:
+The containment contract remains binding, but production wiring is still incomplete. This is intentionally
+recorded here so timeout and cancellation promises are not overstated:
 
 - `ContainmentContext` (`core/containment.js`) is constructed nowhere in `core/`, `adapters/` or `cli/`.
   All three adapters launch the backend with a plain `child_process.spawn`, so no backend tree is in a Job
@@ -662,7 +665,7 @@ no future reader assumes otherwise:
 - A Job Object cannot adopt an already-running tree, and the native helper's protocol has no
   terminate-by-pid command (only `spawn` and `terminate`, the latter acting solely on the Job Object that
   helper instance created). So the gap cannot be closed from the `cancel`/`worker` side — the tree must be
-  contained at spawn time. That is **ticket 78**, blocked on ticket 60.
+  contained at spawn time. That is **ticket 78**, blocked on the native helper's stdin/EOF protocol.
 - Until then, the honest record is the contract: a hard timeout writes `kill_skipped: 'not_contained'` on the
   `timed_out` detail, and an all-rungs-failed cancel records `cancel_rung_reached: 'containment_unavailable'`
   rather than reusing the adapter rung name `hard_kill`. Neither ever reports a kill that did not happen.

@@ -6,9 +6,10 @@ reparented grandchildren. This is not new architecture: it is what
 [`docs/2026-07-28-design-spec.md`](../2026-07-28-design-spec.md) §14 (lines 620-624, 638-641) already
 specifies and what ADR-003/ADR-008 assume. Today none of it runs.
 
-**Blocked by:** Ticket 60 (native helper stdin forwarding + bounded EOF drain) — a hard prerequisite, see below.
+**Blocked by:** native helper stdin forwarding and bounded EOF draining. The historical implementation ticket was
+removed after archival; the prerequisite remains stated here because it is still a real protocol dependency.
 
-**Status:** ready-for-agent
+**Status:** open
 
 ## What was found (verified 2026-07-31)
 
@@ -27,7 +28,7 @@ Consequences, all of them real rather than theoretical:
 1. **No cancel can guarantee termination.** When every adapter rung fails, nothing escalates. (The record
    used to say `cancel_rung_reached: 'hard_kill'` regardless — fixed in the ticket-69 honesty commit, which
    now records `containment_unavailable`.)
-2. **The worker's hard timeout cannot kill anything** (ticket 69). It journals `timed_out` and exits, leaving
+2. **The worker's hard timeout cannot kill anything**. It journals `timed_out` and exits, leaving
    the tree alive holding ports, temp dirs, locks and the stdout pipe.
 3. **`containment.degraded` and the fail-closed rule in spec §638 are unimplemented.** A missing helper is
    not detected at job start; the job runs uncontained and nobody is told.
@@ -38,7 +39,7 @@ only on the Job Object that helper instance created — `HandleTerminate` return
 `{"type":"error","error":"no active job"}` when `_jobHandle` is zero. A Windows Job Object cannot adopt an
 already-running tree. See the note left in `core/containment.js` where the bogus `terminateTree` was removed.
 
-## Why ticket 60 blocks this
+## Why the native helper blocks this
 
 The helper creates a stdin pipe for the child (`Program.cs:191`, `cStdinW`) but its main loop **discards
 stdin-data messages** — the comment at `Program.cs:133` says so outright: `// ignore other types (e.g., stdin
@@ -52,7 +53,7 @@ forwarding and bounded EOF drain) must land first.
 - [ ] Each adapter's `Start()` obtains a `ContainmentContext` and calls `context.spawn({args, cwd, env, stdio})`
       instead of `child_process.spawn`. The returned `{pid, executionToken, creationTime}` is what the wrapper
       persists as launch identity — **before** anything can lose it (AGENTS §5).
-- [ ] The context is owned per attempt and closed in `Dispose()`, within the bounded Dispose from ticket 66.
+- [ ] The context is owned per attempt and closed in `Dispose()`, within the bounded adapter disposal path.
 - [ ] No adapter retains a direct `spawn` of the backend. `grep -n "spawn(" adapters/*/adapter.js` shows no
       backend launch outside the containment path. (Auxiliary short-lived probes such as `DetectVersion` may
       stay direct — list any exception explicitly in the ticket Notes with its reason.)
@@ -74,7 +75,7 @@ forwarding and bounded EOF drain) must land first.
 - [ ] `core/commands/cancel.js` passes the attempt's live `ContainmentContext` instead of `null`.
 - [ ] `core/commands/worker.js`'s hard timeout, after the rung walk, calls `context.terminate({graceMs})` and
       records the outcome. `kill_skipped` is only written when there genuinely is no context, and its value
-      then says why. This closes ticket 69.
+      then says why. This closes the current hard-timeout containment gap.
 - [ ] `terminated: false` / non-empty `survivors` is reported as `termination_unconfirmed` and exit 21 — never
       as a clean kill. `tests/core/hard-kill-honesty.test.js` test 3 already pins this shape.
 - [ ] Test: a backend whose child spawns a grandchild that outlives its parent — after `terminate()` the
@@ -90,12 +91,12 @@ forwarding and bounded EOF drain) must land first.
 ### E. Docs in the same commit
 - [ ] `docs/2026-07-28-design-spec.md` §14 gets a dated amendment recording that containment moved from
       specified-but-absent to implemented, and what `containment.degraded` means in the record.
-- [ ] `docs/tickets/69` closes out, pointing here.
+- [ ] The design spec's hard-timeout amendment is updated in the same change.
 - [ ] Full suite green; `npm run check` green.
 
 ## Development guidance
 
-- Sequence: ticket 60 → this ticket's part A/B on **one** adapter end to end (opencode is the hardest because
+- Sequence: native helper stdin/EOF support → this ticket's part A/B on **one** adapter end to end (opencode is the hardest because
   of the server, codex the simplest — start with codex) → then the other two → then C/D.
 - Watch the AGENTS §6 test-mode cliff: every adapter `Start()` opens with `if (this._testMode) {…; return}`.
   The containment path lives below that guard, so it needs tests that do **not** take the short-circuit.

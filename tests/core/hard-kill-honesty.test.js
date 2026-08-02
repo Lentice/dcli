@@ -188,7 +188,7 @@ async function main() {
   // =========================================================================
   assert.strictEqual(typeof containment.terminateTree, 'undefined',
     'core/containment.js must not export terminateTree until the native helper has a ' +
-    'command that can terminate a tree it did not spawn. See docs/tickets/69.');
+    'command that can terminate a tree it did not spawn. See docs/tickets/78.');
 
   console.log('PASS: hard-kill honesty 4 — no pid-based terminateTree is exported');
 

@@ -256,7 +256,7 @@ class ClaudeAdapter {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: invocation.windowsHide,
       // Forward the invocation's own value: it is the single source of truth
-      // for how its command line was quoted (docs/tickets/80).
+      // for how its command line is quoted (adapters/codex/cmd-quoting.js).
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       env: childEnv,
     });

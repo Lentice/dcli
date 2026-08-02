@@ -20,7 +20,7 @@
 // This bound is not a performance knob: the timer behind it is the only refed
 // libuv handle that exists while the drain is parked and the child has closed
 // its pipes, so it is what stops the process from silently exiting 0 mid-drain.
-// See _waitForFactsOrRecheck and docs/tickets/79.
+// See _waitForFactsOrRecheck and the bounded observe-wakeup regression test.
 const LIVE_DRAIN_RECHECK_MS = 250;
 const POST_EXIT_DRAIN_MS = 3000;
 

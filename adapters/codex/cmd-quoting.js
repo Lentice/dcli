@@ -76,7 +76,7 @@ function buildCmdInvocation(opts) {
     // reports the entire command line as an unrecognized program name — the
     // shim never runs, while the launch still looks successful from the
     // parent (a live pid, no throw, no EINVAL). Callers MUST forward this
-    // field to spawn; see docs/tickets/80.
+    // field to spawn; see the cmd-shim contract tests.
     windowsVerbatimArguments: true,
   };
 }

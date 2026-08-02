@@ -1,10 +1,10 @@
 # Ticket 81 — opencode polls `unknown` forever, so every opencode job runs to its hard timeout
 
-**Status:** ready-for-agent (2026-07-31)
+**Status:** open (2026-07-31)
 **Tier:** blocker for delegation — opencode is the interactive-capable backend, so this is the one that
 blocks per-phase dogfooding review and any delegated verification.
-**Sibling:** ticket 79 fixed the same *outcome* for codex and claude, but through a different mechanism.
-Do not assume the 79 fix touches this; it does not. `adapters/opencode/adapter.js` has neither
+**Sibling:** the codex and Claude adapters already have a bounded exit-wait path, but through a different
+mechanism. Do not assume that fix touches this; it does not. `adapters/opencode/adapter.js` has neither
 `_liveFactsResolve` nor `_observedExited`.
 
 ---
