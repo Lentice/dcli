@@ -114,7 +114,7 @@ async function executeList({ store, repoKey, groupFilter }) {
       } catch (err) {
         // An unreadable record is not an absent one. Dropping the row silently
         // shrank the listing with no indication anything was missed.
-        let relevant = true;
+        let relevant = !groupFilter || hasStatus;
         if (groupFilter && hasStatus) {
           try {
             relevant = JSON.parse(fs.readFileSync(statusPath, 'utf8')).group === groupFilter;

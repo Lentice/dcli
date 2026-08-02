@@ -268,6 +268,7 @@ class JobStore {
       executionToken: null,
       executionTokenMatch: null,
       commandExitCode: null,
+      sentinelExitCode: null,
       sentinelState: null,
     };
 
@@ -313,7 +314,7 @@ class JobStore {
             // evidence of anything; absent it is, and the job reduces to
             // `interrupted` — which is what actually happened.
             evidence.completionSentinelPresent = true;
-            if (sentinel.exit_code !== undefined) evidence.commandExitCode = sentinel.exit_code;
+            if (sentinel.exit_code !== undefined) evidence.sentinelExitCode = sentinel.exit_code;
             // The state the worker itself published. An `interrupted` attempt
             // exits 0, so the exit code alone would read as `done`.
             if (typeof sentinel.state === 'string') evidence.sentinelState = sentinel.state;
@@ -402,9 +403,6 @@ class JobStore {
         failure: reduced.failure !== undefined ? reduced.failure : null,
         // Durable producer evidence, not an inference: keep it rather than
         // leaving the append-only field null on a recovered attempt.
-        ...(evidence.commandExitCode !== null && evidence.commandExitCode !== undefined
-          ? { command_exit_code: evidence.commandExitCode }
-          : {}),
         reconciled: true,
       },
     });

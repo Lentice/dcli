@@ -8,6 +8,7 @@
  * @property {string|null} executionToken - Execution token from evidence
  * @property {boolean|null} executionTokenMatch - Does execution token match the expected one?
  * @property {number|null} commandExitCode - Exit code from evidence
+ * @property {string|null} sentinelState - Terminal state the worker published in its sentinel
  */
 
 const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
@@ -41,7 +42,10 @@ function reduce(state, facts, evidence) {
     return pick(state, ['state', 'phase', 'failure', 'failure_reason', 'backend_session_id']);
   }
 
-  // 2. Cancel requested → cancelled (any non-terminal state, including created)
+  // 2. Cancel requested → cancelled (any non-terminal state, including created).
+  //    Note this is a projection, not a durable decision: only an authorized
+  //    writer (cancelJob, or the worker acting on cancel.request) may journal it.
+  //    See reconcileStatus, which must not persist an outcome for a live worker.
   if (state.cancel_requested_at) {
     return {
       state: 'cancelled',
@@ -73,11 +77,18 @@ function reduce(state, facts, evidence) {
   // the exact "a failure must never read as a clean result" defect. A non-zero
   // exit still wins, because its code is the more specific fact.
   if (processExited && !(processExited.code === 0 && backendError)) {
+    // A non-zero exit wins on state, but it must not swallow the reported
+    // class. Dropping it turned a quota exhaustion or an expired login into a
+    // bare exit 1, so the caller could not tell "out of credit, do not retry"
+    // from "the run failed, retry might work".
+    const classHint = (backendError && backendError.class_hint) || null;
     return {
       state: processExited.code === 0 ? 'done' : 'failed',
       phase: 'terminal',
-      failure: processExited.code !== 0 ? { reason: 'process_error', code: processExited.code } : null,
-      failure_reason: state.failure_reason || null,
+      failure: processExited.code !== 0
+        ? { class: classHint, reason: 'process_error', code: processExited.code }
+        : null,
+      failure_reason: (processExited.code !== 0 ? classHint : null) || state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
     };
   }
@@ -139,8 +150,37 @@ function reduce(state, facts, evidence) {
 
   // Worker gone + sentinel present → done/failed per producer exit-code contract
   if (effectiveWorkerGone && hasSentinel) {
-    const exitCode = ev.commandExitCode !== null && ev.commandExitCode !== undefined
-      ? ev.commandExitCode
+    // The state the worker published beats an inference from its exit code:
+    // an interrupted attempt exits 0 by the CLI contract, and reading that as
+    // `done` turned a job that was cut short into a clean success.
+    if (typeof ev.sentinelState === 'string' && TERMINAL.has(ev.sentinelState)) {
+      // `worker_lost_no_result` describes a worker that vanished without
+      // saying anything. This one said exactly what happened, so do not label
+      // a clean `cancelled` or `interrupted` as a lost worker, and keep the
+      // exit code it recorded.
+      const sentinelExitCode = ev.sentinelExitCode !== undefined
+        ? ev.sentinelExitCode
+        : ev.commandExitCode;
+      const lostResult = ev.sentinelState === 'failed' && sentinelExitCode === null;
+      const failureClass = {
+        13: 'authentication',
+        14: 'quota_or_rate_limit',
+        15: 'permission_or_sandbox',
+        16: 'network_error',
+      }[sentinelExitCode] || null;
+      return {
+        state: ev.sentinelState,
+        phase: 'terminal',
+        failure: lostResult
+          ? { reason: 'worker_lost_no_result' }
+          : failureClass ? { class: failureClass, reason: 'worker_lost_no_result', code: sentinelExitCode }
+            : (state.failure || null),
+        failure_reason: failureClass || state.failure_reason || null,
+        backend_session_id: state.backend_session_id || null,
+      };
+    }
+    const exitCode = (ev.sentinelExitCode !== undefined ? ev.sentinelExitCode : ev.commandExitCode) !== null
+      ? (ev.sentinelExitCode !== undefined ? ev.sentinelExitCode : ev.commandExitCode)
       : null;
     if (exitCode === 0) {
       return {

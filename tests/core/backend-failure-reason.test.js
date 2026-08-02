@@ -212,6 +212,22 @@ await withTempDir(async (dir) => {
   console.log('PASS: cancelled state survives missing result classification');
 }
 
+{
+  const withText = classifyTerminalFailure({
+    exitCode: 0, resultBytes: 12, resultStatus: 'missing',
+    reducerResult: { state: 'done', failure_reason: null, failure: null },
+  });
+  assert.strictEqual(withText.terminalState, undefined,
+    'persisted text must not be relabelled failed because a provider result event was absent');
+  const timedOut = classifyTerminalFailure({
+    exitCode: 0, resultBytes: 0, resultStatus: 'missing',
+    reducerResult: { state: 'timed_out', failure_reason: 'hard_timeout', failure: null },
+  });
+  assert.strictEqual(timedOut.terminalState, undefined,
+    'timeout state must remain timeout when no result artifact exists');
+  console.log('PASS: result-missing heuristic preserves text and timeout states');
+}
+
 // =============================================================================
 // 6. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
 //    access, does NOT fire on plain questions or non-read-only access, and

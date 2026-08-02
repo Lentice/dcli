@@ -123,7 +123,10 @@ function classifyTerminalFailure({ exitCode, resultBytes, reducerResult, resultS
   const failure = (reducerResult && reducerResult.failure) || null;
   // A hard kill commonly races the result-file write. Preserve an intentional
   // cancellation instead of relabelling it as a backend artifact failure.
-  if (reducerResult && reducerResult.state === 'cancelled') {
+  if (reducerResult && (reducerResult.state === 'cancelled' || reducerResult.state === 'timed_out')) {
+    return { failure_reason, failure };
+  }
+  if (typeof resultBytes === 'number' && resultBytes > 0) {
     return { failure_reason, failure };
   }
   // The adapter could not read back the result the backend was told to write.
