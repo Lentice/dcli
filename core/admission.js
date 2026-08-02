@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const os = require('os');
 const { LockManager } = require('./locking');
 
 const DEFAULT_GLOBAL_LIMIT = 5;
@@ -21,13 +20,13 @@ class AdmissionController {
   }
 
   _captureIdentity() {
-    return {
-      pid: process.pid,
-      ppid: process.ppid,
-      startTime: new Date().toISOString(),
-      hostname: os.hostname(),
-      imagePath: process.execPath,
-    };
+    // Process identity, not "now". A per-instance timestamp made two
+    // controllers in the same process disown each other's slots, and made
+    // every other process's slot look dead to the liveness check.
+    // Cheap identity, same trade-off as LockManager: no subprocess on a path
+    // every command runs. A stale slot held by a reused pid costs capacity,
+    // not correctness, and reconcile reclaims it once the pid is free.
+    return require('./process-identity').getDurableOwnIdentity();
   }
 
   _ensureDir(dir) {
@@ -76,7 +75,7 @@ class AdmissionController {
       return true;
     }
     const { isSameProcessAlive } = require('./process-identity');
-    return isSameProcessAlive({ pid: meta.pid, startTime: meta.startTime, imagePath: meta.imagePath });
+    return isSameProcessAlive({ pid: meta.pid, startTime: meta.startTime, startTimeSource: meta.startTimeSource, imagePath: meta.imagePath });
   }
 
   _generateSlotId() {
@@ -91,6 +90,7 @@ class AdmissionController {
       pid: this._ownIdentity.pid,
       ppid: this._ownIdentity.ppid,
       startTime: this._ownIdentity.startTime,
+      startTimeSource: this._ownIdentity.startTimeSource,
       imagePath: this._ownIdentity.imagePath,
       hostname: this._ownIdentity.hostname,
       executionToken: this._ownToken,
@@ -169,6 +169,13 @@ class AdmissionController {
     const source = path.join(this._queueDir, entry.fileName);
     const claim = path.join(this._queueDir, `${entry.jobId}.launching-${crypto.randomBytes(8).toString('hex')}.json`);
     try {
+      // Leave a bounded launch lease in the record before the atomic rename.
+      // A second dispatcher must not mistake a still-starting child for a
+      // dead claim and launch the same job twice.
+      fs.writeFileSync(source, JSON.stringify({
+        ...entry,
+        launch_started_at: Date.now(),
+      }, null, 2) + '\n', 'utf8');
       fs.renameSync(source, claim);
       return claim;
     } catch {
@@ -190,6 +197,7 @@ class AdmissionController {
       const claim = path.join(this._queueDir, file);
       try {
         const entry = JSON.parse(fs.readFileSync(claim, 'utf8'));
+        if (entry.launch_started_at && Date.now() - entry.launch_started_at < 30000) continue;
         const target = path.join(this._queueDir, `${entry.jobId}.json`);
         if (fs.existsSync(target)) fs.unlinkSync(claim);
         else fs.renameSync(claim, target);
