@@ -152,7 +152,7 @@ const FAILURE_EXIT_CODES = Object.freeze({
 });
 
 function terminalExitCode(state, failure, failureReason) {
-  if (state === 'done' || state === 'interrupted') return 0;
+  if (state === 'done' || state === 'interrupted' || state === 'cancelled') return 0;
   if (failureReason === 'hard_timeout') return 24;
   if (failureReason === 'result_persistence_failed') return 11;
   return FAILURE_EXIT_CODES[(failure && (failure.class || failure.class_hint)) || failureReason] || 1;

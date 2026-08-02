@@ -106,7 +106,15 @@ async function executeList({ store, repoKey, groupFilter }) {
       } catch (err) {
         // An unreadable record is not an absent one. Dropping the row silently
         // shrank the listing with no indication anything was missed.
-        errors.push(`${repoDir.name}/${jobDir.name}: ${err && err.message ? err.message : err}`);
+        let relevant = true;
+        if (groupFilter && hasStatus) {
+          try {
+            relevant = JSON.parse(fs.readFileSync(statusPath, 'utf8')).group === groupFilter;
+          } catch {}
+        }
+        if (relevant) {
+          errors.push(`${repoDir.name}/${jobDir.name}: ${err && err.message ? err.message : err}`);
+        }
         continue;
       }
     }

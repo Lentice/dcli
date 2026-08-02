@@ -274,6 +274,17 @@ class JobStore {
     try {
       const status = providedStatus || this.readStatus({ repoKey, jobId });
 
+      // A fresh durable heartbeat is positive liveness evidence. Waiting a
+      // short grace period after the last heartbeat avoids spawning a
+      // synchronous OS probe on every 200ms wait poll while still probing
+      // stale owners before reconciling them.
+      const heartbeatAge = status.heartbeat_at
+        ? Date.now() - new Date(status.heartbeat_at).getTime()
+        : Infinity;
+      if (Number.isFinite(heartbeatAge) && heartbeatAge >= 0 && heartbeatAge < 1000) {
+        evidence.workerAlive = true;
+      }
+
       // Prefer the recorded identity over the bare pid. A bare pid is
       // creation-time ancestry with no proof of who holds it now, so a reused
       // pid answers "yes, the worker is alive" for a process that is not the
@@ -281,7 +292,7 @@ class JobStore {
       // isSameProcessAlive() only degrades to bare liveness when the recorded
       // start time is not OS-sourced, which is what it is today.
       const identity = parseWorkerIdentity(status.worker_identity);
-      if (identity) {
+      if (evidence.workerAlive !== true && identity) {
         try { evidence.workerAlive = isSameProcessAlive(identity); } catch {}
       } else if (status.worker_pid) {
         try { evidence.workerAlive = isProcessAlive(status.worker_pid); } catch {}

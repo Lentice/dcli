@@ -141,6 +141,7 @@ async function main() {
   assert.strictEqual(typeof result.text, 'string');
   assert.ok(result.usage);
   assert.strictEqual(typeof result.usage.total, 'number');
+  assert.strictEqual(result.result_status, 'missing');
   console.log('PASS: CollectResult returns results');
 }
 

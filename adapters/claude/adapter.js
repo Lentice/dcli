@@ -386,7 +386,10 @@ class ClaudeAdapter {
         if (f.type === 'started' && f.backend_session_id) backendSessionId = f.backend_session_id;
       }
 
-      this._collectedResult = { text: lastText, usage, backend_session_id: backendSessionId };
+      this._collectedResult = {
+        text: lastText, usage, backend_session_id: backendSessionId,
+        result_status: this._mockFacts.some(f => f.type === 'result') ? 'present' : 'missing',
+      };
       return this._collectedResult;
     }
 
@@ -399,6 +402,7 @@ class ClaudeAdapter {
     let lastText = '';
     let usage = { input: 0, output: 0, total: 0 };
     let backendSessionId = this._sessionId;
+    let sawResult = false;
 
     if (this._stdoutContent) {
       const lines = this._stdoutContent.split('\n').filter(Boolean);
@@ -415,6 +419,7 @@ class ClaudeAdapter {
         }
 
         if (event.type === 'result') {
+          sawResult = true;
           if (event.usage) {
             usage = {
               input: event.usage.input_tokens || event.usage.input || 0,
@@ -429,7 +434,12 @@ class ClaudeAdapter {
       }
     }
 
-    return { text: lastText, usage, backend_session_id: backendSessionId };
+    return {
+      text: lastText,
+      usage,
+      backend_session_id: backendSessionId,
+      result_status: sawResult ? 'present' : 'missing',
+    };
   }
 
   CollectDiagnostics(attempt) {
