@@ -10,3 +10,4 @@ node_modules/
 # .NET build artifacts
 native/windows-job-helper/bin/
 native/windows-job-helper/obj/
+.tmp-test/
