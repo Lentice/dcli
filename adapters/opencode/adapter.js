@@ -476,6 +476,21 @@ class OpencodeAdapter {
       throw new Error('Project identity check failed: /project/current returned no directory');
     }
 
+    // opencode reports "/" when launched from a directory it does not
+    // recognise as a project (e.g. a non-git temp directory). Accept it when
+    // the canonical directory lacks a .git directory — a repo that returns
+    // root is a real mismatch.
+    if (effectiveDir === '/' || effectiveDir === '\\') {
+      const hasGit = fs.existsSync(path.join(this._canonicalDir, '.git'));
+      if (!hasGit) return;
+    }
+    try {
+      const resolved = fs.realpathSync.native(path.resolve(effectiveDir));
+      if ((resolved === '\\' || resolved === '/') && !fs.existsSync(path.join(this._canonicalDir, '.git'))) {
+        return;
+      }
+    } catch {}
+
     const normalizedCanonical = fs.realpathSync.native(path.resolve(this._canonicalDir)).toLowerCase();
     const normalizedEffective = fs.realpathSync.native(path.resolve(effectiveDir)).toLowerCase();
 
@@ -621,11 +636,15 @@ class OpencodeAdapter {
     let finalFlatMid = null;
 
     for (const msg of messages) {
+      const info = msg.info;
+      // Skip explicit user messages; messages without info (flat parts shape)
+      // are treated as assistant.
+      if (info && info.role === 'user') continue;
       const parts = msg.parts || [];
       const hasStop = parts.some(p => (p.type === 'step-finish' || p.type === 'step_finish') && p.reason === 'stop');
       if (hasStop) {
-        if (msg.info && msg.info.id) {
-          lastCompletedMid = msg.info.id;
+        if (info && info.id) {
+          lastCompletedMid = info.id;
           hasInfoIds = true;
         } else {
           lastCompletedMid = null;
@@ -635,12 +654,25 @@ class OpencodeAdapter {
       }
     }
 
+    // Only consider assistant messages — user messages (the prompt and its
+    // echo) must never be picked up as the result. An invalid model that
+    // produces no assistant turn at all must yield an empty result.
+    // When a message has no info (e.g. the flat { parts: [...] } shape
+    // mapped at the top of this function), treat it as an assistant message
+    // because the adapter itself constructs that shape from API responses
+    // which do not include role metadata.
+    const assistantMessages = messages.filter(msg => {
+      const info = msg && msg.info;
+      if (!info) return true;
+      return info.role === 'assistant';
+    });
+
     let text = '';
     let usage = { input: 0, output: 0, total: 0 };
     let cost = null;
 
     if (hasInfoIds) {
-      for (const msg of messages) {
+      for (const msg of assistantMessages) {
         if (msg.info && msg.info.id !== lastCompletedMid) continue;
         const parts = msg.parts || [];
         for (const p of parts) {
@@ -662,7 +694,7 @@ class OpencodeAdapter {
     }
 
     if (finalFlatMid) {
-      const parts = messages.length > 0 ? messages[0].parts || [] : [];
+      const parts = assistantMessages.length > 0 ? assistantMessages[0].parts || [] : [];
       for (const p of parts) {
         if (p.messageID !== finalFlatMid) continue;
         if (p.type === 'text') text += p.text || '';
@@ -681,7 +713,11 @@ class OpencodeAdapter {
       return { text, usage, cost, message_id: finalFlatMid };
     }
 
-    const parts = messages.length > 0 ? messages[0].parts || [] : [];
+    if (assistantMessages.length === 0) {
+      return { text: '', usage: { input: 0, output: 0, total: 0 }, cost: null, message_id: null };
+    }
+
+    const parts = assistantMessages[0].parts || [];
     for (const p of parts) {
       if (p.type === 'text') text += p.text || '';
       if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
@@ -1133,6 +1169,27 @@ class OpencodeAdapter {
             type: 'backend_error',
             class_hint: msgError.class_hint,
             structured_payload: { message: msgError.message, name: msgError.name, status_code: msgError.statusCode },
+          };
+        }
+
+        // A zero-token result where the server accepted the session but
+        // produced no assistant messages at all means the model was not
+        // viable (invalid/unreachable provider). Without this, opencode
+        // silently returns only the prompt message as the result.
+        // This is distinct from a legitimate empty completion where an
+        // assistant message exists but produces no text.
+        const hasAssistantMessages = Array.isArray(msgs) && msgs.some(msg => {
+          const info = msg && msg.info;
+          return !info || info.role === 'assistant';
+        });
+        const totalTokens = (final.usage && final.usage.total) || 0;
+        if (!msgError && totalTokens === 0 && !hasAssistantMessages) {
+          yield {
+            type: 'backend_error',
+            class_hint: 'provider_error',
+            structured_payload: {
+              message: 'Backend session completed without running the model. The provider/model may be invalid, unreachable, or configured incorrectly.',
+            },
           };
         }
         if (final.text) {

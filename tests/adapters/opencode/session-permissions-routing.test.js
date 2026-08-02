@@ -694,9 +694,18 @@ await (async () => {
 main()
   .finally(() => {
     for (const dir of ownedTmpDirs) {
-      fs.rmSync(dir, { recursive: true, force: true });
-      assert.ok(!fs.existsSync(dir), `owned fixture directory must be removed: ${dir}`);
+      // Retry removal — Windows may hold async handles briefly
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+        if (!fs.existsSync(dir)) break;
+        if (attempt < 2) {
+          try { require('timers').setTimeout(() => {}, 200).unref(); } catch {}
+        }
+      }
+      assert.ok(!fs.existsSync(dir),
+        `owned fixture directory must be removed: ${dir}`);
     }
+    return new Promise(resolve => setTimeout(resolve, 100));
   })
   .catch(err => {
     console.error('FAIL:', err.message);

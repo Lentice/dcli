@@ -1,6 +1,9 @@
 // @suite full
 // @serial  tears down live server process trees
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
 
@@ -33,21 +36,31 @@ async function main() {
 
     assertIsAlive(serverPid, 'Server must be alive after Start()');
 
-    await adapter.SendPrompt(attempt, 'Reply with exactly: PONG');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-teardown-'));
+    try {
+      adapter.PrepareInvocation(attempt, {
+        canonicalDir: tmpDir,
+        access: 'read-only',
+      });
+
+      await adapter.SendPrompt(attempt, 'Reply with exactly: PONG');
 
     const facts = [];
-    for await (const fact of adapter.Observe(attempt)) {
-      facts.push(fact);
+      for await (const fact of adapter.Observe(attempt)) {
+        facts.push(fact);
+      }
+      assert.ok(facts.length > 0, 'Must have emitted at least one fact');
+
+      adapter.Dispose(attempt);
+
+      await delay(500);
+
+      assertIsDead(serverPid, 'Server must be dead after Dispose()');
+
+      console.log('PASS: server process verifiably gone after Dispose()');
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     }
-    assert.ok(facts.length > 0, 'Must have emitted at least one fact');
-
-    adapter.Dispose(attempt);
-
-    await delay(500);
-
-    assertIsDead(serverPid, 'Server must be dead after Dispose()');
-
-    console.log('PASS: server process verifiably gone after Dispose()');
 
   } finally {
     if (adapter && serverPid) {

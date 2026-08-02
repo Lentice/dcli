@@ -32,6 +32,7 @@ async function main() {
   const repoKey = process.env.DCLI_REPO_KEY;
   const repoRoot = process.env.DCLI_REPO_ROOT;
   const hardTimeoutMsRaw = parseInt(process.env.DCLI_WORKER_HARD_TIMEOUT_MS || '0', 10);
+  const queueClaimPath = process.env.DCLI_QUEUE_CLAIM_PATH || null;
 
   if (!stateRoot || !backendName || !jobId || !repoKey || !repoRoot) {
     console.error('Worker: missing required env vars');
@@ -73,20 +74,30 @@ async function main() {
   admission.setSpawnWorker((entry) => {
     const { spawn } = require('child_process');
     const workerPath = path.resolve(__dirname, 'worker.js');
-    const child = spawn(process.execPath, [workerPath], {
-      detached: true, windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        DCLI_WORKER: '1',
-        DCLI_STATE_ROOT: stateRoot,
-        DCLI_BACKEND: entry.backend,
-        DCLI_JOB_ID: entry.jobId,
-        DCLI_REPO_KEY: entry.repoKey || 'unknown',
-        DCLI_REPO_ROOT: entry.repoRoot || stateRoot,
-        DCLI_WORKER_HARD_TIMEOUT_MS: String(entry.hardTimeoutMs || 0),
-      },
-    });
+    const repoKey = entry.repoKey || 'unknown';
+    const workerLogPath = path.join(stateRoot, 'jobs', repoKey, entry.jobId, 'attempts', '1', 'worker.log');
+    const workerLog = fs.openSync(workerLogPath, 'a');
+    let child;
+    try {
+      child = spawn(process.execPath, [workerPath], {
+        detached: true, windowsHide: true,
+        // A detached worker has no parent reader; retain output in its log.
+        stdio: ['ignore', workerLog, workerLog],
+        env: {
+          ...process.env,
+          DCLI_WORKER: '1',
+          DCLI_STATE_ROOT: stateRoot,
+          DCLI_BACKEND: entry.backend,
+          DCLI_JOB_ID: entry.jobId,
+          DCLI_REPO_KEY: repoKey,
+          DCLI_REPO_ROOT: entry.repoRoot || stateRoot,
+          DCLI_WORKER_HARD_TIMEOUT_MS: String(entry.hardTimeoutMs || 0),
+          DCLI_QUEUE_CLAIM_PATH: entry.queueClaimPath || '',
+        },
+      });
+    } finally {
+      fs.closeSync(workerLog);
+    }
     child.unref();
   });
 
@@ -99,12 +110,19 @@ async function main() {
       to: 'queued',
       detail: { phase: 'queued', queue_reason: slotResult.reason },
     });
-    admission.enqueueJob(backendName, jobId, {
-      repoKey, repoRoot, hardTimeoutMs,
-    });
+    if (queueClaimPath && fs.existsSync(queueClaimPath)) {
+      try { fs.renameSync(queueClaimPath, path.join(stateRoot, 'queue', `${jobId}.json`)); } catch {}
+    } else {
+      admission.enqueueJob(backendName, jobId, {
+        repoKey, repoRoot, hardTimeoutMs: hardTimeoutMsRaw > 0 ? hardTimeoutMsRaw : 0,
+      });
+    }
     process.exit(0);
   }
   const slotId = slotResult.slotId;
+  if (queueClaimPath) {
+    try { fs.unlinkSync(queueClaimPath); } catch {}
+  }
 
   // Load adapter
   let adapter;
@@ -365,7 +383,7 @@ async function main() {
     clearTimeout(hardTimeoutTimer);
     clearTimeout(cancelWatcherTimer);
     if (!hardTimedOut && err && err[HARD_TIMEOUT_ERROR]) hardTimedOut = true;
-    requestCancelRungs();
+    await requestCancelRungs();
     // Collect partial result before dispose so adapter state is intact
     let partialResult = null;
     try { partialResult = adapter.CollectResult(attempt); } catch {}
@@ -468,16 +486,23 @@ function raceObserve(iterator, deadline) {
             err[HARD_TIMEOUT_ERROR] = true;
             throw err;
           }
-          const result = await Promise.race([
-            iter.next().then(r => ({ value: r, source: 'iter' })),
-            new Promise(resolve => setTimeout(() => resolve({ value: { done: true }, source: 'timer' }), remaining)),
-          ]);
-          if (result.source === 'timer') {
-            const err = new Error('Hard timeout reached');
-            err[HARD_TIMEOUT_ERROR] = true;
-            throw err;
+          let timer;
+          try {
+            const result = await Promise.race([
+              iter.next().then(r => ({ value: r, source: 'iter' })),
+              new Promise(resolve => {
+                timer = setTimeout(() => resolve({ value: { done: true }, source: 'timer' }), remaining);
+              }),
+            ]);
+            if (result.source === 'timer') {
+              const err = new Error('Hard timeout reached');
+              err[HARD_TIMEOUT_ERROR] = true;
+              throw err;
+            }
+            return result.value;
+          } finally {
+            if (timer) clearTimeout(timer);
           }
-          return result.value;
         },
         async return() {
           if (typeof iter.return === 'function') {

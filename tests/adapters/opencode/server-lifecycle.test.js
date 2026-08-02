@@ -376,7 +376,7 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
     let adapter;
     let serverPid = null;
     try {
-      adapter = new OpencodeAdapter({ stateRoot });
+      adapter = new OpencodeAdapter({ stateRoot, jobId: 'live-server-lifecycle' });
       const attempt = {};
       const handle = await adapter.Start(attempt);
       assert.ok(handle, 'Start must return handle');

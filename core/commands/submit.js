@@ -1,5 +1,6 @@
 const path = require('path');
 const { spawn } = require('child_process');
+const fs = require('fs');
 const { generateJobId } = require('../job-id');
 const { buildEnvelope, loadJobOrThrow } = require('./index');
 const { prepareBackend } = require('./attempt');
@@ -7,6 +8,8 @@ const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { persistInitFiles } = require('../result-artifact');
 
 function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, stateRoot, backend }) {
+  stateRoot = stateRoot || store._stateRoot;
+  repoRoot = repoRoot || process.cwd();
   const jobId = generateJobId();
 
   let parentStatus = null;
@@ -94,23 +97,31 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
 
 function spawnWorker({ stateRoot, backend, jobId, repoKey, repoRoot, hardTimeoutSec }) {
   const workerScript = path.resolve(__dirname, 'worker.js');
+  const workerLog = fs.openSync(path.join(stateRoot, 'jobs', repoKey, jobId, 'attempts', '1', 'worker.log'), 'a');
   const hardTimeoutMs = hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0;
 
-  const child = spawn(process.execPath, [workerScript], {
-    detached: true,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      DCLI_WORKER: '1',
-      DCLI_STATE_ROOT: stateRoot,
-      DCLI_BACKEND: backend,
-      DCLI_JOB_ID: jobId,
-      DCLI_REPO_KEY: repoKey,
-      DCLI_REPO_ROOT: repoRoot,
-      DCLI_WORKER_HARD_TIMEOUT_MS: String(hardTimeoutMs),
-    },
-  });
+  let child;
+  try {
+    child = spawn(process.execPath, [workerScript], {
+      detached: true,
+      windowsHide: true,
+      // The caller exits independently; redirect instead of creating an
+      // undrained pipe, while keeping worker diagnostics durable.
+      stdio: ['ignore', workerLog, workerLog],
+      env: {
+        ...process.env,
+        DCLI_WORKER: '1',
+        DCLI_STATE_ROOT: stateRoot,
+        DCLI_BACKEND: backend,
+        DCLI_JOB_ID: jobId,
+        DCLI_REPO_KEY: repoKey,
+        DCLI_REPO_ROOT: repoRoot,
+        DCLI_WORKER_HARD_TIMEOUT_MS: String(hardTimeoutMs),
+      },
+    });
+  } finally {
+    fs.closeSync(workerLog);
+  }
 
   // Allow parent to exit independently
   child.unref();

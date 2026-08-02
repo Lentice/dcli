@@ -165,9 +165,42 @@ class AdmissionController {
     }
   }
 
+  _claimQueueEntry(entry) {
+    const source = path.join(this._queueDir, entry.fileName);
+    const claim = path.join(this._queueDir, `${entry.jobId}.launching-${crypto.randomBytes(8).toString('hex')}.json`);
+    try {
+      fs.renameSync(source, claim);
+      return claim;
+    } catch {
+      return null;
+    }
+  }
+
+  _restoreQueueClaim(claimPath, entry) {
+    if (!claimPath || !fs.existsSync(claimPath)) return;
+    const target = path.join(this._queueDir, `${entry.jobId}.json`);
+    try {
+      if (!fs.existsSync(target)) fs.renameSync(claimPath, target);
+      else fs.unlinkSync(claimPath);
+    } catch {}
+  }
+
+  _reconcileQueueClaims() {
+    for (const file of fs.readdirSync(this._queueDir).filter(f => f.includes('.launching-') && f.endsWith('.json'))) {
+      const claim = path.join(this._queueDir, file);
+      try {
+        const entry = JSON.parse(fs.readFileSync(claim, 'utf8'));
+        const target = path.join(this._queueDir, `${entry.jobId}.json`);
+        if (fs.existsSync(target)) fs.unlinkSync(claim);
+        else fs.renameSync(claim, target);
+      } catch {}
+    }
+  }
+
   tryDequeue() {
     this._ensureDir(this._queueDir);
-    const files = fs.readdirSync(this._queueDir).filter(f => f.endsWith('.json'));
+    this._reconcileQueueClaims();
+    const files = fs.readdirSync(this._queueDir).filter(f => f.endsWith('.json') && !f.includes('.launching-'));
     if (files.length === 0) return 0;
 
     const queueEntries = [];
@@ -182,13 +215,28 @@ class AdmissionController {
 
     let dequeued = 0;
     for (const entry of queueEntries) {
+      // A queued worker must acquire the slot in its own process. A slot file
+      // owned by this dispatcher cannot be transferred safely to a detached
+      // child: the parent may exit and reconciliation would reclaim it.
+      if (typeof this._spawnWorker === 'function') {
+        const counts = this._countActiveSlots(entry.backend);
+        const backendLimit = this._backendLimits[entry.backend] !== undefined
+          ? this._backendLimits[entry.backend] : this._perBackendLimit;
+        if (counts.globalActive >= this._globalLimit || counts.backendActive >= backendLimit) break;
+        const claimPath = this._claimQueueEntry(entry);
+        if (!claimPath) continue;
+        try {
+          this._spawnWorker({ ...entry, queued: true, queueClaimPath: claimPath });
+          dequeued++;
+        } catch {
+          this._restoreQueueClaim(claimPath, entry);
+        }
+        continue;
+      }
+
       const result = this.acquireSlot(entry.backend);
       if (result.acquired) {
         this.dequeueJob(entry.jobId);
-        // Spawn the worker for the dequeued job so it actually runs
-        if (typeof this._spawnWorker === 'function') {
-          try { this._spawnWorker(entry); } catch {}
-        }
         dequeued++;
       } else {
         break;

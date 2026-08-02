@@ -114,6 +114,14 @@ async function cancelJob(opts) {
     };
   }
 
+  // The worker may have published a terminal result while the cancel rung was
+  // waiting. Re-read before writing `cancelled`; a late cancel must never
+  // demote a completed job.
+  const afterKill = store.readStatus({ repoKey, jobId });
+  if (TERMINAL.has(afterKill.state)) {
+    return { state: afterKill.state, cancelRungReached, exitCode: 0 };
+  }
+
   store.journalTransition(jobId, repoKey, {
     kind: 'attempt_state_changed',
     attempt: attemptNum,

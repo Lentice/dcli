@@ -95,6 +95,7 @@ function assertIsDead(pid, message) {
     process.kill(pid, 0);
     assert.fail(`${message}: expected process ${pid} to be gone, but kill(0) succeeded`);
   } catch (err) {
+    if (err && err.constructor && err.constructor.name === 'AssertionError') throw err;
     if (err.code === 'ESRCH') return;
     if (err.message && err.message.includes('not found')) return;
     if (err.message && err.message.includes('No such process')) return;

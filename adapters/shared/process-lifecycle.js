@@ -162,6 +162,27 @@ const methods = {
     this._drainTimedOut = true;
     this._facts.push({ type: 'drain_timeout', message: 'stdout/stderr did not close within POST_EXIT_DRAIN_MS' });
   },
+
+  _classifyStderrFailure() {
+    if (!this._stderrContent || this._facts.some(f => f && f.type === 'backend_error')) return;
+    const exited = this._facts.find(f => f && f.type === 'process_exited');
+    if (!exited || exited.code === 0) return;
+
+    const signals = [
+      [/quota|rate[ -]?limit|too many requests|credits|usage limit|insufficient funds/i, 'quota_or_rate_limit'],
+      [/unauthori[sz]ed|authentication|invalid (?:api )?key|login required|token expired/i, 'authentication'],
+      [/permission denied|access denied|sandbox/i, 'permission_or_sandbox'],
+      [/connection refused|connection reset|unable to connect|network error/i, 'network_error'],
+    ];
+    for (const [pattern, classHint] of signals) {
+      if (pattern.test(this._stderrContent)) {
+        // Persist only a fixed classification, never provider stderr (which
+        // may contain credentials or request data).
+        this._facts.push({ type: 'backend_error', class_hint: classHint, structured_payload: { reason: classHint } });
+        return;
+      }
+    }
+  },
 };
 
 /**

@@ -331,6 +331,7 @@ class ClaudeAdapter {
 
     await this._waitForExit();
     await this._waitForStreamDrain();
+    this._classifyStderrFailure();
 
     if (this._lineBuffer) {
       const parsed = this._parseStreamEvent(this._lineBuffer);
