@@ -5,6 +5,7 @@ const { runAttempt, prepareBackend } = require('./attempt');
 const { resolveHardTimeoutMs } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree } = require('../worktree');
 const { persistInitFiles } = require('../result-artifact');
+const { workerIdentityDetail } = require('../process-identity');
 
 
 async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, mode, stateRoot }) {
@@ -92,9 +93,15 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     attempt: attemptNum,
     from: 'created',
     to: 'running',
-    detail: worktreePath
-      ? { started_at: isoNow, phase: 'agent_running', worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit }
-      : { started_at: isoNow, phase: 'agent_running' },
+    detail: {
+      started_at: isoNow,
+      phase: 'agent_running',
+      // A foreground run owns the job too: without its identity a Ctrl-C'd or
+      // crashed `run` leaves the record `running` with nothing able to prove
+      // otherwise.
+      ...workerIdentityDetail({ durable: false }),
+      ...(worktreePath ? { worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit } : {}),
+    },
   });
 
   return runAttempt({

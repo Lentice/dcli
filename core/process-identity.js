@@ -211,7 +211,7 @@ function getDurableOwnIdentity() {
  *
  * @returns {{ worker_pid: number, worker_identity: string }}
  */
-function workerIdentityDetail() {
+function workerIdentityDetail({ durable = true } = {}) {
   const id = getOwnIdentity();
   // Identity is pid + creation time, not a bare pid: a reused pid otherwise
   // answers "the worker is alive" for an unrelated process and the abandoned
@@ -220,9 +220,9 @@ function workerIdentityDetail() {
   // runs once when an attempt starts, never on a read path. Best-effort: if
   // the query fails we record Node's clock, tagged as such, and readers fall
   // back to bare liveness rather than comparing incomparable values.
-  const durable = getDurableOwnIdentity();
-  const startTime = durable.startTimeSource === 'os'
-    ? OS_START_TIME_TAG + durable.startTime
+  const durableIdentity = durable ? getDurableOwnIdentity() : id;
+  const startTime = durableIdentity.startTimeSource === 'os'
+    ? OS_START_TIME_TAG + durableIdentity.startTime
     : id.startTime;
   return {
     worker_pid: id.pid,

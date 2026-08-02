@@ -6,6 +6,7 @@ const { loadJobOrThrow } = require('./index');
 const { resolveHardTimeoutMs } = require('../deadlines');
 const { createDetachedWorktree, removeWorktree } = require('../worktree');
 const { persistInitFiles } = require('../result-artifact');
+const { workerIdentityDetail } = require('../process-identity');
 
 const VALID_KINDS = new Set(['continue_backend_session', 'fork_from_artifacts', 'retry_attempt']);
 
@@ -171,6 +172,7 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
       started_at: isoNow,
       phase: 'agent_running',
       session_strategy: kind,
+      ...workerIdentityDetail({ durable: false }),
       ...(worktreePath ? { worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit } : {}),
     },
   });

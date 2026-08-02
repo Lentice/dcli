@@ -302,6 +302,11 @@ class ClaudeAdapter {
       this._observedExited = true;
       this._wakeObservers();
     });
+    child.stdin.on('error', (err) => {
+      this._facts.push({ type: 'backend_error', class_hint: 'execution_error', structured_payload: { error: err.message } });
+      this._observedExited = true;
+      this._wakeObservers();
+    });
 
     return { handle: 'claude-process', pid: child.pid, sessionId: this._sessionId };
   }

@@ -419,6 +419,11 @@ class CodexAdapter {
       this._observedExited = true;
       this._wakeObservers();
     });
+    child.stdin.on('error', (err) => {
+      this._facts.push({ type: 'backend_error', class_hint: 'execution_error', structured_payload: { error: err.message } });
+      this._observedExited = true;
+      this._wakeObservers();
+    });
 
     return { handle: 'codex-process', pid: child.pid, resultFile: this._resultFilePath };
   }
@@ -460,9 +465,7 @@ class CodexAdapter {
       this._lineBuffer = '';
     }
 
-    for (const fact of this._facts) {
-      yield { ...fact };
-    }
+    yield* this._orderedTerminalFacts();
   }
 
   async *_drainLiveQueue() {
