@@ -15,6 +15,9 @@ const LOCK_EXIT_CODE = 17;
 
 const DEFAULT_TIMEOUT_MS = 10000;
 
+// How long an unparseable lock file is given before it is treated as junk.
+const UNPARSEABLE_LOCK_GRACE_MS = 1000;
+
 const BACKOFF_MIN_MS = 10;
 const BACKOFF_MAX_MS = 200;
 
@@ -43,6 +46,14 @@ class LockManager {
     this._lockDir = options.lockDir || path.join(stateRoot, 'locks');
     this._timeoutMs = options.timeoutMs !== undefined ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
     this._heldLocks = new Map();
+    // Deliberately the CHEAP identity: no OS creation-time lookup. A lock is
+    // taken on every journal write, and a subprocess there is not affordable —
+    // it timed a fixture out under a loaded suite. The cost of not having a
+    // verifiable creation time is bounded and safe-direction: a reused pid
+    // makes a dead owner's lock look live, so acquisition times out with exit
+    // 17 instead of two holders sharing a lock. Readers know the timestamp is
+    // Node-sourced (startTimeSource) and skip the comparison rather than
+    // mistaking it for a mismatch.
     this._ownIdentity = getOwnIdentity();
     this._ownToken = generateExecutionToken();
   }
@@ -60,14 +71,16 @@ class LockManager {
     return path.join(this._lockDir, `${scope}-${safeKey}.lock`);
   }
 
-  _writeMetadata(lockPath, extra) {
+  _writeMetadata(lockPath, extra, identity) {
+    const id = identity || this._ownIdentity;
     const metadata = {
       schema_version: 1,
-      pid: this._ownIdentity.pid,
-      ppid: this._ownIdentity.ppid,
-      startTime: this._ownIdentity.startTime,
-      imagePath: this._ownIdentity.imagePath,
-      hostname: this._ownIdentity.hostname,
+      pid: id.pid,
+      ppid: id.ppid,
+      startTime: id.startTime,
+      startTimeSource: id.startTimeSource,
+      imagePath: id.imagePath,
+      hostname: id.hostname,
       operation: extra && extra.operation ? extra.operation : 'unknown',
       acquiredAt: new Date().toISOString(),
       executionToken: this._ownToken,
@@ -101,7 +114,9 @@ class LockManager {
   acquire(scope, key, extra) {
     const lockKey = `${scope}:${key}`;
     if (this._heldLocks.has(lockKey)) {
-      return this._heldLocks.get(lockKey);
+      const lock = this._heldLocks.get(lockKey);
+      lock.depth = (lock.depth || 1) + 1;
+      return lock;
     }
 
     const lockPath = this._lockPath(scope, key);
@@ -144,20 +159,31 @@ class LockManager {
    * @returns {object} lock handle
    */
   _createLockFile(scope, key, lockPath, extra) {
-    const fd = fs.openSync(lockPath, 'wx');
+    // The lock file must never be observable empty. `openSync('wx')` followed
+    // by a write leaves a zero-byte file at the real path for as long as the
+    // write takes, and an unparseable lock file reads as stale — so a
+    // contender could quarantine a lock that was being created and take the
+    // same logical lock. Writing a complete temp file and hard-linking it into
+    // place makes the lock appear fully formed or not at all; link() is the
+    // atomic create-if-absent primitive (rename would overwrite, which is
+    // exactly the exclusivity we need to keep).
+    const identity = this._ownIdentity;
+    const tempPath = `${lockPath}.${process.pid}.${this._ownToken.slice(0, 8)}.tmp`;
+    this._writeMetadata(tempPath, extra, identity);
     try {
-      this._writeMetadata(lockPath, extra);
-    } catch (writeErr) {
-      try { fs.closeSync(fd); } catch {}
-      try { fs.unlinkSync(lockPath); } catch {}
-      throw writeErr;
+      fs.linkSync(tempPath, lockPath);
+    } catch (linkErr) {
+      try { fs.unlinkSync(tempPath); } catch {}
+      throw linkErr;
     }
+    try { fs.unlinkSync(tempPath); } catch {}
+
     const lock = {
       scope,
       key,
       lockPath,
-      fd,
       released: false,
+      depth: 1,
       acquiredAt: new Date().toISOString(),
       executionToken: this._ownToken,
     };
@@ -175,7 +201,9 @@ class LockManager {
   tryAcquire(scope, key, extra) {
     const lockKey = `${scope}:${key}`;
     if (this._heldLocks.has(lockKey)) {
-      return this._heldLocks.get(lockKey);
+      const lock = this._heldLocks.get(lockKey);
+      lock.depth = (lock.depth || 1) + 1;
+      return lock;
     }
 
     const lockPath = this._lockPath(scope, key);
@@ -208,6 +236,10 @@ class LockManager {
    */
   release(lock) {
     if (!lock || lock.released) return;
+    if (lock.depth > 1) {
+      lock.depth -= 1;
+      return;
+    }
     lock.released = true;
     const lockKey = `${lock.scope}:${lock.key}`;
     this._heldLocks.delete(lockKey);
@@ -243,6 +275,13 @@ class LockManager {
       if (!fs.existsSync(lockPath)) return false;
       const meta = this._readMetadata(lockPath);
       if (!meta || !meta.pid) {
+        // Unparseable, but not necessarily abandoned. Some other writer may be
+        // mid-creation; quarantining instantly is how two holders end up
+        // sharing a lock. Only a file that has been unreadable for a while is
+        // genuinely junk.
+        let ageMs = Infinity;
+        try { ageMs = Date.now() - fs.statSync(lockPath).mtimeMs; } catch {}
+        if (ageMs < UNPARSEABLE_LOCK_GRACE_MS) return false;
         this._quarantine(lockPath);
         return true;
       }
@@ -257,7 +296,7 @@ class LockManager {
         return true;
       }
 
-      const alive = isSameProcessAlive({ pid: meta.pid, startTime: meta.startTime, imagePath: meta.imagePath });
+      const alive = isSameProcessAlive({ pid: meta.pid, startTime: meta.startTime, startTimeSource: meta.startTimeSource, imagePath: meta.imagePath });
       return !alive;
     } catch {
       return false;

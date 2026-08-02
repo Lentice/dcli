@@ -3,7 +3,7 @@ const path = require('path');
 const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./fs-text');
 const { maybeInject } = require('./inject-points');
 const { reduce, TERMINAL } = require('./reducer');
-const { isProcessAlive } = require('./process-identity');
+const { isProcessAlive, isSameProcessAlive, parseWorkerIdentity } = require('./process-identity');
 const { LockManager, LOCK_SCOPES } = require('./locking');
 
 const ATOMIC_WRITE_MAX_RETRIES = 10;
@@ -132,9 +132,22 @@ class JobStore {
               ['done', 'failed'].includes(entry.to)) {
             preserveTerminal = true;
           }
+          if (TERMINAL.has(updated.state) && !TERMINAL.has(entry.to)) {
+            preserveTerminal = true;
+          }
           if (!preserveTerminal) {
             updated.state = entry.to;
             updated.attempt_state = entry.to;
+          } else if ((entry.detail || {}).reconciled) {
+            // A reconciliation entry that lost the race loses its detail too.
+            // Reconciliation infers an outcome from the outside, with no
+            // coordination against the worker publishing its real one, so
+            // applying its detail anyway stamped a completed job with
+            // failure_reason 'worker_lost' and a later finished_at — done and
+            // failed at once. A deliberate producer-written correction (a
+            // second transition refining exit codes) still applies; only the
+            // inferred one is discarded.
+            return updated;
           }
         }
         const d = entry.detail || {};
@@ -184,21 +197,40 @@ class JobStore {
     const journalPath = path.join(jobDir, 'journal.jsonl');
     if (!fs.existsSync(journalPath)) return [];
     const content = fs.readFileSync(journalPath, 'utf8');
-    return content.trim().split('\n').filter(l => l.length > 0).map(l => JSON.parse(l));
+    // Whether the file ends in a newline is the ONLY evidence distinguishing a
+    // torn append from a fully written record that is corrupt, and trimming
+    // first destroys it. Without this check a corrupted terminal transition was
+    // silently dropped and replaced by inferred state.
+    const tornTail = content.length > 0 && !content.endsWith('\n');
+    const lines = content.trim().split('\n').filter(l => l.length > 0);
+    return lines.map((line, i) => {
+      try {
+        return JSON.parse(line);
+      } catch (err) {
+        // A worker killed mid-append leaves a partial LAST line with no
+        // terminating newline. Dropping that costs one un-journaled
+        // transition; refusing to parse the file makes every command on the
+        // job fail with "record could not be read" forever — exactly when the
+        // user is trying to find out what happened. Anything else is real
+        // corruption and still throws.
+        if (tornTail && i === lines.length - 1) return null;
+        throw err;
+      }
+    }).filter(Boolean);
   }
 
-  _regenerateStatusFromEntries(entries) {
+  _regenerateStatusFromEntries(entries, { backstop = true } = {}) {
     let status = this._defaultStatus();
     for (const entry of entries) {
       status = this._applyJournalEntry(status, entry);
     }
-    status = this._applyReducerBackstop(status, entries);
+    if (backstop) status = this._applyReducerBackstop(status, entries);
     return status;
   }
 
-  _regenerateStatus(jobDir) {
+  _regenerateStatus(jobDir, options) {
     const entries = this._readRawJournal(jobDir);
-    return this._regenerateStatusFromEntries(entries);
+    return this._regenerateStatusFromEntries(entries, options);
   }
 
   _applyReducerBackstop(status, entries) {
@@ -218,7 +250,14 @@ class JobStore {
     return status;
   }
 
-  gatherEvidence({ repoKey, jobId }) {
+  /**
+   * @param {{ repoKey:string, jobId:string, status?:Object }} args
+   *   `status` lets a caller that has already regenerated the projection pass
+   *   it in. Re-reading status.json here instead meant evidence could be
+   *   gathered from a projection that disagreed with the journal it is derived
+   *   from — e.g. an interrupted projection write leaving a stale heartbeat.
+   */
+  gatherEvidence({ repoKey, jobId, status: providedStatus }) {
     const jobDir = this._jobDir(repoKey, jobId);
     const evidence = {
       workerAlive: null,
@@ -229,12 +268,22 @@ class JobStore {
       executionToken: null,
       executionTokenMatch: null,
       commandExitCode: null,
+      sentinelState: null,
     };
 
     try {
-      const status = this.readStatus({ repoKey, jobId });
+      const status = providedStatus || this.readStatus({ repoKey, jobId });
 
-      if (status.worker_pid) {
+      // Prefer the recorded identity over the bare pid. A bare pid is
+      // creation-time ancestry with no proof of who holds it now, so a reused
+      // pid answers "yes, the worker is alive" for a process that is not the
+      // worker — and the abandoned job never reaches a terminal state.
+      // isSameProcessAlive() only degrades to bare liveness when the recorded
+      // start time is not OS-sourced, which is what it is today.
+      const identity = parseWorkerIdentity(status.worker_identity);
+      if (identity) {
+        try { evidence.workerAlive = isSameProcessAlive(identity); } catch {}
+      } else if (status.worker_pid) {
         try { evidence.workerAlive = isProcessAlive(status.worker_pid); } catch {}
       }
       if (status.job_id) evidence.jobId = status.job_id;
@@ -244,10 +293,19 @@ class JobStore {
       if (attemptNum) {
         const sentinelPath = path.join(jobDir, 'attempts', String(attemptNum), 'worker-complete.json');
         if (fs.existsSync(sentinelPath)) {
-          evidence.completionSentinelPresent = true;
           try {
             const sentinel = JSON.parse(fs.readFileSync(sentinelPath, 'utf8'));
+            // Present ONLY if it parses. Marking it present first and then
+            // swallowing the parse error turned a half-written file into
+            // "the worker completed, with an unknown exit code", which the
+            // reducer resolves to `failed`. An unreadable sentinel is not
+            // evidence of anything; absent it is, and the job reduces to
+            // `interrupted` — which is what actually happened.
+            evidence.completionSentinelPresent = true;
             if (sentinel.exit_code !== undefined) evidence.commandExitCode = sentinel.exit_code;
+            // The state the worker itself published. An `interrupted` attempt
+            // exits 0, so the exit code alone would read as `done`.
+            if (typeof sentinel.state === 'string') evidence.sentinelState = sentinel.state;
           } catch {}
         }
       }
@@ -263,27 +321,127 @@ class JobStore {
   }
 
   reconcileStatus({ repoKey, jobId }) {
-    const lock = this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'reconcile' });
+    // Cheap exit before taking the lock: a reader polling every 200ms must not
+    // contend with the worker's own heartbeat for the per-job lock.
+    const projected = this._regenerateStatus(this._jobDir(repoKey, jobId), { backstop: false });
+    if (TERMINAL.has(projected.state)) return projected;
+
+    const evidence = this.gatherEvidence({ repoKey, jobId, status: projected });
+
+    // Reconciliation exists to resolve a job whose OWNER IS GONE. While the
+    // worker is observably alive, its outcome is its own to publish, and
+    // journaling an inferred one is destructive: terminal states are monotonic,
+    // so a `cancelled` inferred from a pending cancel request — by a passing
+    // `status`, `wait` or `list`, none of which are cancelling anything — would
+    // permanently outrank the `done` the worker was seconds from writing.
+    if (evidence.workerAlive === true) return projected;
+
+    const reduced = reduce(projected, [], evidence);
+    if (reduced.state === projected.state) return projected;
+
+    // Publishing requires the writer lock, taken non-blockingly so reads stay
+    // zero-wait. Everything above was a lock-free preview; the decision that
+    // gets WRITTEN must be re-derived under the lock, because a heartbeat or a
+    // terminal transition can land between the preview and the acquisition —
+    // and an inference from evidence that is already superseded is exactly the
+    // kind of stale terminal this whole path exists to avoid.
+    const lockKey = `${repoKey}-${jobId}`;
+    const lock = this._jobLocks.tryAcquire(LOCK_SCOPES.PER_JOB, lockKey, { operation: 'reconcile' });
+    if (!lock) return projected;
     try {
-      const status = this.readStatus({ repoKey, jobId });
-      if (TERMINAL.has(status.state)) return status;
-
-      const evidence = this.gatherEvidence({ repoKey, jobId });
-      const reduced = reduce(status, [], evidence);
-      if (reduced.state === status.state) return status;
-
-      // Write reconciled status while holding the same lock as journal replay;
-      // otherwise a stale reconciliation can overwrite a terminal transition.
-      status.state = reduced.state;
-      status.phase = reduced.phase;
-      if (reduced.failure_reason !== undefined) status.failure_reason = reduced.failure_reason;
-      if (reduced.failure !== undefined) status.failure = reduced.failure;
-      if (reduced.warning !== undefined) status.warning = reduced.warning;
-      this._atomicWriteJsonWithRetry(path.join(this._jobDir(repoKey, jobId), 'status.json'), status);
-      return status;
+      const fresh = this._regenerateStatus(this._jobDir(repoKey, jobId), { backstop: false });
+      if (TERMINAL.has(fresh.state)) return fresh;
+      const freshEvidence = this.gatherEvidence({ repoKey, jobId, status: fresh });
+      if (freshEvidence.workerAlive === true) return fresh;
+      // Publish only on POSITIVE evidence that the owner is gone. A stale
+      // heartbeat with unknown liveness is enough to *display* `interrupted`,
+      // but not to write it: a job that predates worker-identity recording has
+      // no pid to check and only ever wrote one heartbeat, so a passing
+      // `status` would have declared every such job interrupted — permanently,
+      // since terminal states are monotonic — while its backend ran on.
+      if (freshEvidence.workerAlive !== false && !freshEvidence.completionSentinelPresent) return fresh;
+      const freshReduced = reduce(fresh, [], freshEvidence);
+      if (freshReduced.state === fresh.state) return fresh;
+      return this._publishReconciled({ repoKey, jobId, projected: fresh, reduced: freshReduced, evidence: freshEvidence });
     } finally {
       this._jobLocks.release(lock);
     }
+  }
+
+  /**
+   * Journal a reconciled terminal state. Caller holds the per-job lock; the
+   * nested acquire inside journalTransition returns that same handle.
+   */
+  _publishReconciled({ repoKey, jobId, projected, reduced, evidence }) {
+
+    // The reconciled state is journaled, not written straight to status.json.
+    // status.json is a projection of the journal — every read-side command
+    // regenerates it — so a direct write is erased by the next replay and the
+    // job pops back to `running` on the very next poll.
+    const written = this.journalTransition(jobId, repoKey, {
+      kind: 'attempt_state_changed',
+      attempt: projected.attempt || null,
+      from: projected.state,
+      to: reduced.state,
+      nonBlocking: true,
+      detail: {
+        finished_at: new Date().toISOString(),
+        phase: reduced.phase,
+        failure_reason: reduced.failure_reason !== undefined ? reduced.failure_reason : null,
+        failure: reduced.failure !== undefined ? reduced.failure : null,
+        // Durable producer evidence, not an inference: keep it rather than
+        // leaving the append-only field null on a recovered attempt.
+        ...(evidence.commandExitCode !== null && evidence.commandExitCode !== undefined
+          ? { command_exit_code: evidence.commandExitCode }
+          : {}),
+        reconciled: true,
+      },
+    });
+    // Never return a terminal state that is not in the journal: list and
+    // wait --all would report a completion that the next replay takes back.
+    if (!written) return projected;
+    return this.readStatus({ repoKey, jobId });
+  }
+
+  /**
+   * Drop a torn (non-newline-terminated) final record before appending.
+   *
+   * Tolerating the torn tail on read is not enough: the next append lands
+   * directly against those bytes, producing ONE newline-terminated line of
+   * concatenated garbage — which is indistinguishable from real corruption and
+   * makes the job unreadable forever, permanently. Callers must hold the
+   * per-job lock.
+   *
+   * @param {string} journalPath
+   */
+  _repairTornTail(journalPath) {
+    let content;
+    try {
+      content = fs.readFileSync(journalPath, 'utf8');
+    } catch (err) {
+      // No journal yet is normal (the first append creates it). Anything else
+      // means we cannot tell whether a torn tail is there, and appending blind
+      // is what causes the permanent corruption.
+      if (err && err.code === 'ENOENT') return;
+      const e = new Error(`Cannot inspect journal before append: ${journalPath}: ${err.message}`);
+      e.exitCode = 17;
+      throw e;
+    }
+    if (content.length === 0 || content.endsWith('\n')) return;
+    const cut = content.lastIndexOf('\n');
+    // A missing trailing newline alone does not make the record garbage — the
+    // write may have completed and only the newline been lost. Truncating on
+    // that signal alone would delete a valid, durable transition. Only an
+    // unparseable tail is torn.
+    const tail = content.slice(cut + 1);
+    try {
+      JSON.parse(tail);
+      // Complete record, just unterminated: give it its newline so the next
+      // append cannot weld onto it.
+      writeTextFileAtomic(journalPath, content + '\n');
+      return;
+    } catch {}
+    writeTextFileAtomic(journalPath, cut === -1 ? '' : content.slice(0, cut + 1));
   }
 
   _lastJournalSeq(jobDir) {
@@ -375,11 +533,30 @@ class JobStore {
     return path.resolve(jobDir);
   }
 
-  journalTransition(jobId, repoKey, { kind, attempt, from, to, detail }) {
+  /**
+   * @param {{ kind:string, attempt:number|null, from:string|null, to:string|null,
+   *           detail:Object, nonBlocking?:boolean }} args
+   *   `nonBlocking` returns null instead of waiting for the writer lock. Read
+   *   commands must stay zero-wait (tickets 04/05): they may publish a
+   *   reconciled state opportunistically, but never block behind a worker's
+   *   heartbeat to do it. A contended lock also means a writer is active, so
+   *   skipping is the right answer anyway.
+   */
+  journalTransition(jobId, repoKey, { kind, attempt, from, to, detail, nonBlocking }) {
     const jobDir = this._jobDir(repoKey, jobId);
     const journalPath = path.join(jobDir, 'journal.jsonl');
-    const lock = this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'journal' });
+    const lockKey = `${repoKey}-${jobId}`;
+    const lock = nonBlocking
+      ? this._jobLocks.tryAcquire(LOCK_SCOPES.PER_JOB, lockKey, { operation: 'journal' })
+      : this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, lockKey, { operation: 'journal' });
+    if (!lock) return null;
     try {
+      // Inside the try: this throws on an unreadable journal, and a throw
+      // before the finally leaks the per-job lock for the life of the process.
+      // Not best-effort either — if the torn tail cannot be removed, appending
+      // would weld the new record onto the partial one and make the journal
+      // permanently unreadable. Failing the write is the recoverable outcome.
+      this._repairTornTail(journalPath);
       const entry = {
         seq: this._lastJournalSeq(jobDir) + 1,
         at: new Date().toISOString(),
@@ -394,7 +571,7 @@ class JobStore {
 
       maybeInject('journal-before-status-write');
 
-      const status = this._regenerateStatus(jobDir);
+      const status = this._regenerateStatus(jobDir, { backstop: false });
       this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
       return entry;
     } finally {
@@ -436,6 +613,9 @@ class JobStore {
     const journalPath = path.join(jobDir, 'journal.jsonl');
     const lock = this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'heartbeat' });
     try {
+      // Inside the try — see journalTransition: throwing before the finally
+      // leaks the lock.
+      this._repairTornTail(journalPath);
       const now = new Date().toISOString();
       const entry = {
         seq: this._lastJournalSeq(jobDir) + 1,
@@ -448,7 +628,7 @@ class JobStore {
       };
 
       appendJsonLine(journalPath, entry);
-      const status = this._regenerateStatus(jobDir);
+      const status = this._regenerateStatus(jobDir, { backstop: false });
       this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
     } finally {
       this._jobLocks.release(lock);

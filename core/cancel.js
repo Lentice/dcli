@@ -49,6 +49,35 @@ async function cancelJob(opts) {
     return { state: status.state, cancelRungReached: null, exitCode: 0 };
   }
 
+  // Without a pid there is nothing to observe, and `isProcessAlive(null)` is
+  // false — so a naive loop declares the FIRST rung successful every time and
+  // reports `cancelled` while killing nothing (AGENTS.md Mistake #5). The only
+  // honest signal left is the worker acting on cancel.request itself.
+  const pidKnown = typeof pid === 'number' && pid > 0;
+  // A job that never reached `running` has no process by construction, so
+  // writing `cancelled` for it is honest. `running` with no identity is the
+  // dangerous case: something IS executing and we cannot touch it.
+  const started = status.state === 'running';
+
+  // Sample liveness BEFORE anything is written. Two reasons, and the order
+  // matters for both: a worker that had already exited otherwise made the
+  // first rung look successful, and — because the reducer maps a pending
+  // cancel_requested_at straight to `cancelled` — annotating first would make
+  // reconciliation report a crashed worker as cleanly cancelled, hiding the
+  // real outcome behind a cancellation nobody performed.
+  if (pidKnown && !isProcessAliveFn(pid)) {
+    const reconciled = store.reconcileStatus({ repoKey, jobId });
+    if (TERMINAL.has(reconciled.state)) {
+      return { state: reconciled.state, cancelRungReached: 'already_exited', exitCode: 0 };
+    }
+    return {
+      state: reconciled.state,
+      cancelRungReached: 'already_exited',
+      exitCode: 21,
+      warning: 'termination_unconfirmed',
+    };
+  }
+
   const now = new Date().toISOString();
 
   const cancelRequestPath = path.join(jobDir, 'cancel.request');
@@ -68,12 +97,45 @@ async function cancelJob(opts) {
   let cancelRungReached = null;
 
   for (const rung of rungs) {
+    if (cancelRungReached) break;
     await adapter.RequestCancel(attempt, rung);
     await boundedSleep(rungWaitMs);
-    if (!isProcessAliveFn(pid)) {
+    if (pidKnown && !isProcessAliveFn(pid)) {
       cancelRungReached = rung;
       break;
     }
+  }
+
+  // No rung of ours reached the process. A detached worker still cancels
+  // itself: it polls cancel.request and publishes its own terminal state. That
+  // is a real, observable confirmation, so wait for it — boundedly — before
+  // falling through to the kill path.
+  if (!cancelRungReached && started) {
+    const selfCancelDeadline = Date.now() + hardKillWaitMs;
+    while (Date.now() < selfCancelDeadline) {
+      const current = store.reconcileStatus({ repoKey, jobId });
+      if (TERMINAL.has(current.state)) {
+        // Only `cancelled` is a self-cancellation. A job that finished, failed
+        // or timed out while we waited reached that state on its own, and
+        // labelling it a successful cancel claims an effect we did not have.
+        return {
+          state: current.state,
+          cancelRungReached: current.state === 'cancelled' ? 'worker_self_cancel' : 'completed_before_cancel',
+          exitCode: 0,
+        };
+      }
+      await boundedSleep(200);
+    }
+  }
+
+  if (!pidKnown && !cancelRungReached && started) {
+    // Nothing to kill and nothing killed itself. Never write `cancelled` here.
+    return {
+      state: store.reconcileStatus({ repoKey, jobId }).state,
+      cancelRungReached: 'worker_identity_unknown',
+      exitCode: 21,
+      warning: 'termination_unconfirmed',
+    };
   }
 
   // Every declared rung failed. The last resort is a contained tree kill — but it only
@@ -117,7 +179,7 @@ async function cancelJob(opts) {
   // The worker may have published a terminal result while the cancel rung was
   // waiting. Re-read before writing `cancelled`; a late cancel must never
   // demote a completed job.
-  const afterKill = store.readStatus({ repoKey, jobId });
+  const afterKill = store.reconcileStatus({ repoKey, jobId });
   if (TERMINAL.has(afterKill.state)) {
     return { state: afterKill.state, cancelRungReached, exitCode: 0 };
   }

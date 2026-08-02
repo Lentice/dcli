@@ -186,7 +186,9 @@ async function main() {
     sessionId: 'test-uuid',
     permissionMode: 'auto',
     safeMode: true,
-    maxBudgetUsd: 0.5,
+    // Keep this a cheap argv-shape test; production's $20 budget is not a
+    // contract of buildArgv and must not be spent by the test suite.
+    maxBudgetUsd: 0.01,
     model: 'sonnet',
     effort: 'high',
     addDirs: ['/extra/dir'],

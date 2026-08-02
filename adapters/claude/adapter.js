@@ -225,7 +225,7 @@ class ClaudeAdapter {
     const access = request.access || 'read-only';
     const permissionMode = access === 'workspace' ? 'acceptEdits' : 'auto';
 
-    const maxBudget = 0.5;
+    const maxBudget = 20;
 
     const args = buildArgv({
       sessionId: this._sessionId,
@@ -341,9 +341,7 @@ class ClaudeAdapter {
       this._lineBuffer = '';
     }
 
-    for (const fact of this._facts) {
-      yield { ...fact };
-    }
+    yield* this._orderedTerminalFacts();
   }
 
   async *_drainLiveQueue() {

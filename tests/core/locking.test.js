@@ -71,6 +71,33 @@ function clean(dir) {
 console.log('PASS: acquire and release');
 
 // ===========================================================================
+// 2b. Nested acquisition must keep the underlying lock until both callers
+//     release it. Reconciliation journals while already holding this lock.
+// ===========================================================================
+
+{
+  loadModules();
+  const dir = tmpDir();
+  const mgr = new LockManager({ lockDir: dir });
+  const outer = mgr.acquire('nested', 'resource');
+  const inner = mgr.tryAcquire('nested', 'resource');
+  assert.strictEqual(inner, outer, 'nested acquisition must reuse the handle');
+  mgr.release(inner);
+  assert.ok(mgr.isHeld('nested', 'resource'), 'inner release must not unlock the outer scope');
+  const contender = new LockManager({ lockDir: dir });
+  assert.strictEqual(contender.tryAcquire('nested', 'resource'), null,
+    'the underlying lock remains held after one nested release');
+  mgr.release(outer);
+  assert.ok(!mgr.isHeld('nested', 'resource'));
+  const reclaimed = contender.tryAcquire('nested', 'resource');
+  assert.ok(reclaimed, 'outer release must unlock the file');
+  contender.release(reclaimed);
+  clean(dir);
+}
+
+console.log('PASS: reentrant acquire and release');
+
+// ===========================================================================
 // 3. tryAcquire non-blocking returns null when lock is held
 // ===========================================================================
 

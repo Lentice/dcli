@@ -170,6 +170,30 @@ async function main() {
 }
 
 // ===========================================================================
+// 3b. A late non-terminal publication cannot resurrect a terminal job.
+// ===========================================================================
+{
+  const dir = tmpDir();
+  try {
+    const store = new JobStore({ stateRoot: dir });
+    createJob(store, 'rb-test-3b');
+    createAttempt(store, 'rb-test-3b');
+    store.journalTransition('rb-test-3b', 'test', {
+      kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'cancelled',
+      detail: { finished_at: new Date().toISOString(), phase: 'terminal' },
+    });
+    store.journalTransition('rb-test-3b', 'test', {
+      kind: 'attempt_state_changed', attempt: 1, from: 'cancelled', to: 'running',
+      detail: { started_at: new Date().toISOString(), phase: 'agent_running' },
+    });
+    assert.strictEqual(store.regenerateStatus({ repoKey: 'test', jobId: 'rb-test-3b' }).state, 'cancelled');
+    console.log('PASS: terminal state is not resurrected by a late running publication');
+  } finally {
+    clean(dir);
+  }
+}
+
+// ===========================================================================
 // 4. Reconcile non-terminal job with dead worker
 //    A worker died leaving the journal in running with no process_exited.
 //    After reconciliation the job must be interrupted.
