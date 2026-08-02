@@ -242,6 +242,21 @@ await withTempDir(async (dir) => {
   console.log('PASS: maybeAccessHint unit cases');
 }
 
+// Classified provider failures must preserve the stable caller-facing exit code.
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const output = await executeRun({
+    store,
+    adapter: adapterFor('', 0, [{
+      type: 'backend_error', class_hint: 'quota_or_rate_limit', structured_payload: { reason: 'credits exhausted' },
+    }]),
+    repoKey: 'quota-exit', repoRoot: dir, prompt: 'run', hardTimeoutSec: 60,
+  });
+  assert.strictEqual(output.envelope.state, 'failed');
+  assert.strictEqual(output.exitCode, 14, 'quota failure must return exit 14');
+  console.log('PASS: quota failure returns classified exit 14');
+});
+
 console.log('\nAll failure-reason + access-hint tests passed.');
 }
 

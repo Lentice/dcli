@@ -124,7 +124,31 @@ await withTempDir(async (dir) => {
   const findings = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
   assert.strictEqual(findings.status, 'absent', 'findings status should be absent for non-review text');
 
-  console.log('PASS: run.js populates all attempt files');
+console.log('PASS: run.js populates all attempt files');
+});
+
+// =============================================================================
+// 1b. Adapter startup failure is terminal and returns the launch-failure code
+// =============================================================================
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = adapterFor('never reached');
+  adapter.Start = () => { throw new Error('backend executable unavailable'); };
+
+  let error;
+  try {
+    await executeRun({ store, adapter, repoKey: 'start-failure', repoRoot: dir, prompt: 'run', hardTimeoutSec: 60 });
+  } catch (err) {
+    error = err;
+  }
+
+  assert.ok(error, 'startup failure must be reported to the caller');
+  assert.strictEqual(error.exitCode, 18, 'startup failure must use exit 18');
+  const jobId = fs.readdirSync(path.join(dir, 'jobs', 'start-failure'))[0];
+  const status = store.readStatus({ repoKey: 'start-failure', jobId });
+  assert.strictEqual(status.state, 'failed', 'startup failure must not leave the job running');
+  assert.strictEqual(status.failure_reason, 'adapter_start_failed');
+  console.log('PASS: adapter startup failure is terminal');
 });
 
 // =============================================================================

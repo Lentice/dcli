@@ -655,7 +655,10 @@ async function main() {
       store.journalTransition(jobId, 'rk', { kind: 'attempt_created', attempt: 1, from: null, to: 'created', detail: { attempt_id: 'a1', execution_token: 't1' } });
       store.journalTransition(jobId, 'rk', { kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'running', detail: { worktree_path: '/tmp/fake', worktree_base_commit: bc, worktree_result_commit: bc } });
       store.journalTransition(jobId, 'rk', { kind: 'attempt_state_changed', attempt: 1, from: 'running', to: 'done', detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal' } });
-      assert.ok(!fs.existsSync(path.join(root, 'locks')), 'sanity: locks dir must not pre-exist');
+      // Job journal writes now also use the store-scoped per-job lock, so the
+      // directory may already exist. The assertion below verifies diff uses
+      // this root too, rather than the process-global default.
+      assert.ok(fs.existsSync(path.join(root, 'locks')), 'journal writes must use the store-scoped lock directory');
       executeDiff({ store, repoKey: 'rk', jobId });
       assert.ok(fs.existsSync(path.join(root, 'locks')), 'diff must create its lock directory under the job store\'s own state root');
     } finally {

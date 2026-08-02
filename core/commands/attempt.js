@@ -1,4 +1,4 @@
-const { buildEnvelope, tryDisposeAdapter, classifyTerminalFailure, isVersionInRange } = require('./index');
+const { buildEnvelope, tryDisposeAdapter, classifyTerminalFailure, terminalExitCode, isVersionInRange } = require('./index');
 const { DEFAULT_BACKEND } = require('../../adapters/registry');
 const { reduce, TERMINAL } = require('../reducer');
 const { resolveDeadline, resolveHardTimeoutMs } = require('../deadlines');
@@ -96,6 +96,7 @@ async function runAttempt({
   const attempt = {};
 
   const hardTimeoutMs = resolveHardTimeoutMs(hardTimeoutSec);
+  const hardDeadline = hardTimeoutMs > 0 ? Date.now() + hardTimeoutMs : null;
   let hardTimedOut = false;
   let hardTimeoutTimer = null;
 
@@ -124,6 +125,7 @@ async function runAttempt({
   };
 
   async function finishTimedOut() {
+    await cancelThroughRungs();
     store.journalTransition(jobId, repoKey, {
       kind: 'attempt_state_changed',
       attempt: attemptNum,
@@ -149,6 +151,24 @@ async function runAttempt({
     await tryDisposeAdapter(adapter, attempt);
     if (worktreePath) removeWorktree(repoRoot, worktreePath);
     releaseSlot();
+    try {
+      const status = store.readStatus({ repoKey, jobId });
+      if (!TERMINAL.has(status.state)) {
+        store.journalTransition(jobId, repoKey, {
+          kind: 'attempt_state_changed',
+          attempt: attemptNum,
+          from: status.state,
+          to: 'failed',
+          detail: {
+            finished_at: new Date().toISOString(),
+            phase: 'terminal',
+            failure_reason: 'adapter_start_failed',
+            failure: { class: 'worker_launch', message: err && err.message ? err.message : 'Adapter failed to start' },
+          },
+        });
+      }
+    } catch {}
+    if (err && !err.exitCode) err.exitCode = 18;
     throw err;
   }
 
@@ -169,7 +189,7 @@ async function runAttempt({
 
   const facts = [];
   try {
-    for await (const fact of adapter.Observe(attempt)) {
+    for await (const fact of raceObserve(adapter.Observe(attempt), hardDeadline)) {
       if (hardTimedOut) throw null;
       facts.push(fact);
 
@@ -238,12 +258,13 @@ async function runAttempt({
         // an agent parsing the exit code read a provider refusal as a result.
         return {
           text: collected.text, jobId, envelope: buildEnvelope(finalStatus),
-          exitCode: (terminalState === 'done' || terminalState === 'interrupted') ? 0 : 1,
+          exitCode: terminalExitCode(terminalState, terminalFailure.failure, terminalFailure.failure_reason),
         };
       }
     }
   } catch (err) {
     clearTimeout(hardTimeoutTimer);
+    if (err && err[HARD_TIMEOUT_ERROR]) hardTimedOut = true;
     if (hardTimedOut) return finishTimedOut();
     return abandon(err);
   }
@@ -290,8 +311,49 @@ async function runAttempt({
     text: collected.text,
     jobId,
     envelope: buildEnvelope(finalStatus),
-    exitCode: terminalState === 'interrupted' ? 0 : 1,
+    exitCode: terminalExitCode(terminalState, result.failure, result.failure_reason || (terminalState === 'interrupted' ? 'observe_ended' : null)),
   };
 }
 
 module.exports = { runAttempt, prepareBackend };
+
+const HARD_TIMEOUT_ERROR = Symbol('hard_timeout');
+
+function raceObserve(iterator, deadline) {
+  if (!deadline) return iterator;
+  return {
+    [Symbol.asyncIterator]() {
+      const iter = iterator[Symbol.asyncIterator]();
+      return {
+        async next() {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) {
+            const err = new Error('Hard timeout reached');
+            err[HARD_TIMEOUT_ERROR] = true;
+            throw err;
+          }
+          let timer;
+          try {
+            const result = await Promise.race([
+              iter.next().then(value => ({ value, source: 'iter' })),
+              new Promise(resolve => {
+                timer = setTimeout(() => resolve({ value: { done: true }, source: 'timer' }), remaining);
+              }),
+            ]);
+            if (result.source === 'timer') {
+              const err = new Error('Hard timeout reached');
+              err[HARD_TIMEOUT_ERROR] = true;
+              throw err;
+            }
+            return result.value;
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        },
+        async return() {
+          return typeof iter.return === 'function' ? iter.return() : { done: true };
+        },
+      };
+    },
+  };
+}

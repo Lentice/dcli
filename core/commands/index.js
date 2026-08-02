@@ -122,6 +122,20 @@ function classifyTerminalFailure({ exitCode, resultBytes, reducerResult }) {
   return { failure_reason, failure };
 }
 
+const FAILURE_EXIT_CODES = Object.freeze({
+  authentication: 13,
+  quota_or_rate_limit: 14,
+  permission_or_sandbox: 15,
+  network_error: 16,
+});
+
+function terminalExitCode(state, failure, failureReason) {
+  if (state === 'done' || state === 'interrupted') return 0;
+  if (failureReason === 'hard_timeout') return 24;
+  if (failureReason === 'result_persistence_failed') return 11;
+  return FAILURE_EXIT_CODES[(failure && (failure.class || failure.class_hint)) || failureReason] || 1;
+}
+
 /**
  * Cheap advisory check: if no --access was supplied (default is read-only) and
  * the prompt asks for subagent dispatch / file writes / the Task tool, emit a
@@ -478,14 +492,22 @@ async function tryDisposeAdapter(adapter, attempt) {
   const ms = resolveDeadline('ADAPTER_DISPOSE_MS');
   try {
     const disposeWork = adapter.Dispose(attempt);
-    const completed = await Promise.race([
-      (async () => { await disposeWork; return true; })(),
-      new Promise(resolve => setTimeout(() => resolve(false), ms)),
-    ]);
+    let timer;
+    let completed;
+    try {
+      completed = await Promise.race([
+        (async () => { await disposeWork; return true; })(),
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(false), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     return { disposed: true, exceeded: !completed };
   } catch (err) {
     return { disposed: false, reason: err.message || 'dispose_error' };
   }
 }
 
-module.exports = { buildEnvelope, loadJobOrThrow, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure, maybeAccessHint, NO_RESULT_BYTE_THRESHOLD };
+module.exports = { buildEnvelope, loadJobOrThrow, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure, terminalExitCode, maybeAccessHint, NO_RESULT_BYTE_THRESHOLD };

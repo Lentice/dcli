@@ -4,6 +4,7 @@ const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./
 const { maybeInject } = require('./inject-points');
 const { reduce, TERMINAL } = require('./reducer');
 const { isProcessAlive } = require('./process-identity');
+const { LockManager, LOCK_SCOPES } = require('./locking');
 
 const ATOMIC_WRITE_MAX_RETRIES = 10;
 const ATOMIC_WRITE_DELAY_MS = 20;
@@ -12,6 +13,7 @@ class JobStore {
   constructor({ stateRoot }) {
     this._stateRoot = stateRoot;
     this._jobsDir = path.join(stateRoot, 'jobs');
+    this._jobLocks = new LockManager({ lockDir: path.join(stateRoot, 'locks') });
   }
 
   _jobDir(repoKey, jobId) {
@@ -119,12 +121,18 @@ class JobStore {
       }
       case 'attempt_state_changed': {
         // null means "no state change" (e.g. cancel_requested_at annotation)
+        let preserveTerminal = false;
         if (entry.to != null) {
+          // Terminal states are monotonic. A late cancel or duplicate worker
+          // publication must not rewrite an already published result.
+          preserveTerminal = TERMINAL.has(updated.state) && TERMINAL.has(entry.to) &&
+            updated.state !== entry.to && updated.state !== 'interrupted';
           // Don't let done/failed overwrite a confirmed cancelled or timed_out
           if (['cancelled', 'timed_out'].includes(updated.state) &&
               ['done', 'failed'].includes(entry.to)) {
-            // Preserve the more authoritative terminal state
-          } else {
+            preserveTerminal = true;
+          }
+          if (!preserveTerminal) {
             updated.state = entry.to;
             updated.attempt_state = entry.to;
           }
@@ -255,21 +263,27 @@ class JobStore {
   }
 
   reconcileStatus({ repoKey, jobId }) {
-    const status = this.readStatus({ repoKey, jobId });
-    if (TERMINAL.has(status.state)) return status;
+    const lock = this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'reconcile' });
+    try {
+      const status = this.readStatus({ repoKey, jobId });
+      if (TERMINAL.has(status.state)) return status;
 
-    const evidence = this.gatherEvidence({ repoKey, jobId });
-    const reduced = reduce(status, [], evidence);
-    if (reduced.state === status.state) return status;
+      const evidence = this.gatherEvidence({ repoKey, jobId });
+      const reduced = reduce(status, [], evidence);
+      if (reduced.state === status.state) return status;
 
-    // Write reconciled status
-    status.state = reduced.state;
-    status.phase = reduced.phase;
-    if (reduced.failure_reason !== undefined) status.failure_reason = reduced.failure_reason;
-    if (reduced.failure !== undefined) status.failure = reduced.failure;
-    if (reduced.warning !== undefined) status.warning = reduced.warning;
-    this._atomicWriteJsonWithRetry(path.join(this._jobDir(repoKey, jobId), 'status.json'), status);
-    return status;
+      // Write reconciled status while holding the same lock as journal replay;
+      // otherwise a stale reconciliation can overwrite a terminal transition.
+      status.state = reduced.state;
+      status.phase = reduced.phase;
+      if (reduced.failure_reason !== undefined) status.failure_reason = reduced.failure_reason;
+      if (reduced.failure !== undefined) status.failure = reduced.failure;
+      if (reduced.warning !== undefined) status.warning = reduced.warning;
+      this._atomicWriteJsonWithRetry(path.join(this._jobDir(repoKey, jobId), 'status.json'), status);
+      return status;
+    } finally {
+      this._jobLocks.release(lock);
+    }
   }
 
   _lastJournalSeq(jobDir) {
@@ -364,27 +378,28 @@ class JobStore {
   journalTransition(jobId, repoKey, { kind, attempt, from, to, detail }) {
     const jobDir = this._jobDir(repoKey, jobId);
     const journalPath = path.join(jobDir, 'journal.jsonl');
+    const lock = this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'journal' });
+    try {
+      const entry = {
+        seq: this._lastJournalSeq(jobDir) + 1,
+        at: new Date().toISOString(),
+        kind,
+        attempt: attempt || null,
+        from: from || null,
+        to: to || null,
+        detail: detail || {},
+      };
 
-    const seq = this._lastJournalSeq(jobDir) + 1;
+      appendJsonLine(journalPath, entry);
 
-    const entry = {
-      seq,
-      at: new Date().toISOString(),
-      kind,
-      attempt: attempt || null,
-      from: from || null,
-      to: to || null,
-      detail: detail || {},
-    };
+      maybeInject('journal-before-status-write');
 
-    appendJsonLine(journalPath, entry);
-
-    maybeInject('journal-before-status-write');
-
-    const status = this._regenerateStatus(jobDir);
-    this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
-
-    return entry;
+      const status = this._regenerateStatus(jobDir);
+      this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
+      return entry;
+    } finally {
+      this._jobLocks.release(lock);
+    }
   }
 
   createAttemptDir({ repoKey, jobId, attemptNum }) {
@@ -419,21 +434,25 @@ class JobStore {
   writeHeartbeat({ repoKey, jobId }) {
     const jobDir = this._jobDir(repoKey, jobId);
     const journalPath = path.join(jobDir, 'journal.jsonl');
-    const seq = this._lastJournalSeq(jobDir) + 1;
+    const lock = this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'heartbeat' });
+    try {
+      const now = new Date().toISOString();
+      const entry = {
+        seq: this._lastJournalSeq(jobDir) + 1,
+        at: now,
+        kind: 'heartbeat',
+        attempt: null,
+        from: null,
+        to: null,
+        detail: { heartbeat_at: now },
+      };
 
-    const entry = {
-      seq,
-      at: new Date().toISOString(),
-      kind: 'heartbeat',
-      attempt: null,
-      from: null,
-      to: null,
-      detail: { heartbeat_at: new Date().toISOString() },
-    };
-
-    appendJsonLine(journalPath, entry);
-    const status = this._regenerateStatus(jobDir);
-    this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
+      appendJsonLine(journalPath, entry);
+      const status = this._regenerateStatus(jobDir);
+      this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
+    } finally {
+      this._jobLocks.release(lock);
+    }
   }
 }
 
