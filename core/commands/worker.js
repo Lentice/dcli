@@ -20,9 +20,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { resolveDeadline } = require('../deadlines');
+const { writeJsonFileAtomic } = require('../fs-text');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
-const { tryDisposeAdapter, classifyTerminalFailure } = require('./index');
+const { tryDisposeAdapter, classifyTerminalFailure, terminalExitCode } = require('./index');
 const { reduce, TERMINAL } = require('../reducer');
+const { workerIdentityDetail } = require('../process-identity');
+
+// Must stay well under the reducer's 15s heartbeat-staleness threshold.
+const HEARTBEAT_INTERVAL_MS = 5000;
 
 
 async function main() {
@@ -194,17 +199,50 @@ async function main() {
     detail: { attempt_id: `attempt-${attemptNum}`, execution_token: executionToken },
   });
 
-  // Journal running
+  // Journal running, carrying this worker's launch identity. Persisting it the
+  // instant the process exists is what lets `cancel` kill something real and
+  // reconciliation prove death; holding it only in the launcher's memory left
+  // jobs stuck `running` and cancels that killed nothing (AGENTS.md #5).
   store.journalTransition(jobId, repoKey, {
     kind: 'attempt_state_changed',
     attempt: attemptNum,
     from: 'created',
     to: 'running',
-    detail: { started_at: new Date().toISOString(), phase: 'agent_running' },
+    detail: {
+      started_at: new Date().toISOString(),
+      phase: 'agent_running',
+      ...workerIdentityDetail(),
+    },
   });
 
-  // Write first heartbeat
+  // Heartbeat on a cadence, not once. The reducer treats a heartbeat older
+  // than 15s as evidence the worker is gone, so a single startup heartbeat
+  // makes every job that outlives 15s look lost.
   store.writeHeartbeat({ repoKey, jobId });
+  const heartbeatTimer = setInterval(() => {
+    try { store.writeHeartbeat({ repoKey, jobId }); } catch {}
+  }, HEARTBEAT_INTERVAL_MS);
+  if (heartbeatTimer.unref) heartbeatTimer.unref();
+
+  // Every terminal exit routes through here so the completion sentinel — the
+  // evidence reconciliation reads to tell "finished" from "died" — cannot be
+  // written on some paths and forgotten on others.
+  //
+  // `state` is recorded alongside the exit code because the two are not the
+  // same claim. An `interrupted` attempt exits 0 by the CLI contract, and a
+  // reader that only had the exit code turned that into `done` — a job that
+  // was cut short read as a clean success. Written atomically: a half-written
+  // sentinel is worse than none, because it looks like completion evidence.
+  function finish(code, state) {
+    clearInterval(heartbeatTimer);
+    try {
+      writeJsonFileAtomic(
+        path.join(jobDir, 'attempts', String(attemptNum), 'worker-complete.json'),
+        { exit_code: code, state: state || null, finished_at: new Date().toISOString() }
+      );
+    } catch {}
+    process.exit(code);
+  }
 
   // Apply default hard timeout when none specified (invariant #3: nothing blocks forever).
   // 0 means "not supplied" and gets the default. Validate before use (mistake #6).
@@ -288,7 +326,7 @@ async function main() {
         to: 'timed_out',
         detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'hard_timeout', kill_skipped: hardTimeoutKillSkipped },
       });
-      process.exit(24);
+      finish(24, 'timed_out');
     }
     if (cancelled) {
       store.journalTransition(jobId, repoKey, {
@@ -298,7 +336,7 @@ async function main() {
         to: 'cancelled',
         detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal' },
       });
-      process.exit(0);
+      finish(0, 'cancelled');
     }
     store.journalTransition(jobId, repoKey, {
       kind: 'attempt_state_changed',
@@ -307,7 +345,7 @@ async function main() {
       to: 'failed',
       detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'adapter_error', failure: err.message },
     });
-    process.exit(1);
+    finish(1, 'failed');
   }
 
   // Observe with racing: each iteration is raced against the deadline so a
@@ -346,7 +384,7 @@ async function main() {
           });
           await tryDisposeAdapter(adapter, attempt);
           admission.releaseSlot(slotId);
-          process.exit(11);
+          finish(11, 'failed');
         }
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
         try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
@@ -355,13 +393,17 @@ async function main() {
           exitCode: fact.code !== undefined ? fact.code : null,
           resultBytes,
           reducerResult: result,
+          resultStatus: collected.result_status,
         });
+        // The classifier may override the state (a backend that exited 0 but
+        // produced no result file is not `done`); the exit code must follow it.
+        const effectiveState = terminalFailure.terminalState || terminalState;
 
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',
           attempt: attemptNum,
           from: 'running',
-          to: terminalState,
+          to: effectiveState,
           detail: {
             finished_at: new Date().toISOString(),
             command_exit_code: fact.code !== undefined ? fact.code : null,
@@ -376,7 +418,10 @@ async function main() {
 
         await tryDisposeAdapter(adapter, attempt);
         admission.releaseSlot(slotId);
-        process.exit(0);
+        // Not 0: this code is what the completion sentinel records, and the
+        // reducer reads a zero sentinel as `done`. A failed attempt exiting 0
+        // here hands reconciliation evidence that contradicts the journal.
+        finish(terminalExitCode(effectiveState, terminalFailure.failure, terminalFailure.failure_reason), effectiveState);
       }
     }
   } catch (err) {
@@ -403,7 +448,7 @@ async function main() {
         to: 'timed_out',
         detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'hard_timeout', kill_skipped: hardTimeoutKillSkipped },
       });
-      process.exit(24);
+      finish(24, 'timed_out');
     }
     if (cancelled) {
       store.journalTransition(jobId, repoKey, {
@@ -413,7 +458,7 @@ async function main() {
         to: 'cancelled',
         detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal' },
       });
-      process.exit(0);
+      finish(0, 'cancelled');
     }
     store.journalTransition(jobId, repoKey, {
       kind: 'attempt_state_changed',
@@ -422,7 +467,7 @@ async function main() {
       to: 'failed',
       detail: { finished_at: new Date().toISOString(), command_exit_code: null, phase: 'terminal', failure_reason: 'observe_error', failure: err.message },
     });
-    process.exit(1);
+    finish(1, 'failed');
   }
 
   clearTimeout(hardTimeoutTimer);
@@ -438,7 +483,7 @@ async function main() {
     });
     await tryDisposeAdapter(adapter, attempt);
     admission.releaseSlot(slotId);
-    process.exit(0);
+    finish(0, 'cancelled');
   }
 
   const collected = adapter.CollectResult(attempt);
@@ -469,7 +514,15 @@ async function main() {
   });
   await tryDisposeAdapter(adapter, attempt);
   admission.releaseSlot(slotId);
-  process.exit(terminalState === 'interrupted' ? 0 : 1);
+  // The exit code follows the reduced terminal state. It was inverted: a
+  // `done` job exited 1 and an `interrupted` one exited 0 — and this code is
+  // exactly what the completion sentinel records, so reconciliation read a
+  // finished job as failed.
+  finish(terminalExitCode(
+    terminalState,
+    result.failure,
+    result.failure_reason || (terminalState === 'interrupted' ? 'observe_ended' : null)
+  ), terminalState);
 }
 
 const HARD_TIMEOUT_ERROR = Symbol('hard_timeout');
@@ -539,6 +592,16 @@ function journalFailure(store, slotId, repoKey, jobId, stateRoot, reason, messag
   } catch {}
 }
 
+function writeCrashSentinel(stateRoot, repoKey, jobId, code, state) {
+  try {
+    const jobDir = path.join(stateRoot, 'jobs', repoKey, jobId);
+    writeJsonFileAtomic(
+      path.join(jobDir, 'attempts', '1', 'worker-complete.json'),
+      { exit_code: code, state, finished_at: new Date().toISOString() }
+    );
+  } catch {}
+}
+
 main().catch(err => {
   console.error('Worker fatal:', err.message);
   try {
@@ -548,5 +611,12 @@ main().catch(err => {
       detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: 'worker_crash', failure: err.message },
     });
   } catch {}
+  writeCrashSentinel(
+    process.env.DCLI_STATE_ROOT,
+    process.env.DCLI_REPO_KEY,
+    process.env.DCLI_JOB_ID,
+    1,
+    'failed'
+  );
   process.exit(1);
 });
