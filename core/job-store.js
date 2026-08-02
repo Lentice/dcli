@@ -281,7 +281,7 @@ class JobStore {
       const heartbeatAge = status.heartbeat_at
         ? Date.now() - new Date(status.heartbeat_at).getTime()
         : Infinity;
-      if (Number.isFinite(heartbeatAge) && heartbeatAge >= 0 && heartbeatAge < 1000) {
+      if (Number.isFinite(heartbeatAge) && heartbeatAge >= 0 && heartbeatAge < 6000) {
         evidence.workerAlive = true;
       }
 

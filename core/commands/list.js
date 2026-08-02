@@ -31,13 +31,21 @@ async function executeList({ store, repoKey, groupFilter }) {
       // Listing it as normal, with exit 0, is the same defect as reporting an
       // unparseable result as a clean one.
       if (hasStatus && !hasJournal) {
+        let relevant = true;
         if (groupFilter) {
           try {
             const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
-            if (status.group !== groupFilter) continue;
-          } catch {}
+            relevant = status.group === groupFilter;
+          } catch {
+            // A scoped wait cannot prove an unreadable record belongs to the
+            // requested group. Keep the error for an unfiltered list, but do
+            // not let unrelated corruption block a targeted wait forever.
+            relevant = false;
+          }
         }
-        errors.push(`${repoDir.name}/${jobDir.name}: journal.jsonl is missing; status.json cannot be verified`);
+        if (relevant) {
+          errors.push(`${repoDir.name}/${jobDir.name}: journal.jsonl is missing; status.json cannot be verified`);
+        }
         continue;
       }
       // status.json is a projection of the journal, so its absence does not
@@ -110,7 +118,9 @@ async function executeList({ store, repoKey, groupFilter }) {
         if (groupFilter && hasStatus) {
           try {
             relevant = JSON.parse(fs.readFileSync(statusPath, 'utf8')).group === groupFilter;
-          } catch {}
+          } catch {
+            relevant = false;
+          }
         }
         if (relevant) {
           errors.push(`${repoDir.name}/${jobDir.name}: ${err && err.message ? err.message : err}`);
