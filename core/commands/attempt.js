@@ -120,7 +120,16 @@ async function runAttempt({
     if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
   }
 
+  // Foreground run/resume attempts own the job process too. Keep their
+  // durable heartbeat cadence aligned with worker attempts so status/list/wait
+  // do not need a synchronous OS identity probe on every poll.
+  const heartbeatTimer = setInterval(() => {
+    try { store.writeHeartbeat({ repoKey, jobId }); } catch {}
+  }, 5000);
+  if (heartbeatTimer.unref) heartbeatTimer.unref();
+
   const releaseSlot = () => {
+    clearInterval(heartbeatTimer);
     if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
   };
 
@@ -228,13 +237,16 @@ async function runAttempt({
         try { persistBackendEvents({ store, repoKey, jobId, attemptNum, facts }); } catch {}
         try { persistFindings({ store, repoKey, jobId, attemptNum, text: collected.text }); } catch {}
 
-        const terminalFailure = classifyTerminalFailure({ exitCode, resultBytes, reducerResult: result });
+        const terminalFailure = classifyTerminalFailure({ exitCode, resultBytes, reducerResult: result, resultStatus: collected.result_status });
+        // The classifier may override the state (a backend that exited 0 but
+        // produced no result file is not `done`); the exit code must follow it.
+        const effectiveState = terminalFailure.terminalState || terminalState;
 
         store.journalTransition(jobId, repoKey, {
           kind: 'attempt_state_changed',
           attempt: attemptNum,
           from: 'running',
-          to: terminalState,
+          to: effectiveState,
           detail: {
             finished_at: new Date().toISOString(),
             command_exit_code: exitCode,
@@ -258,7 +270,7 @@ async function runAttempt({
         // an agent parsing the exit code read a provider refusal as a result.
         return {
           text: collected.text, jobId, envelope: buildEnvelope(finalStatus),
-          exitCode: terminalExitCode(terminalState, terminalFailure.failure, terminalFailure.failure_reason),
+          exitCode: terminalExitCode(effectiveState, terminalFailure.failure, terminalFailure.failure_reason),
         };
       }
     }
