@@ -51,6 +51,10 @@ observed condition — not a theoretical one. So:
 - **When `wait` returns, check why.** Exit 20 means the wait budget elapsed, not
   that the job failed — the job is still running and you may wait again. Do not
   read exit 20 as a result.
+- **`interrupted` means the worker died, not that the backend answered.** A job
+  whose worker is provably gone is resolved to `interrupted` the next time
+  anything reads it, so a crashed or killed run ends rather than sitting in
+  `running`. There may be no result; check before reading one.
 - **A wait without `--timeout-sec` is a defect**, even in a throwaway one-liner.
   An unbounded wait once consumed an entire working session while the backend's
   result had been sitting complete for minutes.
