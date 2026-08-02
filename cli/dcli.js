@@ -195,7 +195,7 @@ async function main() {
         positionals: parsed.positionals,
       });
 
-      const output = executeSubmit({
+      const output = await executeSubmit({
         store, adapter, repoKey, repoRoot: fullPath,
         prompt,
         hardTimeoutSec: parsed.hardTimeoutSec,
@@ -245,15 +245,22 @@ async function main() {
 
       if (parsed.waitAll) {
         const result = await executeWaitAll({
-          store, group: parsed.group,
+          store, repoKey, group: parsed.group,
           timeoutSec: parsed.timeoutSec || 60,
         });
 
+        for (const err of result.errors || []) {
+          process.stderr.write(`warning: could not read job record — ${err}\n`);
+        }
+
         if (parsed.json) {
-          console.log(JSON.stringify({ schema_version: 1, jobs: result.jobs }));
+          console.log(JSON.stringify({ schema_version: 1, jobs: result.jobs, errors: result.errors || [] }));
         } else {
           for (const j of result.jobs) {
-            console.log(`${j.job_id}: ${j.timed_out ? 'timed_out' : 'done'} (exit ${j.exit_code})`);
+            // Print what executeWaitAll actually returns. It reports state and
+            // phase; `timed_out`/`exit_code` were never fields on these rows,
+            // so every line read "<undefined>: done (exit undefined)".
+            console.log(`${j.job_id}: ${j.state}${j.phase ? ` (${j.phase})` : ''}`);
           }
         }
         process.exit(result.exitCode);
@@ -355,11 +362,21 @@ async function main() {
       const { executeList } = require('../core/commands/list');
       const result = await executeList({ store, repoKey, groupFilter: parsed.group });
 
+      // A record that could not be read is not a job that is not there. Say so
+      // on stderr rather than returning a quietly shorter list.
+      for (const err of result.errors || []) {
+        process.stderr.write(`warning: could not read job record — ${err}\n`);
+      }
+
       if (parsed.json) {
-        console.log(JSON.stringify({ schema_version: 1, jobs: result.jobs }));
+        console.log(JSON.stringify({ schema_version: 1, jobs: result.jobs, errors: result.errors || [] }));
       } else {
         if (result.jobs.length === 0) {
-          console.log('No jobs found.');
+          // "No jobs found" is a claim about what exists. It cannot be made
+          // when every record we looked at was unreadable.
+          console.log((result.errors || []).length > 0
+            ? `No readable jobs (${result.errors.length} record(s) could not be read).`
+            : 'No jobs found.');
         } else {
           for (const j of result.jobs) {
             const line = `${j.job_id}  ${j.state.padEnd(12)} ${j.backend || '?'}  ${j.created_at || ''}`;
@@ -367,7 +384,7 @@ async function main() {
           }
         }
       }
-      process.exit(0);
+      process.exit(result.exitCode || 0);
     }
 
     case 'review': {

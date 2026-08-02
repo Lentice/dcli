@@ -96,7 +96,6 @@ async function executeList({ store, repoKey, groupFilter }) {
             // succeeded, so a job whose record cannot be read looked merely
             // busy — and `wait --all` polled it to its budget.
             reconcileError = err && err.message ? err.message : String(err);
-            errors.push(`${repoDir.name}/${status.job_id || jobDir.name}: ${reconcileError}`);
           }
         }
 

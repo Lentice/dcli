@@ -7,7 +7,7 @@ const { prepareBackend } = require('./attempt');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { persistInitFiles } = require('../result-artifact');
 
-function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, stateRoot, backend }) {
+async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, stateRoot, backend }) {
   stateRoot = stateRoot || store._stateRoot;
   repoRoot = repoRoot || process.cwd();
   const jobId = generateJobId();
@@ -90,7 +90,7 @@ function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   });
 
   // Spawn detached worker (admission slot acquired by the worker itself)
-  spawnWorker({ stateRoot, backend: backend || resolvedBackend, jobId, repoKey, repoRoot, hardTimeoutSec });
+  await spawnWorker({ stateRoot, backend: backend || resolvedBackend, jobId, repoKey, repoRoot, hardTimeoutSec });
 
   return { jobId };
 }
@@ -123,29 +123,38 @@ function spawnWorker({ stateRoot, backend, jobId, repoKey, repoRoot, hardTimeout
     fs.closeSync(workerLog);
   }
 
-  // Allow parent to exit independently
-  child.unref();
-
-  // Bound the process-creation call itself: re-snapshot identity if still
-  // available, but do not wait for the child. If spawn fails, journal the
-  // failure synchronously.
-  child.on('error', (err) => {
-    try {
-      const { JobStore } = require('../job-store');
-      const store = new JobStore({ stateRoot });
-      store.journalTransition(jobId, repoKey, {
-        kind: 'attempt_state_changed',
-        attempt: 1,
-        from: 'created',
-        to: 'failed',
-        detail: {
-          finished_at: new Date().toISOString(),
-          phase: 'terminal',
-          failure_reason: 'worker_spawn_failed',
-          failure: err.message,
-        },
-      });
-    } catch {}
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const journalSpawnFailure = (err) => {
+      try {
+        const { JobStore } = require('../job-store');
+        const store = new JobStore({ stateRoot });
+        store.journalTransition(jobId, repoKey, {
+          kind: 'attempt_state_changed',
+          attempt: 1,
+          from: 'created',
+          to: 'failed',
+          detail: {
+            finished_at: new Date().toISOString(),
+            phase: 'terminal',
+            failure_reason: 'worker_spawn_failed',
+            failure: err.message,
+          },
+        });
+      } catch {}
+      settle();
+    };
+    const timer = setTimeout(settle, 1000);
+    child.once('spawn', settle);
+    child.once('error', journalSpawnFailure);
+    // Allow parent to exit independently after the creation result is known.
+    child.unref();
   });
 }
 

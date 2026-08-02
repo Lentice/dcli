@@ -31,13 +31,13 @@ async function executeWait({ store, repoKey, jobId, timeoutSec, pollMs }) {
   return { exitCode: 20, timedOut: true, jobId, envelope: buildEnvelope(status) };
 }
 
-async function executeWaitAll({ store, group, timeoutSec, pollMs }) {
+async function executeWaitAll({ store, repoKey, group, timeoutSec, pollMs }) {
   const deadline = Date.now() + (timeoutSec || 60) * 1000;
   const interval = pollMs || 500;
 
   while (Date.now() < deadline) {
     const { executeList } = require('./list');
-    const listResult = await executeList({ store, groupFilter: group });
+    const listResult = await executeList({ store, repoKey, groupFilter: group });
     const jobs = listResult.jobs;
 
     // Corruption is decidable now. Do not spend the caller's entire wait
@@ -78,7 +78,7 @@ async function executeWaitAll({ store, group, timeoutSec, pollMs }) {
   }
 
   const { executeList } = require('./list');
-  const listResult = await executeList({ store, groupFilter: group });
+  const listResult = await executeList({ store, repoKey, groupFilter: group });
   return {
     // 20 means "still active, budget elapsed". A record we cannot read is not
     // active work — it is corrupt state, which has its own code.

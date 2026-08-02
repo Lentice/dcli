@@ -620,7 +620,8 @@ class JobStore {
   writeHeartbeat({ repoKey, jobId }) {
     const jobDir = this._jobDir(repoKey, jobId);
     const journalPath = path.join(jobDir, 'journal.jsonl');
-    const lock = this._jobLocks.acquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'heartbeat' });
+    const lock = this._jobLocks.tryAcquire(LOCK_SCOPES.PER_JOB, `${repoKey}-${jobId}`, { operation: 'heartbeat' });
+    if (!lock) return false;
     try {
       // Inside the try — see journalTransition: throwing before the finally
       // leaks the lock.
@@ -639,6 +640,7 @@ class JobStore {
       appendJsonLine(journalPath, entry);
       const status = this._regenerateStatus(jobDir, { backstop: false });
       this._atomicWriteJsonWithRetry(path.join(jobDir, 'status.json'), status);
+      return true;
     } finally {
       this._jobLocks.release(lock);
     }

@@ -163,8 +163,30 @@ const methods = {
     this._facts.push({ type: 'drain_timeout', message: 'stdout/stderr did not close within POST_EXIT_DRAIN_MS' });
   },
 
+  /**
+   * Yield the accumulated terminal facts with `process_exited` LAST.
+   *
+   * The engine stops consuming the moment it sees `process_exited` — that fact
+   * is what ends the attempt — so anything appended after it in `_facts` is
+   * never delivered. `_classifyStderrFailure` appends exactly there, which is
+   * how a quota or authentication failure reached the journal as an
+   * unexplained exit 1: the classification existed and was simply never read.
+   */
+  *_orderedTerminalFacts() {
+    const facts = this._facts || [];
+    for (const fact of facts) {
+      if (fact && fact.type === 'process_exited') continue;
+      yield { ...fact };
+    }
+    for (const fact of facts) {
+      if (fact && fact.type === 'process_exited') yield { ...fact };
+    }
+  },
+
   _classifyStderrFailure() {
-    if (!this._stderrContent || this._facts.some(f => f && f.type === 'backend_error')) return;
+    if (!this._stderrContent) return;
+    const existingError = this._facts.find(f => f && f.type === 'backend_error');
+    if (existingError && existingError.class_hint !== 'execution_error') return;
     const exited = this._facts.find(f => f && f.type === 'process_exited');
     if (!exited || exited.code === 0) return;
 
@@ -178,7 +200,12 @@ const methods = {
       if (pattern.test(this._stderrContent)) {
         // Persist only a fixed classification, never provider stderr (which
         // may contain credentials or request data).
-        this._facts.push({ type: 'backend_error', class_hint: classHint, structured_payload: { reason: classHint } });
+        if (existingError) {
+          existingError.class_hint = classHint;
+          existingError.structured_payload = { reason: classHint };
+        } else {
+          this._facts.push({ type: 'backend_error', class_hint: classHint, structured_payload: { reason: classHint } });
+        }
         return;
       }
     }
