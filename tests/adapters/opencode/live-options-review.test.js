@@ -1,5 +1,6 @@
 // @suite full
 // @serial  live backend
+// @timeout-ms 600000
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -84,10 +85,6 @@ async function main() {
       { flags: ['--message', '--repo', __dirname], label: '--message' },
     ]) {
       const r = dcli(['run', '--hard-timeout-sec', '5', ...testCase.flags, 'test prompt']);
-      let jsonOut = null;
-      try { jsonOut = JSON.parse((r.stdout || '').trim()); } catch {}
-      const isRejected = r.status === 2 ||
-        (jsonOut && jsonOut.failure_class === 'usage_error');
       assert.strictEqual(
         r.status, 2,
         `${testCase.label} without value must exit 2 (usage error). exit=${r.status}, stderr=${(r.stderr || '').slice(0, 200)}`
@@ -118,17 +115,22 @@ async function main() {
     try {
       const r = dcli([
         'review', '--staged',
-        '--hard-timeout-sec', '60',
+        '--hard-timeout-sec', '120',
         '--model', 'opencode-go/deepseek-v4-flash',
         '--repo', repoDir,
         '--json',
-      ], { env, timeout: 90000 });
+      ], { env, timeout: 150000 });
       assert.strictEqual(r.status, 0, `review --staged must succeed: ${r.stderr}`);
+      // Parse unconditionally: exit 0 with empty or malformed stdout is exactly
+      // the false green this suite exists to catch. A review that returns no
+      // usable envelope has not completed.
       let parsed = null;
       try { parsed = JSON.parse((r.stdout || '').trim()); } catch {}
-      if (parsed) {
-        testLog(`P3.1 review --staged: state=${parsed.state}, findings_status=${parsed.findings_status}`);
-      }
+      assert.ok(parsed, `review --staged stdout must be a valid JSON envelope, got: ${(r.stdout || '').slice(0, 200)}`);
+      assert.strictEqual(parsed.state, 'done',
+        `review --staged must reach done, got ${parsed.state}. failure_reason: ${parsed.failure_reason || 'none'}`);
+      assert.ok(parsed.job_id, 'review --staged envelope must carry a job_id');
+      testLog(`P3.1 review --staged: state=${parsed.state}, findings_status=${parsed.findings_status}`);
       console.log('PASS: P3.1 review --staged completes');
     } finally {
       clean(repoDir); clean(stateRoot);
@@ -148,13 +150,21 @@ async function main() {
     try {
       const r = dcli([
         'review', '--staged',
-        '--hard-timeout-sec', '60',
+        '--hard-timeout-sec', '120',
         '--model', 'opencode-go/deepseek-v4-flash',
         '--repo', repoDir,
         '--path', 'test.js',
         '--json',
-      ], { env, timeout: 90000 });
+      ], { env, timeout: 150000 });
       assert.strictEqual(r.status, 0, `review --path must succeed: ${r.stderr}`);
+      // Parse unconditionally — exit 0 with empty or malformed stdout is the
+      // same false green P3.1 guards against; the review must actually complete.
+      let parsed = null;
+      try { parsed = JSON.parse((r.stdout || '').trim()); } catch {}
+      assert.ok(parsed, `review --path stdout must be a valid JSON envelope, got: ${(r.stdout || '').slice(0, 200)}`);
+      assert.strictEqual(parsed.state, 'done',
+        `review --path must reach done, got ${parsed.state}. failure_reason: ${parsed.failure_reason || 'none'}`);
+      assert.ok(parsed.job_id, 'review --path envelope must carry a job_id');
       console.log('PASS: P3.2 review --path completes');
     } finally {
       clean(repoDir); clean(stateRoot);
@@ -174,22 +184,49 @@ async function main() {
     try {
       const r = dcli([
         'review', '--staged',
-        '--hard-timeout-sec', '60',
+        '--hard-timeout-sec', '120',
         '--model', 'opencode-go/deepseek-v4-flash',
         '--repo', repoDir,
         '--json',
-      ], { env, timeout: 90000 });
+      ], { env, timeout: 150000 });
 
-      // stdout must be parseable JSON (the envelope), not raw SSE events
+      // The command must actually have succeeded. A failure envelope is valid
+      // JSON with no SSE markers and would sail through the checks below —
+      // "events stayed out of stdout" must not pass for a review that failed.
+      assert.strictEqual(r.status, 0, `review --staged must succeed: ${r.stderr}`);
       const stdout = (r.stdout || '').trim();
-      try {
-        JSON.parse(stdout);
-      } catch {
-        assert.fail(`stdout must be valid JSON, got: ${stdout.slice(0, 200)}`);
-      }
-      // Must NOT contain SSE framing or raw event markers
+      let parsed = null;
+      try { parsed = JSON.parse(stdout); } catch {}
+      assert.ok(parsed, `stdout must be a valid JSON envelope, got: ${stdout.slice(0, 200)}`);
+      assert.strictEqual(parsed.state, 'done',
+        `review --staged must reach done, got ${parsed.state}. failure_reason: ${parsed.failure_reason || 'none'}`);
+      assert.ok(parsed.job_id, 'envelope must carry a job_id');
+
+      // stdout must be the parseable envelope, never raw SSE events
       assert.ok(!stdout.includes('data:'), 'stdout must not contain SSE data');
       assert.ok(!stdout.includes('event:'), 'stdout must not contain SSE event');
+
+      // Raw backend events must be persisted in backend-events.jsonl for the
+      // attempt, with content — the isolation claim is that they live there
+      // instead of stdout, so the file must actually exist and be non-empty.
+      const { computeRepoKeyWithPath } = require('../../../core/repo-key');
+      const { repoKey } = computeRepoKeyWithPath(repoDir);
+      const attemptDir = path.join(stateRoot, 'jobs', repoKey, parsed.job_id, 'attempts', '1');
+      const eventsPath = path.join(attemptDir, 'backend-events.jsonl');
+      assert.ok(fs.existsSync(eventsPath), `backend-events.jsonl must exist for the attempt (${eventsPath})`);
+      const eventLines = fs.readFileSync(eventsPath, 'utf8').trim().split(/\r?\n/).filter(Boolean);
+      assert.ok(eventLines.length > 0, 'backend-events.jsonl must contain persisted events');
+      const events = eventLines.map((line, index) => {
+        let event;
+        try { event = JSON.parse(line); } catch (err) {
+          assert.fail(`backend-events.jsonl line ${index + 1} must be JSON: ${err.message}`);
+        }
+        assert.ok(event && typeof event.type === 'string',
+          `backend-events.jsonl line ${index + 1} must contain a fact type`);
+        return event;
+      });
+      assert.ok(events.some(event => event.type === 'started'), 'persisted events must include started');
+      assert.ok(events.some(event => event.type === 'process_exited'), 'persisted events must include process_exited');
       console.log('PASS: P3.3 raw backend events isolated from stdout');
     } finally {
       clean(repoDir); clean(stateRoot);

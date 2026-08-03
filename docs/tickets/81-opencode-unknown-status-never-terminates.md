@@ -81,6 +81,9 @@ empty result — the exact thing that teaches users to distrust the tool.
 
 ## Notes
 
+- **2026-08-03 local verification:** the installed live backend reported opencode `1.18.11`,
+  while onboarding still names `1.18.7`. The live P1–P4 opencode tests passed against the
+  installed version; re-check the version pin and endpoint study before closing this ticket.
 - Separately observed and worth fixing wherever it belongs: `status.json.backend_pid` stays `null` even
   after the adapter emits a `started` fact carrying a real pid (confirmed on a *successful* codex run).
   Reconciliation cannot prove a worker's death without it — AGENTS.md mistake #5, "launch identity must

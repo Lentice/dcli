@@ -1,5 +1,6 @@
 // @suite full
 // @serial  live backend; external rate limits; process trees
+// @timeout-ms 600000
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -7,6 +8,7 @@ const os = require('node:os');
 const cp = require('node:child_process');
 const { computeRepoKeyWithPath } = require('../../../core/repo-key');
 const { JobStore } = require('../../../core/job-store');
+const { parseWorkerIdentity, isSameProcessAlive } = require('../../../core/process-identity');
 
 const OPENCODE_LIVE_SMOKE = process.env.DCLI_OPENCODE_LIVE_SMOKE;
 const TERMINAL = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
@@ -43,6 +45,44 @@ function assertIsDead(pid, message) {
       assert.fail(`${message}: process ${pid} still exists (kill(0) returned EPERM)`);
     }
   }
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err.code === 'EPERM') return true;
+    if (err.code === 'ESRCH') return false;
+    if (err.message && /not found|no such process|no process/i.test(err.message)) return false;
+    throw err;
+  }
+}
+
+function forceKillIfAlive(pid, label) {
+  if (!isAlive(pid)) return false;
+  const result = cp.spawnSync('taskkill', ['/PID', String(pid), '/F', '/T'], {
+    windowsHide: true,
+    timeout: 10000,
+  });
+  // The process may race with taskkill and exit after the liveness check. In
+  // that case the observable postcondition is still satisfied; report a real
+  // failure only when the process remains alive.
+  if (result.status !== 0) {
+    if (isAlive(pid)) {
+      assert.fail(`${label} taskkill failed: ${result.stderr || result.error || result.status}`);
+    }
+    return false;
+  }
+  return true;
+}
+
+async function waitForDeath(pid, message, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && isAlive(pid)) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  assertIsDead(pid, message);
 }
 
 function dcli(args, opts = {}) {
@@ -188,6 +228,9 @@ async function main() {
         '--timeout-sec', '120',
       ], { env, timeout: 130000 });
 
+      assert.strictEqual(waitResult.status, 0,
+        `worker wait must exit 0: ${waitResult.stderr}`);
+
       const store = new JobStore({ stateRoot });
       const status = store.readStatus({ repoKey, jobId });
 
@@ -206,12 +249,19 @@ async function main() {
       const eventsPath = path.join(attemptDir, 'backend-events.jsonl');
       const eventsExists = fs.existsSync(eventsPath);
 
+      // result.md is the usable result artifact, not just a terminal status.
+      const resultPath = path.join(attemptDir, 'result.md');
+      const resultExists = fs.existsSync(resultPath);
+      const resultBytes = resultExists ? fs.statSync(resultPath).size : 0;
+
       // worker-complete.json sentinel
       const completeSentinel = path.join(attemptDir, 'worker-complete.json');
       const completeExists = fs.existsSync(completeSentinel);
 
       // Assert: at minimum, backend events must be persisted
       assert.ok(eventsExists, 'backend-events.jsonl must exist after a completed worker run');
+      assert.ok(resultExists, 'result.md must exist after a completed worker run');
+      assert.ok(resultBytes > 0, 'result.md must be non-empty after a completed worker run');
       assert.strictEqual(
         status.state, 'done',
         `Worker job must complete as done, got ${status.state}. failure_reason: ${status.failure_reason || 'none'}`
@@ -256,12 +306,17 @@ async function main() {
 
       testLogs.push(`P1.4 exit ${result.status}`);
 
+      assert.notStrictEqual(result.status, 0,
+        `invalid model must not exit 0 (status=${result.status}, signal=${result.signal || 'none'}, error=${result.error ? result.error.message : 'none'})`);
+
       let parsed = null;
       try {
         parsed = JSON.parse((result.stdout || '').trim());
       } catch {}
 
-      assert.ok(parsed, `P1.4 --json output must be valid JSON. stdout: ${(result.stdout || '').slice(0, 200)}`);
+      assert.ok(parsed,
+        `P1.4 --json output must be valid JSON (status=${result.status}, signal=${result.signal || 'none'}, error=${result.error ? result.error.message : 'none'}). ` +
+        `stdout: ${(result.stdout || '').slice(0, 200)} stderr: ${(result.stderr || '').slice(0, 500)}`);
 
       testLogs.push(`P1.4 state: ${parsed.state}, failure_reason: ${parsed.failure_reason}, failure.class: ${parsed.failure ? parsed.failure.class : 'none'}`);
 
@@ -298,9 +353,12 @@ async function main() {
     const env = { DCLI_STATE_ROOT: stateRoot };
     initGitRepo(repoDir);
 
-    try {
-      const { repoKey } = computeRepoKeyWithPath(repoDir);
+    // Hoisted so the finally block below can read the durable identities even
+    // when a mid-scenario assertion failed before they were (re)assigned.
+    const { repoKey } = computeRepoKeyWithPath(repoDir);
+    let jobId = null;
 
+    try {
       // Submit a background job with a longer prompt so there's time to observe
       const submit = dcli([
         'submit',
@@ -311,7 +369,7 @@ async function main() {
       ], { env, timeout: 30000 });
 
       assert.strictEqual(submit.status, 0, `submit exited ${submit.status}: ${submit.stderr}`);
-      const jobId = (submit.stdout || '').trim();
+      jobId = (submit.stdout || '').trim();
       assert.ok(jobId.length >= 16, `Expected jobId, got: "${jobId}"`);
 
       testLogs.push(`P1.5 submit: job ${jobId}`);
@@ -332,48 +390,72 @@ async function main() {
 
       testLogs.push(`P1.5 worker_pid: ${workerPid}, backend_pid: ${backendPid}`);
 
-      // Kill the controller (worker process) — with identity validation
-      if (workerPid) {
-        // Re-read status to get the latest worker_identity
-        const beforeKill = store.readStatus({ repoKey, jobId });
-        assert.ok(beforeKill.worker_identity, 'worker_identity must be set before kill');
-        testLogs.push(`P1.5 worker_identity: ${beforeKill.worker_identity}`);
+      // The crash scenario under test is only exercised if the worker actually
+      // started and was killed mid-run. Without these guards a job that never
+      // spawned a worker (or already finished) would sail through the kill and
+      // still hit a terminal reconcile state below — a false green. Fail loudly
+      // instead.
+      assert.ok(workerPid, `P1.5 must observe a worker pid before killing it (worker_pid=${workerPid})`);
+      const preKillStatus = store.readStatus({ repoKey, jobId });
+      assert.strictEqual(preKillStatus.state, 'running',
+        `P1.5 worker kill requires a running job, got ${preKillStatus.state}`);
+      assert.ok(preKillStatus.worker_identity, 'worker_identity must be set before kill');
+      assert.ok(isAlive(workerPid), `P1.5 worker ${workerPid} must still be alive before killing it`);
+      testLogs.push(`P1.5 worker_identity: ${preKillStatus.worker_identity}`);
 
-        try {
-          cp.spawnSync('taskkill', ['/PID', String(workerPid), '/T'], { windowsHide: true, timeout: 10000 });
-        } catch {}
-        await new Promise(r => setTimeout(r, 1000));
-        assertIsDead(workerPid, 'Worker process must die after taskkill');
-        testLogs.push('P1.5 worker killed via taskkill /T');
-      }
+      const workerIdentity = parseWorkerIdentity(preKillStatus.worker_identity);
+      assert.ok(workerIdentity, 'worker_identity must be parseable before kill');
+      assert.strictEqual(workerIdentity.pid, workerPid, 'worker_identity pid must match worker_pid');
+      assert.ok(isSameProcessAlive(workerIdentity), 'worker_identity must identify the live worker before kill');
+      const preKillSessionId = preKillStatus.backend_session_id;
 
-      // Kill the backend server if known
+      // Kill the innermost backend first, then the controller. The worker's
+      // /T kill may already take the backend with it, so a second kill is
+      // best-effort and checks the postcondition rather than its exit code.
       if (backendPid) {
         const beforeKill = store.readStatus({ repoKey, jobId });
         assert.ok(beforeKill.backend_pid, 'backend_pid must be set before kill');
-        try {
-          cp.spawnSync('taskkill', ['/PID', String(backendPid), '/F', '/T'], { windowsHide: true, timeout: 10000 });
-        } catch {}
-        await new Promise(r => setTimeout(r, 1000));
-        assertIsDead(backendPid, 'Backend process must die after taskkill');
+        forceKillIfAlive(backendPid, `Backend ${backendPid}`);
+        await waitForDeath(backendPid, 'Backend process must die after taskkill');
         testLogs.push('P1.5 backend server killed via taskkill /F /T');
       }
 
+      // The worker is spawned windowsHide:true, so taskkill without /F cannot
+      // terminate it ("can only be terminated forcefully"). Require taskkill
+      // to observe the live worker; otherwise this test did not exercise a
+      // controller crash.
+      assert.strictEqual(forceKillIfAlive(workerPid, `Worker ${workerPid}`), true,
+        'worker taskkill must hit the live worker');
+      await waitForDeath(workerPid, 'Worker process must die after taskkill');
+      testLogs.push('P1.5 worker killed via taskkill /F /T');
+
       // Now reconcile: worker-liveness-aware reconciliation detects the dead
-      // worker and transitions to interrupted (not running).
-      const reconciled = store.reconcileStatus({ repoKey, jobId });
+      // worker and transitions to interrupted (not running). It is deliberately
+      // conservative — a fresh heartbeat (<12s grace) proves liveness without a
+      // process probe, so a killed worker is only provable once its last
+      // heartbeat ages past the reducer's 15s staleness threshold. Poll on a
+      // bounded interval rather than asserting after one immediate call.
+      let reconciled = null;
+      const reconcileDeadline = Date.now() + 30000;
+      while (Date.now() < reconcileDeadline) {
+        reconciled = store.reconcileStatus({ repoKey, jobId });
+        if (TERMINAL.includes(reconciled.state)) break;
+        await new Promise(r => setTimeout(r, 500));
+      }
       testLogs.push(`P1.5 reconciled state: ${reconciled.state}, failure_reason: ${reconciled.failure_reason}`);
 
-      assert.ok(
-        TERMINAL.includes(reconciled.state),
-        `Reconciled job must be terminal, got "${reconciled.state}"`
-      );
-      assert.ok(
-        reconciled.state !== 'running',
-        'Reconciled job must not remain running'
+      // A worker killed mid-run with no completion sentinel must resolve to
+      // `interrupted` — the crash-specific outcome. Accepting any terminal
+      // state would let a worker that raced to `done` before dying read as a
+      // clean crash recovery, which is not the scenario under test.
+      assert.strictEqual(
+        reconciled.state, 'interrupted',
+        `A killed worker must reconcile to interrupted, got "${reconciled.state}"`
       );
 
       // Verify backend_session_id is preserved during reconciliation
+      assert.strictEqual(reconciled.backend_session_id, preKillSessionId,
+        `backend_session_id must survive reconciliation (before=${preKillSessionId || 'null'}, after=${reconciled.backend_session_id || 'null'})`);
       testLogs.push(`P1.5 backend_session_id preserved: ${reconciled.backend_session_id || 'N/A'}`);
 
       // Verify no surviving servers
@@ -388,6 +470,33 @@ async function main() {
       console.error(`P1.5 FAIL: ${err.message}`);
       throw err;
     } finally {
+      // Never leave a hang-shaped fixture alive. If any assertion above failed
+      // before the kill completed, the worker/backend may still be running and
+      // would poison every later test on the machine. Re-read the job's durable
+      // identity and force-kill anything still alive, boundedly.
+      //
+      // A leaked fixture must NOT be silently swallowed: if a process survives
+      // teardown, delete nothing and report it, so the leak is visible and the
+      // state root keeps its identity evidence for diagnosis.
+      let teardownFailed = null;
+      try {
+        const store = new JobStore({ stateRoot });
+        // Re-snapshot between innermost and controller kills; the controller's
+        // process tree may remove the backend while the status still names it.
+        for (const field of ['backend_pid', 'worker_pid']) {
+          const s = store.readStatus({ repoKey, jobId });
+          const pid = s[field];
+          if (typeof pid !== 'number' || pid <= 0) continue;
+          forceKillIfAlive(pid, `Fixture process ${pid}`);
+          await waitForDeath(pid, `Fixture process ${pid} must die in teardown`);
+        }
+      } catch (err) {
+        teardownFailed = err.message;
+      }
+      if (teardownFailed) {
+        console.error(`P1.5 TEARDOWN LEAK: ${teardownFailed}. State root kept for diagnosis: ${stateRoot}`);
+        throw new Error(teardownFailed);
+      }
       clean(stateRoot);
       clean(repoDir);
     }

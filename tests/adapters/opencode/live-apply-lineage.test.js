@@ -1,5 +1,6 @@
 // @suite full
 // @serial  live backend; worktree operations
+// @timeout-ms 600000
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -7,6 +8,8 @@ const os = require('node:os');
 const cp = require('node:child_process');
 
 const OPENCODE_LIVE_SMOKE = process.env.DCLI_OPENCODE_LIVE_SMOKE;
+const { computeRepoKeyWithPath } = require('../../../core/repo-key');
+const { JobStore } = require('../../../core/job-store');
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-p4-'));
@@ -61,29 +64,25 @@ async function main() {
 
       let parsed = null;
       try { parsed = JSON.parse((r.stdout || '').trim()); } catch {}
-
-      if (parsed) {
-        jobId = parsed.job_id;
-        console.log(`P4.1 implement run: state=${parsed.state}, job_id=${jobId}`);
-        assert.strictEqual(
-          parsed.state, 'done',
-          `Implement mode must complete as done, got ${parsed.state}. failure_reason: ${parsed.failure_reason || 'none'}`
-        );
-      } else {
-        assert.fail(`implement --json output must be valid JSON: ${(r.stdout || '').slice(0, 200)}`);
-      }
+      assert.strictEqual(r.status, 0, `implement must exit 0: ${r.stderr}`);
+      assert.ok(parsed, `implement --json output must be valid JSON: ${(r.stdout || '').slice(0, 200)}`);
+      assert.strictEqual(
+        parsed.state, 'done',
+        `Implement mode must complete as done, got ${parsed.state}. failure_reason: ${parsed.failure_reason || 'none'}`
+      );
+      jobId = parsed.job_id;
+      assert.ok(jobId, 'implement --json envelope must carry a job_id');
+      console.log(`P4.1 implement run: state=${parsed.state}, job_id=${jobId}`);
 
       // diff should produce output
-      if (jobId) {
-        const diffR = dcli([
-          'diff', jobId,
-          '--repo', repoDir,
-          '--stat',
-        ], { env, timeout: 30000 });
-        console.log(`P4.1 diff exit: ${diffR.status}, stdout: ${(diffR.stdout || '').slice(0, 200)}`);
-        // diff exit 0 means it found changes
-        assert.strictEqual(diffR.status, 0, `diff must succeed or report changes: ${diffR.stderr}`);
-      }
+      const diffR = dcli([
+        'diff', jobId,
+        '--repo', repoDir,
+        '--stat',
+      ], { env, timeout: 30000 });
+      console.log(`P4.1 diff exit: ${diffR.status}, stdout: ${(diffR.stdout || '').slice(0, 200)}`);
+      // diff exit 0 means it found changes
+      assert.strictEqual(diffR.status, 0, `diff must succeed or report changes: ${diffR.stderr}`);
 
       console.log('PASS: P4.1 implement mode with opencode — run + diff');
     } finally {
@@ -108,48 +107,87 @@ async function main() {
     cp.spawnSync('git', ['commit', '-m', 'initial'], { cwd: repoDir, windowsHide: true });
 
     try {
+      // A random nonce is planted in the parent turn. The child prompt then
+      // asks the continued session to recall it — a value that exists only in
+      // the parent's conversation context, never in the filesystem (resume in
+      // implement mode seeds a fresh worktree, not the parent's result commit).
+      // If continue_backend_session silently starts a new session, the child
+      // cannot answer, and the assertion fails. Session-id equality alone is
+      // not proof: the id can be copied without loading its context.
+      const nonce = 'LINEAGE_' + Math.random().toString(36).slice(2, 10);
+
       const parentR = dcli([
         'run',
         '--mode', 'implement',
-        '--hard-timeout-sec', '120',
+        '--hard-timeout-sec', '180',
         '--model', 'opencode-go/deepseek-v4-flash',
         '--access', 'workspace',
         '--repo', repoDir,
-        'Create a file called lineage.txt containing exactly: LINEAGE_PARENT',
+        `Create a file called lineage.txt containing exactly: ${nonce}`,
         '--json',
-      ], { env, timeout: 180000 });
+      ], { env, timeout: 240000 });
 
       let parentParsed = null;
       try { parentParsed = JSON.parse((parentR.stdout || '').trim()); } catch {}
+      assert.strictEqual(parentR.status, 0, `parent implement must exit 0: ${parentR.stderr}`);
       assert.ok(parentParsed, `parent implement --json must be valid JSON`);
       const parentJobId = parentParsed.job_id;
       console.log(`P4.2 parent job: ${parentJobId}, state=${parentParsed.state}`);
 
-      if (parentParsed.state === 'done' && parentJobId) {
-        // Resume the parent job
-        const resumeR = dcli([
-          'resume', parentJobId,
-          '--repo', repoDir,
-          '--model', 'opencode-go/deepseek-v4-flash',
-          '--access', 'workspace',
-          'Add a second file called lineage2.txt containing exactly: LINEAGE_CHILD',
-          '--json',
-        ], { env, timeout: 180000 });
+      // Fail loudly when the parent did not complete, never skip the lineage
+      // assertions and report PASS. A real backend can return a valid envelope
+      // with state failed/timed_out; that is exactly when the resume path must
+      // be exercised, not silently bypassed.
+      assert.strictEqual(parentParsed.state, 'done',
+        `parent implement must complete as done, got ${parentParsed.state}. failure_reason: ${parentParsed.failure_reason || 'none'}`);
+      assert.ok(parentJobId, 'parent job_id must be set');
 
-        let resumeParsed = null;
-        try { resumeParsed = JSON.parse((resumeR.stdout || '').trim()); } catch {}
-        assert.ok(resumeParsed, 'resume --json must return valid JSON');
+      // Resume the parent job. continue_backend_session requires the parent
+      // to have a backend_session_id (recorded live), which the done parent
+      // does; it is the kind that exercises real session continuation.
+      const resumeR = dcli([
+        'resume', parentJobId,
+        '--repo', repoDir,
+        '--model', 'opencode-go/deepseek-v4-flash',
+        '--access', 'workspace',
+        '--kind', 'continue_backend_session',
+        `Recall the exact value I asked you to write into lineage.txt in the previous turn (the ${nonce.slice(0, 7)}... value). Reply with only that value and nothing else.`,
+        '--json',
+      ], { env, timeout: 240000 });
 
-        // root_job_id must equal the parent's job_id (or parent's root_job_id)
-        // parent_job_id must reference the parent job
-        const rootId = resumeParsed.root_job_id;
-        const parentId = resumeParsed.parent_job_id;
-        assert.ok(rootId, 'root_job_id must be set in resume output');
-        assert.ok(parentId, 'parent_job_id must be set in resume output');
-        assert.strictEqual(parentId, parentJobId,
-          `parent_job_id (${parentId}) must equal the resumed job (${parentJobId})`);
-        console.log(`P4.2 lineage: root=${rootId}, parent=${parentId}`);
-      }
+      let resumeParsed = null;
+      try { resumeParsed = JSON.parse((resumeR.stdout || '').trim()); } catch {}
+      assert.strictEqual(resumeR.status, 0, `resume must exit 0: ${resumeR.stderr}`);
+      assert.ok(resumeParsed, 'resume --json must return valid JSON');
+      assert.strictEqual(resumeParsed.state, 'done',
+        `resume must complete as done, got ${resumeParsed.state}. failure_reason: ${resumeParsed.failure_reason || 'none'}`);
+
+      // The resume envelope carries job_id only; parent_job_id/root_job_id
+      // live on the child's status. Read the child's durable status to
+      // assert lineage.
+      const { repoKey } = computeRepoKeyWithPath(repoDir);
+      const childStore = new JobStore({ stateRoot });
+      const childStatus = childStore.readStatus({ repoKey, jobId: resumeParsed.job_id });
+      const rootId = childStatus.root_job_id;
+      const parentId = childStatus.parent_job_id;
+      assert.ok(rootId, 'root_job_id must be set on the resumed job');
+      assert.ok(parentId, 'parent_job_id must be set on the resumed job');
+      assert.strictEqual(parentId, parentJobId,
+        `parent_job_id (${parentId}) must equal the resumed job (${parentJobId})`);
+      assert.strictEqual(rootId, parentJobId,
+        `root_job_id (${rootId}) must equal the parent job (${parentJobId})`);
+
+      // The session must actually have been continued: the child's durable
+      // result must contain the nonce, which no fresh session could know.
+      const childAttemptDir = path.join(
+        stateRoot, 'jobs', repoKey, resumeParsed.job_id, 'attempts', '1'
+      );
+      const childResultPath = path.join(childAttemptDir, 'result.md');
+      assert.ok(fs.existsSync(childResultPath), `child result.md must exist (${childResultPath})`);
+      const childResult = fs.readFileSync(childResultPath, 'utf8');
+      assert.ok(childResult.includes(nonce),
+        `continued session must recall the parent's nonce; child result did not contain ${nonce}. result: ${childResult.slice(0, 300)}`);
+      console.log(`P4.2 lineage: root=${rootId}, parent=${parentId}, session continued (nonce recalled)`);
 
       console.log('PASS: P4.2 lineage — resume chain verified');
     } finally {
