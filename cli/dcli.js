@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+const path = require('path');
+const { DEFAULTS } = require('../core/deadlines');
+
+const HARD_TIMEOUT_SEC = DEFAULTS.JOB_HARD_TIMEOUT_MS / 1000;
+const WAIT_TIMEOUT_SEC = DEFAULTS.WAIT_TIMEOUT_MS / 1000;
+const LIVE_SMOKE_TIMEOUT_SEC = DEFAULTS.DOCTOR_LIVE_SMOKE_MS / 1000;
+
 const help = `dcli — delegate work to a coding-agent CLI
 
 Usage:
@@ -27,12 +34,12 @@ Options:
   --backend <name>          Backend to use (opencode, codex, claude, fake)
   --repo <path>             Repository path
   --prompt-file <path>      Read prompt from file (canonical way to supply a follow-up prompt for resume)
-  --hard-timeout-sec <n>    Job hard timeout in seconds (default: 1800)
+  --hard-timeout-sec <n>    Job hard timeout in seconds (default: ${HARD_TIMEOUT_SEC})
   --group <g>               Job group label
   --label <l>               Job label
   --model <id>              Model identifier
   --json                    JSON output envelope
-  --timeout-sec <n>         Wait timeout in seconds
+  --timeout-sec <n>         Wait timeout in seconds (default: ${WAIT_TIMEOUT_SEC})
   --all                     Wait for all matching jobs
   --older-than <Nd|Nh>      Retention threshold for cleanup
   --dry-run                 Preview cleanup without deleting
@@ -44,7 +51,7 @@ Options:
   --effort <s>              Codex/Claude effort level
   --access <s>              Access mode: read-only (default), workspace, full
   --mode <s>                run mode: run (default), implement (worktree-isolated)
-  --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: 120)
+  --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: ${LIVE_SMOKE_TIMEOUT_SEC})
   --staged                      Review staged changes (git diff --staged)
   --working                     Review working tree changes (default)
   --range <base>..<head>        Review changes between base and head
@@ -59,7 +66,10 @@ Options:
   --message <s>                 Retitle the landed commit (apply command)
   --allow-untracked             Allow unrelated untracked files in working tree (apply command)
 
-Every recipe with a wait carries an explicit budget: set --timeout-sec and --hard-timeout-sec.
+Every recipe with a wait should set both --timeout-sec and --hard-timeout-sec.
+When --timeout-sec is omitted, wait uses ${WAIT_TIMEOUT_SEC}s for the caller-side budget;
+this never changes the job hard timeout. JSON wait output includes wait_timed_out and
+wait_timeout_sec so a caller can distinguish its own deadline from the job state.
 
 Backends:
   fake      Test double (used for development and testing dcli itself)
@@ -241,12 +251,12 @@ async function main() {
     }
 
     case 'wait': {
-      const { executeWait, executeWaitAll } = require('../core/commands/wait');
+      const { buildWaitJson, executeWait, executeWaitAll } = require('../core/commands/wait');
 
       if (parsed.waitAll) {
         const result = await executeWaitAll({
           store, repoKey, group: parsed.group,
-          timeoutSec: parsed.timeoutSec || 60,
+          timeoutSec: parsed.timeoutSec,
         });
 
         for (const err of result.errors || []) {
@@ -254,13 +264,16 @@ async function main() {
         }
 
         if (parsed.json) {
-          console.log(JSON.stringify({ schema_version: 1, jobs: result.jobs, errors: result.errors || [] }));
+          console.log(JSON.stringify(buildWaitJson(result)));
         } else {
           for (const j of result.jobs) {
             // Print what executeWaitAll actually returns. It reports state and
             // phase; `timed_out`/`exit_code` were never fields on these rows,
             // so every line read "<undefined>: done (exit undefined)".
             console.log(`${j.job_id}: ${j.state}${j.phase ? ` (${j.phase})` : ''}`);
+          }
+          if (result.timedOut) {
+            console.log(`Wait budget elapsed after ${result.waitTimeoutSec}s; active jobs may still be running.`);
           }
         }
         process.exit(result.exitCode);
@@ -274,13 +287,13 @@ async function main() {
 
       const result = await executeWait({
         store, repoKey, jobId,
-        timeoutSec: parsed.timeoutSec || 60,
+        timeoutSec: parsed.timeoutSec,
       });
 
       if (parsed.json) {
-        console.log(JSON.stringify(result.envelope));
+        console.log(JSON.stringify(buildWaitJson(result)));
       } else if (result.timedOut) {
-        console.log(`Job ${jobId} still active (timed out after ${parsed.timeoutSec || 60}s)`);
+        console.log(`Wait budget elapsed after ${result.waitTimeoutSec}s; job ${jobId} is still active`);
       } else {
         console.log(`Job ${jobId} is ${result.envelope.state}`);
       }
@@ -631,8 +644,6 @@ async function main() {
     }
   }
 }
-
-const path = require('path');
 
 main().catch(err => {
   console.error(err.message);

@@ -1,20 +1,28 @@
 const { buildEnvelope, loadJobOrThrow } = require('./index');
 
 const { TERMINAL } = require('../reducer');
+const { resolveWaitTimeoutMs } = require('../deadlines');
 
 function boundedSleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function executeWait({ store, repoKey, jobId, timeoutSec, pollMs }) {
-  const deadline = Date.now() + (timeoutSec || 30) * 1000;
+  const waitTimeoutMs = resolveWaitTimeoutMs(timeoutSec);
+  const deadline = Date.now() + waitTimeoutMs;
   const interval = pollMs || 200;
 
   let { status } = loadJobOrThrow({ store, repoKey, jobId });
 
   while (Date.now() < deadline) {
     if (TERMINAL.has(status.state)) {
-      return { exitCode: 0, timedOut: false, jobId, envelope: buildEnvelope(status) };
+      return {
+        exitCode: 0,
+        timedOut: false,
+        waitTimeoutSec: waitTimeoutMs / 1000,
+        jobId,
+        envelope: buildEnvelope(status),
+      };
     }
 
     await boundedSleep(interval);
@@ -26,13 +34,26 @@ async function executeWait({ store, repoKey, jobId, timeoutSec, pollMs }) {
   // died — and the very next `status` call would say `interrupted`.
   ({ status } = loadJobOrThrow({ store, repoKey, jobId }));
   if (TERMINAL.has(status.state)) {
-    return { exitCode: 0, timedOut: false, jobId, envelope: buildEnvelope(status) };
+    return {
+      exitCode: 0,
+      timedOut: false,
+      waitTimeoutSec: waitTimeoutMs / 1000,
+      jobId,
+      envelope: buildEnvelope(status),
+    };
   }
-  return { exitCode: 20, timedOut: true, jobId, envelope: buildEnvelope(status) };
+  return {
+    exitCode: 20,
+    timedOut: true,
+    waitTimeoutSec: waitTimeoutMs / 1000,
+    jobId,
+    envelope: buildEnvelope(status),
+  };
 }
 
 async function executeWaitAll({ store, repoKey, group, timeoutSec, pollMs }) {
-  const deadline = Date.now() + (timeoutSec || 60) * 1000;
+  const waitTimeoutMs = resolveWaitTimeoutMs(timeoutSec);
+  const deadline = Date.now() + waitTimeoutMs;
   const interval = pollMs || 500;
 
   while (Date.now() < deadline) {
@@ -45,6 +66,8 @@ async function executeWaitAll({ store, repoKey, group, timeoutSec, pollMs }) {
     if ((listResult.errors || []).length > 0) {
       return {
         exitCode: 17,
+        timedOut: false,
+        waitTimeoutSec: waitTimeoutMs / 1000,
         jobs: jobs.map(j => ({
           job_id: j.job_id,
           repo_key: j.repo_key,
@@ -63,6 +86,8 @@ async function executeWaitAll({ store, repoKey, group, timeoutSec, pollMs }) {
     if (allTerminal) {
       return {
         exitCode: 0,
+        timedOut: false,
+        waitTimeoutSec: waitTimeoutMs / 1000,
         jobs: jobs.map(j => ({
           job_id: j.job_id,
           repo_key: j.repo_key,
@@ -83,6 +108,8 @@ async function executeWaitAll({ store, repoKey, group, timeoutSec, pollMs }) {
     // 20 means "still active, budget elapsed". A record we cannot read is not
     // active work — it is corrupt state, which has its own code.
     exitCode: 20,
+    timedOut: true,
+    waitTimeoutSec: waitTimeoutMs / 1000,
     jobs: listResult.jobs.map(j => ({
       job_id: j.job_id,
       repo_key: j.repo_key,
@@ -94,4 +121,22 @@ async function executeWaitAll({ store, repoKey, group, timeoutSec, pollMs }) {
   };
 }
 
-module.exports = { executeWait, executeWaitAll };
+function buildWaitJson(result) {
+  const metadata = {
+    wait_timed_out: result.timedOut === true,
+    wait_timeout_sec: result.waitTimeoutSec,
+  };
+
+  if (result.envelope) {
+    return { ...result.envelope, ...metadata };
+  }
+
+  return {
+    schema_version: 1,
+    ...metadata,
+    jobs: result.jobs || [],
+    errors: result.errors || [],
+  };
+}
+
+module.exports = { buildWaitJson, executeWait, executeWaitAll };

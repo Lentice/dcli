@@ -3,6 +3,7 @@ const DEFAULTS = Object.freeze({
   BACKEND_FIRST_EVENT_WATCHDOG_MS: 120000,
   BACKEND_HEALTH_READY_MS: 30000,
   JOB_HARD_TIMEOUT_MS: 1800000,
+  WAIT_TIMEOUT_MS: 300000,
   POST_EXIT_DRAIN_MS: 5000,
   HTTP_CONNECT_MS: 10000,
   HTTP_READ_MS: 60000,
@@ -88,4 +89,27 @@ function resolveHardTimeoutMs(hardTimeoutSec) {
   return resolveDeadline('JOB_HARD_TIMEOUT_MS');
 }
 
-module.exports = { DEFAULTS, resolveDeadline, validateTimeoutMs, resolveHardTimeoutMs, ENV_OVERRIDES };
+/**
+ * Resolve the caller-side wait budget from seconds to milliseconds.
+ * Unlike the hard timeout, this budget is allowed to be zero for an
+ * immediate status check; it never changes the job's own deadline.
+ *
+ * @param {number|undefined|null} timeoutSec - --timeout-sec value
+ * @returns {number} milliseconds
+ */
+function resolveWaitTimeoutMs(timeoutSec) {
+  if (timeoutSec === undefined || timeoutSec === null) {
+    return resolveDeadline('WAIT_TIMEOUT_MS');
+  }
+  const seconds = validateTimeoutMs(timeoutSec, 'WAIT_TIMEOUT_SEC');
+  return resolveDeadline('WAIT_TIMEOUT_MS', seconds * 1000);
+}
+
+module.exports = {
+  DEFAULTS,
+  resolveDeadline,
+  validateTimeoutMs,
+  resolveHardTimeoutMs,
+  resolveWaitTimeoutMs,
+  ENV_OVERRIDES,
+};

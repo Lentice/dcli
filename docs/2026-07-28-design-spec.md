@@ -585,7 +585,7 @@ wrapper's reproducibility and cleanup guarantees.
 | SSE idle (no event, no keepalive) | 120 s |
 | File-lock acquisition | 10 s |
 | Individual git operation | bounded per call |
-| `wait` | caller-defined; finite default for automation |
+| `wait` caller budget | 300 s; `--timeout-sec` overrides without changing the job |
 | `doctor` live smoke | 120 s |
 
 Rules: drain child pipes **concurrently from launch** — never "wait for exit, then read stdout"

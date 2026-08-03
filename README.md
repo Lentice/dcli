@@ -101,7 +101,9 @@ dcli-opencode resume <job-id> --kind fork_from_artifacts --hard-timeout-sec 600 
 ```
 
 Every recipe carries an execution budget and a wait budget. That is not decoration — an unbounded wait once cost a
-user eight hours.
+user eight hours. The job hard-timeout default is 1800 seconds; the caller-side `wait` default is 300 seconds.
+They are independent: exit 20 means only that this caller stopped waiting, while the job may still be running.
+Use `wait --json` and inspect `wait_timed_out` / `wait_timeout_sec` when automation must distinguish the two.
 
 ## Design principles
 

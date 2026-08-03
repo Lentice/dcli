@@ -36,6 +36,12 @@ Delegate only bounded, worthwhile work:
 
 Without both, a stalled job can silently consume an entire working session.
 
+When `--timeout-sec` is omitted, the CLI uses a 300-second caller-side wait budget. This is a safe
+fallback, not the job's execution deadline: exit 20 means only that the caller stopped waiting while
+the job may still be active. JSON wait results include `wait_timed_out` and `wait_timeout_sec` so an
+agent can make that distinction without parsing human text. Documented recipes still pass an explicit
+wait budget so the task's intended bound is visible.
+
 There is a third boundary when an agent invokes dcli through a shell or tool:
 the outer command runner must also have a finite timeout longer than the dcli
 hard budget (allowing startup and cleanup slack). If the outer runner cannot
@@ -70,7 +76,9 @@ observed condition — not a theoretical one. So:
   whose worker is provably gone is resolved to `interrupted` the next time
   anything reads it, so a crashed or killed run ends rather than sitting in
   `running`. There may be no result; check before reading one.
-- **A wait without `--timeout-sec` is a defect**, even in a throwaway one-liner.
+- **A documented wait should carry an explicit `--timeout-sec`**, even though the CLI has a 300-second
+  fallback for ad-hoc calls. A wait returning exit 20 means the caller budget elapsed; check the job
+  state and wait again rather than treating it as a job failure.
   An unbounded wait once consumed an entire working session while the backend's
   result had been sitting complete for minutes.
 
@@ -106,7 +114,7 @@ adopt an unverified finding to close the loop.
 | 14 | Quota or rate-limit | Note it; continue without the work. Never retry. |
 | 15 | Permission/access denied | Refine the permission profile. Never retry automatically. |
 | 16 | Network failure | At most one jittered retry for read-only jobs only. |
-| 20 | Wait timed out | Job still active; increase `--timeout-sec` or check later. |
+| 20 | Caller wait budget elapsed | Job may still be active; check the returned state, increase `--timeout-sec`, or check later. |
 | 21 | Cancellation unconfirmed | Check job status manually. |
 | 22 | Session expired | Start a fresh job with `fork_from_artifacts` or `retry_attempt`. |
 | 23 | Repo/worktree preparation failure | Check repo health, run `doctor`. |
