@@ -7,6 +7,7 @@ const { resolveDeadline } = require('../deadlines');
 
 const DIFF_CAP_BYTES = 100 * 1024;
 const UNTRACKED_SIZE_LIMIT = 50 * 1024;
+const MAX_BUFFER_BYTES = 300 * 1024 * 1024;
 const GIT_SPAWN_TIMEOUT_MS = 30000;
 
 /**
@@ -19,7 +20,16 @@ function sliceByBytes(str, maxBytes) {
   const buf = Buffer.from(str, 'utf8');
   if (buf.length <= maxBytes) return str;
   let end = maxBytes;
-  while (end > 0 && (buf[end - 1] & 0xC0) === 0x80) end--;
+  let lead = end - 1;
+  while (lead >= 0 && (buf[lead] & 0xC0) === 0x80) lead--;
+  if (lead >= 0) {
+    const byte = buf[lead];
+    const width = (byte & 0x80) === 0 ? 1
+      : (byte & 0xE0) === 0xC0 ? 2
+        : (byte & 0xF0) === 0xE0 ? 3
+          : (byte & 0xF8) === 0xF0 ? 4 : 1;
+    if (width > end - lead) end = lead;
+  }
   return buf.slice(0, end).toString('utf8');
 }
 
@@ -55,21 +65,25 @@ function executeReview({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
   });
 }
 
-function getDroppedFilesFromDiff(diffText, cutoffChars) {
-  const sections = [];
-  const headerRegex = /^diff --git a\/(\S+) b\//gm;
+function getDiffSectionStarts(diffText) {
+  const starts = [];
+  const headerRegex = /^diff --(?:git |cc |combined )/gm;
   let match;
-  while ((match = headerRegex.exec(diffText)) !== null) {
-    sections.push({ path: match[1], start: match.index });
-  }
-  if (sections.length === 0) return [];
+  while ((match = headerRegex.exec(diffText)) !== null) starts.push(match.index);
+  return starts;
+}
+
+function getDroppedFilesFromDiff(diffText, cutoffChars, fileNames = []) {
+  const starts = getDiffSectionStarts(diffText);
   const result = [];
-  for (let i = 0; i < sections.length; i++) {
-    const { path, start } = sections[i];
-    const end = i < sections.length - 1 ? sections[i + 1].start : diffText.length;
-    if (end > cutoffChars) {
-      result.push(path);
+  for (let i = 0; i < starts.length; i++) {
+    const end = i < starts.length - 1 ? starts[i + 1] : diffText.length;
+    if (end > cutoffChars && fileNames[i]) {
+      result.push(fileNames[i]);
     }
+  }
+  for (let i = starts.length; i < fileNames.length; i++) {
+    result.push(fileNames[i]);
   }
   return result;
 }
@@ -82,7 +96,7 @@ function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUnt
     return info;
   }
 
-  const gitArgs = ['diff'];
+  const gitArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames'];
   if (scope === 'staged') gitArgs.push('--staged');
   else if (scope === 'range') {
     if (!rangeBase || !rangeHead) {
@@ -103,8 +117,8 @@ function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUnt
     cwd: repoRoot,
     encoding: 'utf8',
     windowsHide: true,
-    maxBuffer: DIFF_CAP_BYTES * 2,
     timeout: gitTimeout,
+    maxBuffer: MAX_BUFFER_BYTES,
   });
 
   if (result.error) {
@@ -127,7 +141,9 @@ function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUnt
     info.truncated = true;
     const truncated = sliceByBytes(diffText, DIFF_CAP_BYTES);
     const truncatedLen = Buffer.byteLength(truncated, 'utf8');
-    const droppedFiles = getDroppedFilesFromDiff(diffText, DIFF_CAP_BYTES);
+    const allDiffFiles = getDiffFileNames(repoRoot, gitArgs, gitTimeout);
+    let droppedFiles = getDroppedFilesFromDiff(diffText, truncated.length, allDiffFiles);
+    if (droppedFiles.length === 0) droppedFiles = ['additional files omitted'];
     info.truncationInfo = `Diff truncated: ${info.totalBytes} bytes total, showing first ${truncatedLen} bytes. Dropped or partially dropped files: ${droppedFiles.join(', ')}.`;
     diffText = truncated + '\n[... diff truncated ...]\n';
   }
@@ -163,15 +179,35 @@ function generateDiff({ repoRoot, scope, rangeBase, rangeHead, paths, includeUnt
   return info;
 }
 
+function getDiffFileNames(repoRoot, gitArgs, timeoutMs = GIT_SPAWN_TIMEOUT_MS) {
+  const nameArgs = [...gitArgs];
+  nameArgs.splice(1, 0, '--name-only', '-z');
+  const result = spawnSync('git', nameArgs, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: timeoutMs,
+    maxBuffer: MAX_BUFFER_BYTES,
+  });
+  if (result.error || result.status !== 0 || !result.stdout) return [];
+  return result.stdout.split('\0').filter(Boolean);
+}
+
 function getUntrackedFiles(repoRoot, paths) {
-  const args = ['ls-files', '--others', '--exclude-standard'];
+  const args = ['ls-files', '--others', '--exclude-standard', '-z'];
   if (paths && paths.length > 0) {
     args.push('--');
     for (const p of paths) args.push(p);
   }
-  const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true, timeout: GIT_SPAWN_TIMEOUT_MS });
+  const result = spawnSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: GIT_SPAWN_TIMEOUT_MS,
+    maxBuffer: MAX_BUFFER_BYTES,
+  });
   if (result.status !== 0 || !result.stdout) return [];
-  return result.stdout.trim().split('\n').filter(Boolean);
+  return result.stdout.split('\0').filter(Boolean);
 }
 
 function getUntrackedContent(repoRoot, paths) {
@@ -298,4 +334,4 @@ function buildFindingsContract() {
   ].join('\n');
 }
 
-module.exports = { executeReview, generateDiff, buildReviewPrompt, buildFindingsContract, getUntrackedFiles, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT };
+module.exports = { executeReview, generateDiff, buildReviewPrompt, buildFindingsContract, getUntrackedFiles, getDroppedFilesFromDiff, sliceByBytes, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT };

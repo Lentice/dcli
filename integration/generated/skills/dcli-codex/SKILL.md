@@ -1,11 +1,26 @@
 ---
 name: dcli-codex
-description: Delegate bounded work to the Codex CLI as a single-shot exec run. Use for review, ask, and implement delegation through the codex backend.
+description: Delegate bounded work to the Codex CLI as a different backend and a single-shot exec run. Use when wrapper job guarantees are needed.
 ---
 
 <!-- dcli:codex skill -->
 
 # Core delegation patterns (shared by all backends)
+
+## Native subagents come before dcli
+
+`dcli` is the cross-backend boundary. It is not the generic command for spawning a
+subagent. When the current agent needs a worker from its own backend, use that
+backend's native subagent capability directly:
+
+- Codex uses Codex's native subagent tool; same-backend work is not `dcli-codex`.
+- Claude Code uses its native Task/subagent capability; same-backend work is not `dcli-claude`.
+- opencode uses its native task/agent capability; same-backend work is not `dcli-opencode`.
+
+Use dcli only when the task intentionally crosses to another backend. Its
+durable job record, detached execution, wrapper findings contract, and isolated
+worktree are guarantees for that cross-backend boundary; they do not replace a
+same-backend native subagent.
 
 ## When to delegate
 

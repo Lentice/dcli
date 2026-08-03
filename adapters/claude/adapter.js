@@ -5,35 +5,17 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
 const { applyProcessLifecycle } = require('../shared/process-lifecycle');
+const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
 const LIVE_SMOKE_TIMEOUT_MS = 30000;
 
 function resolveClaudePath() {
-  if (process.env.CLAUDE_PATH) return process.env.CLAUDE_PATH;
-
-  const { execSync } = require('node:child_process');
-
-  const cmd = process.platform === 'win32'
-    ? 'where claude 2>nul'
-    : 'which claude 2>/dev/null';
-
-  try {
-    const result = execSync(cmd, {
-      encoding: 'utf8',
-      timeout: 5000,
-      windowsHide: true,
-    });
-    const lines = result.trim().split('\n').map(l => l.trim()).filter(Boolean);
-    const candidates = lines.filter(l => !l.toLowerCase().endsWith('.ps1'));
-    if (candidates.length > 0) {
-      const cmdShim = candidates.find(c => /\.(cmd|bat)$/i.test(c));
-      if (cmdShim) return cmdShim;
-      return candidates[0];
-    }
-  } catch {}
-
-  return 'claude';
+  return resolveExecutablePath({
+    envName: 'CLAUDE_PATH',
+    fallback: 'claude',
+    names: executableNames('claude'),
+  });
 }
 
 const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);

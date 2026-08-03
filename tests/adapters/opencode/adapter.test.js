@@ -1,6 +1,9 @@
 // @suite full
 const assert = require('node:assert');
-const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { OpencodeAdapter, resolveOpencodePath } = require('../../../adapters/opencode/adapter');
 const { validateFact } = require('../../../core/fact-types');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
@@ -20,6 +23,87 @@ function makeMinimalAdapter() {
 }
 
 async function main() {
+
+// ===========================================================================
+// 0. Windows PATH resolution selects an executable-form opencode shim
+// ===========================================================================
+if (process.platform === 'win32') {
+  const childProcess = require('node:child_process');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-opencode-path-'));
+  const fixture = path.join(tmpDir, 'opencode.cmd');
+  const bunVendor = path.join(tmpDir, 'install', 'global', 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
+  const savedOpencodePath = process.env.OPENCODE_PATH;
+  const savedPATH = process.env.PATH;
+  const savedPath = process.env.Path;
+  const savedBunInstall = process.env.BUN_INSTALL;
+  const savedExecSync = childProcess.execSync;
+  try {
+    fs.writeFileSync(fixture, '@echo off\r\n', 'utf8');
+    fs.mkdirSync(path.dirname(bunVendor), { recursive: true });
+    fs.writeFileSync(bunVendor, 'not the PATH-selected executable', 'utf8');
+    delete process.env.OPENCODE_PATH;
+    process.env.PATH = tmpDir;
+    process.env.Path = tmpDir;
+    process.env.BUN_INSTALL = tmpDir;
+    childProcess.execSync = () => { throw new Error('bun unavailable'); };
+
+    assert.strictEqual(resolveOpencodePath(), fixture,
+      'opencode resolver must find a .cmd shim without relying on where.exe');
+    console.log('PASS: resolveOpencodePath finds executable-form PATH shim');
+  } finally {
+    if (savedOpencodePath === undefined) delete process.env.OPENCODE_PATH;
+    else process.env.OPENCODE_PATH = savedOpencodePath;
+    if (savedPATH === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPATH;
+    if (savedPath === undefined) delete process.env.Path;
+    else process.env.Path = savedPath;
+    if (savedBunInstall === undefined) delete process.env.BUN_INSTALL;
+    else process.env.BUN_INSTALL = savedBunInstall;
+    childProcess.execSync = savedExecSync;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ===========================================================================
+// 0b. Windows Bun .exe shims resolve to the bundled opencode binary
+// ===========================================================================
+if (process.platform === 'win32') {
+  const childProcess = require('node:child_process');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-opencode-bun-'));
+  const shim = path.join(root, '.bun', 'bin', 'opencode.exe');
+  const vendor = path.join(root, '.bun', 'install', 'global', 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
+  const savedOpencodePath = process.env.OPENCODE_PATH;
+  const savedPATH = process.env.PATH;
+  const savedPath = process.env.Path;
+  const savedBunInstall = process.env.BUN_INSTALL;
+  const savedExecSync = childProcess.execSync;
+  try {
+    fs.mkdirSync(path.dirname(shim), { recursive: true });
+    fs.mkdirSync(path.dirname(vendor), { recursive: true });
+    fs.writeFileSync(shim, 'shim', 'utf8');
+    fs.writeFileSync(vendor, 'vendor', 'utf8');
+    delete process.env.OPENCODE_PATH;
+    delete process.env.BUN_INSTALL;
+    process.env.PATH = path.dirname(shim);
+    process.env.Path = process.env.PATH;
+    childProcess.execSync = () => { throw new Error('bun unavailable'); };
+
+    assert.strictEqual(resolveOpencodePath(), vendor,
+      'opencode .exe Bun shim must resolve to its bundled binary');
+    console.log('PASS: resolveOpencodePath resolves Bun .exe shim');
+  } finally {
+    if (savedOpencodePath === undefined) delete process.env.OPENCODE_PATH;
+    else process.env.OPENCODE_PATH = savedOpencodePath;
+    if (savedPATH === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPATH;
+    if (savedPath === undefined) delete process.env.Path;
+    else process.env.Path = savedPath;
+    if (savedBunInstall === undefined) delete process.env.BUN_INSTALL;
+    else process.env.BUN_INSTALL = savedBunInstall;
+    childProcess.execSync = savedExecSync;
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+  }
+}
 
 // ===========================================================================
 // 1. GetIdentity returns correct shape

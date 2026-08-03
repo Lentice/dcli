@@ -3,7 +3,8 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { CodexAdapter, buildArgv } = require('../../../adapters/codex/adapter');
+const { CodexAdapter, buildArgv, resolveCodexPath } = require('../../../adapters/codex/adapter');
+const { executableNames, resolveExecutablePath } = require('../../../adapters/shared/resolve-executable');
 const { validateFact } = require('../../../core/fact-types');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
@@ -23,6 +24,147 @@ function makeMinimalAdapter() {
 }
 
 async function main() {
+
+// ===========================================================================
+// 0. Windows PATH resolution must find an executable-form npm shim
+// ===========================================================================
+if (process.platform === 'win32') {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-path-'));
+  const fixture = path.join(tmpDir, 'codex.cmd');
+  const savedCodexPath = process.env.CODEX_PATH;
+  const savedPATH = process.env.PATH;
+  const savedPath = process.env.Path;
+  try {
+    fs.writeFileSync(fixture, '@echo off\r\n', 'utf8');
+    delete process.env.CODEX_PATH;
+    process.env.PATH = tmpDir;
+    process.env.Path = tmpDir;
+    assert.strictEqual(resolveCodexPath(), fixture,
+      'resolver must find codex.cmd from PATH');
+    console.log('PASS: resolveCodexPath finds executable-form PATH shim');
+  } finally {
+    if (savedCodexPath === undefined) delete process.env.CODEX_PATH;
+    else process.env.CODEX_PATH = savedCodexPath;
+    if (savedPATH === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPATH;
+    if (savedPath === undefined) delete process.env.Path;
+    else process.env.Path = savedPath;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ===========================================================================
+// 0a. Windows PATH precedence wins over a later shim form
+// ===========================================================================
+if (process.platform === 'win32') {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-path-order-'));
+  const firstDir = path.join(tmpDir, 'first');
+  const secondDir = path.join(tmpDir, 'second');
+  const first = path.join(firstDir, 'codex.cmd');
+  const second = path.join(secondDir, 'codex.exe');
+  const savedCodexPath = process.env.CODEX_PATH;
+  const savedPATH = process.env.PATH;
+  const savedPath = process.env.Path;
+  try {
+    fs.mkdirSync(firstDir);
+    fs.mkdirSync(secondDir);
+    fs.writeFileSync(first, '@echo off\r\n', 'utf8');
+    fs.writeFileSync(second, 'not a real executable fixture', 'utf8');
+    const vendor = path.join(
+      secondDir, 'node_modules', '@openai', 'codex', 'node_modules', '@openai',
+      'codex-win32-x64', 'vendor', 'win32-x64', 'bin', 'codex.exe'
+    );
+    fs.mkdirSync(path.dirname(vendor), { recursive: true });
+    fs.writeFileSync(vendor, 'not a real executable fixture', 'utf8');
+    delete process.env.CODEX_PATH;
+    process.env.PATH = [firstDir, secondDir].join(path.delimiter);
+    process.env.Path = process.env.PATH;
+
+    assert.strictEqual(resolveCodexPath(), first,
+      'resolver must preserve PATH precedence across executable forms');
+    console.log('PASS: resolveCodexPath preserves Windows PATH precedence');
+  } finally {
+    if (savedCodexPath === undefined) delete process.env.CODEX_PATH;
+    else process.env.CODEX_PATH = savedCodexPath;
+    if (savedPATH === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPATH;
+    if (savedPath === undefined) delete process.env.Path;
+    else process.env.Path = savedPath;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ===========================================================================
+// 0b. POSIX PATH resolution skips non-executable files
+// ===========================================================================
+if (process.platform !== 'win32') {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-posix-path-'));
+  const badDir = path.join(tmpDir, 'bad');
+  const goodDir = path.join(tmpDir, 'good');
+  const savedCodexPath = process.env.CODEX_PATH;
+  const savedPATH = process.env.PATH;
+  const savedPath = process.env.Path;
+  try {
+    fs.mkdirSync(badDir);
+    fs.mkdirSync(goodDir);
+    const bad = path.join(badDir, 'codex');
+    const good = path.join(goodDir, 'codex');
+    fs.writeFileSync(bad, '#!/bin/sh\n', 'utf8');
+    fs.writeFileSync(good, '#!/bin/sh\n', 'utf8');
+    fs.chmodSync(bad, 0o644);
+    fs.chmodSync(good, 0o755);
+    delete process.env.CODEX_PATH;
+    process.env.PATH = [badDir, goodDir].join(path.delimiter);
+    process.env.Path = process.env.PATH;
+    assert.strictEqual(resolveCodexPath(), good,
+      'POSIX resolver must skip a non-executable PATH candidate');
+    console.log('PASS: resolveCodexPath skips non-executable POSIX candidate');
+  } finally {
+    if (savedCodexPath === undefined) delete process.env.CODEX_PATH;
+    else process.env.CODEX_PATH = savedCodexPath;
+    if (savedPATH === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPATH;
+    if (savedPath === undefined) delete process.env.Path;
+    else process.env.Path = savedPath;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ===========================================================================
+// 0c. A near-resolver result must still be a regular executable file
+// ===========================================================================
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-resolver-near-'));
+  const command = 'dcli-resolver-near';
+  const candidate = path.join(tmpDir, process.platform === 'win32' ? `${command}.cmd` : command);
+  const invalid = path.join(tmpDir, 'vendor-directory');
+  const envName = 'DCLI_TEST_RESOLVER_NEAR_PATH';
+  const savedEnv = process.env[envName];
+  const savedPATH = process.env.PATH;
+  const savedPath = process.env.Path;
+  try {
+    fs.writeFileSync(candidate, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', 'utf8');
+    if (process.platform !== 'win32') fs.chmodSync(candidate, 0o755);
+    fs.mkdirSync(invalid);
+    delete process.env[envName];
+    process.env.PATH = tmpDir;
+    process.env.Path = tmpDir;
+
+    assert.strictEqual(resolveExecutablePath({
+      envName,
+      fallback: command,
+      names: executableNames(command),
+      resolveNear: () => invalid,
+    }), candidate, 'invalid near-resolver path must be rejected');
+    console.log('PASS: near-resolver result is validated before use');
+  } finally {
+    if (savedEnv === undefined) delete process.env[envName];
+    else process.env[envName] = savedEnv;
+    process.env.PATH = savedPATH;
+    process.env.Path = savedPath;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
 
 // ===========================================================================
 // 1. GetIdentity returns correct shape

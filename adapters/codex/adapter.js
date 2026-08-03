@@ -4,6 +4,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { buildCmdInvocation } = require('./cmd-quoting');
 const { applyProcessLifecycle } = require('../shared/process-lifecycle');
+const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
 const STARTUP_SENTINEL_MS = 10000;
@@ -70,50 +71,17 @@ function resolveVendorBinaryNear(wrapperPath) {
 /**
  * Resolve the codex executable path, filtering out .ps1 shims that
  * Node.js cannot spawn, preferring the real vendor binary over an
- * extensionless JS wrapper, and preferring .cmd over a bare wrapper
- * when the vendor binary cannot be located.
+ * extensionless JS wrapper and executable-form shims over a bare wrapper.
  *
  * @returns {string}
  */
 function resolveCodexPath() {
-  if (process.env.CODEX_PATH) return process.env.CODEX_PATH;
-
-  const { execSync } = require('node:child_process');
-
-  const cmd = process.platform === 'win32'
-    ? 'where codex 2>nul'
-    : 'which codex 2>/dev/null';
-
-  try {
-    const result = execSync(cmd, {
-      encoding: 'utf8',
-      timeout: 5000,
-      windowsHide: true,
-    });
-    const lines = result.trim().split('\n').map(l => l.trim()).filter(Boolean);
-
-    // Skip .ps1 files — Node.js cannot spawn them (PowerShell-only)
-    const candidates = lines.filter(l => !l.toLowerCase().endsWith('.ps1'));
-
-    if (candidates.length > 0) {
-      // Prefer a real vendor binary reachable from any candidate — this
-      // sidesteps the extensionless-wrapper spawn problem entirely.
-      for (const candidate of candidates) {
-        const vendor = resolveVendorBinaryNear(candidate);
-        if (vendor) return vendor;
-      }
-
-      // No vendor binary found: prefer .cmd/.bat (spawnable via the
-      // documented two-layer cmd.exe quoting) over a bare extensionless
-      // file, which Node's spawn() cannot execute without a shell.
-      const cmdShim = candidates.find(c => /\.(cmd|bat)$/i.test(c));
-      if (cmdShim) return cmdShim;
-
-      return candidates[0];
-    }
-  } catch {}
-
-  return 'codex';
+  return resolveExecutablePath({
+    envName: 'CODEX_PATH',
+    fallback: 'codex',
+    names: executableNames('codex'),
+    resolveNear: candidate => /\.exe$/i.test(candidate) ? null : resolveVendorBinaryNear(candidate),
+  });
 }
 
 /**

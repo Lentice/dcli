@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
+const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 const { getRedactor } = require('../../core/fs-text');
 
 const PORT_RESERVE_MAX_RETRIES = 5;
@@ -111,6 +112,14 @@ const ENDPOINTS_WITHOUT_DIR_PREFIXES = [
 ];
 
 function resolvePastBunShim(shimPath) {
+  const normalized = path.resolve(shimPath).replace(/\\/g, '/').toLowerCase();
+  const bunInstall = process.env.BUN_INSTALL
+    ? path.resolve(process.env.BUN_INSTALL).replace(/\\/g, '/').toLowerCase()
+    : null;
+  const isBunShim = normalized.includes('/.bun/bin/opencode')
+    || (bunInstall && normalized.startsWith(`${bunInstall}/bin/opencode`));
+  if (!isBunShim) return null;
+
   function checkBunPrefix(prefix) {
     try {
       const p = path.join(prefix, 'install', 'global', 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
@@ -136,7 +145,6 @@ function resolvePastBunShim(shimPath) {
     }
   } catch {}
 
-  const normalized = shimPath.replace(/\\/g, '/').toLowerCase();
   const marker = '.bun/bin/opencode.exe';
   const idx = normalized.indexOf(marker);
   if (idx !== -1) {
@@ -149,26 +157,12 @@ function resolvePastBunShim(shimPath) {
 }
 
 function resolveOpencodePath() {
-  if (process.env.OPENCODE_PATH) return process.env.OPENCODE_PATH;
-
-  const { execSync } = require('node:child_process');
-
-  let resolved = null;
-
-  try {
-    const result = execSync('where opencode 2>nul || which opencode 2>/dev/null', {
-      encoding: 'utf8',
-      timeout: 5000,
-      windowsHide: true,
-    });
-    const line = result.trim().split('\n')[0].trim();
-    if (line) resolved = line;
-  } catch {}
-
-  if (!resolved) return 'opencode';
-
-  const realPath = resolvePastBunShim(resolved);
-  return realPath || resolved;
+  return resolveExecutablePath({
+    envName: 'OPENCODE_PATH',
+    fallback: 'opencode',
+    names: executableNames('opencode'),
+    resolveNear: resolvePastBunShim,
+  });
 }
 
 class OpencodeAdapter {
@@ -1732,4 +1726,4 @@ class OpencodeAdapter {
   }
 }
 
-module.exports = { OpencodeAdapter, httpRequest };
+module.exports = { OpencodeAdapter, httpRequest, resolveOpencodePath };

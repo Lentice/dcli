@@ -39,14 +39,14 @@ function ensureDir(dir) {
 // host falls back to the first line of the body, which is how the backend
 // skills once advertised themselves to agents as "<!-- dcli:codex skill -->".
 const SKILL_DESCRIPTIONS = {
-  dcli: 'Route bounded delegated work to a coding-agent CLI and get a durable, '
-    + 'inspectable result back. Use when choosing which backend shim to delegate to.',
-  opencode: 'Delegate bounded work to the opencode CLI, including interactive-capable '
-    + 'runs. Use for review, ask, and implement delegation through the opencode backend.',
-  codex: 'Delegate bounded work to the Codex CLI as a single-shot exec run. Use for '
-    + 'review, ask, and implement delegation through the codex backend.',
-  claude: 'Delegate bounded work to another Claude Code session. Use for review, ask, '
-    + 'and implement delegation through the claude backend.',
+  dcli: 'Route bounded cross-backend work to a coding-agent CLI and get a durable, '
+    + 'inspectable result back. Use when an intentional backend boundary needs dcli.',
+  opencode: 'Delegate bounded work to the opencode CLI as a different backend, including '
+    + 'interactive-capable runs. Use when wrapper job guarantees are needed.',
+  codex: 'Delegate bounded work to the Codex CLI as a different backend and a single-shot '
+    + 'exec run. Use when wrapper job guarantees are needed.',
+  claude: 'Delegate bounded work to another backend. Use when cross-backend wrapper job '
+    + 'guarantees are needed.',
 };
 
 function skillFrontmatter(name, description) {
@@ -176,7 +176,14 @@ function generateTo(dir) {
   fs.writeFileSync(path.join(dir, 'rules', 'dcli-delegation.md'), [
     '# dcli delegation rule',
     '',
-    'When a task matches the dcli delegation criteria, use the appropriate backend shim.',
+    'Use dcli only for intentional cross-backend delegation.',
+    'Its durable job guarantees do not replace a same-backend native subagent.',
+    'For same-backend subagents, use the current agent backend\'s native subagent mechanism directly.',
+    'Do not use the matching dcli shim as a substitute for a native subagent:',
+    '- Codex native subagent → not `dcli-codex`',
+    '- Claude native Task/subagent → not `dcli-claude`',
+    '- opencode native task/agent → not `dcli-opencode`',
+    '',
     'Always pass both budgets. Never auto-apply. Independently verify findings.',
     'The outer shell or agent tool also needs a finite timeout longer than the',
     'hard budget; use submit plus bounded wait when it cannot set one.',
@@ -184,9 +191,7 @@ function generateTo(dir) {
     'Use exact wrapper lineage with explicit resume kinds.',
     '',
     'Backend selection:',
-    '- For interactive-capable work: dcli-opencode',
-    '- For single-shot exec: dcli-codex',
-    '- For Claude-to-Claude: dcli-claude',
+    '- For a cross-backend job, choose the explicitly requested different backend and load its skill.',
     '',
   ].join('\n'), 'utf8');
 
@@ -217,6 +222,9 @@ const WORKER_PREAMBLE = [
   '- Never invoke a child command with an unbounded wait. Use the command\'s',
   '  finite timeout option when available; if a tool or test hangs, stop it',
   '  and report the bounded partial result instead of waiting indefinitely.',
+  '- Do not recursively invoke the dcli shim for a subagent from your own',
+  '  backend. If native subagents are needed, use the backend-native mechanism;',
+  '  use dcli only for an intentional cross-backend boundary.',
   '',
   'Mode: {{MODE}}',
   'Access: {{ACCESS}}',

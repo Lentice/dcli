@@ -1,6 +1,6 @@
 ---
 name: dcli
-description: Route bounded delegated work to a coding-agent CLI and get a durable, inspectable result back. Use when choosing which backend shim to delegate to.
+description: Route bounded cross-backend work to a coding-agent CLI and get a durable, inspectable result back. Use when an intentional backend boundary needs dcli.
 ---
 
 # dcli — delegation router
@@ -21,6 +21,20 @@ Choose a backend, then load that backend's skill:
 | codex | `dcli-codex` | dcli-codex/SKILL.md |
 | claude | `dcli-claude` | dcli-claude/SKILL.md |
 | any | `dcli --backend <name>` | per-backend, above |
+
+## Native subagents
+
+This router is for cross-backend delegation. If the current agent needs a
+subagent from its own backend, use the backend's native subagent mechanism
+directly instead of selecting the matching dcli shim:
+
+- Codex → Codex native subagent tool; not `dcli-codex`
+- Claude Code → Claude native Task/subagent capability; not `dcli-claude`
+- opencode → opencode native task/agent capability; not `dcli-opencode`
+
+Choose dcli only for an intentional different-backend boundary. Its durable
+jobs, bounded detached execution, findings protocol, and worktree isolation do
+not turn it into a same-backend subagent mechanism.
 
 ## When to delegate
 

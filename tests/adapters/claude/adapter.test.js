@@ -1,6 +1,9 @@
 // @suite full
 const assert = require('node:assert');
-const { ClaudeAdapter, buildArgv, EFFORT_LEVELS } = require('../../../adapters/claude/adapter');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { ClaudeAdapter, buildArgv, resolveClaudePath, EFFORT_LEVELS } = require('../../../adapters/claude/adapter');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
@@ -19,6 +22,35 @@ function makeMinimalAdapter() {
 }
 
 async function main() {
+
+// ===========================================================================
+// 0. Windows PATH resolution selects an executable-form Claude shim
+// ===========================================================================
+if (process.platform === 'win32') {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-claude-path-'));
+  const fixture = path.join(tmpDir, 'claude.cmd');
+  const savedClaudePath = process.env.CLAUDE_PATH;
+  const savedPATH = process.env.PATH;
+  const savedPath = process.env.Path;
+  try {
+    fs.writeFileSync(fixture, '@echo off\r\n', 'utf8');
+    delete process.env.CLAUDE_PATH;
+    process.env.PATH = tmpDir;
+    process.env.Path = tmpDir;
+
+    assert.strictEqual(resolveClaudePath(), fixture,
+      'Claude resolver must find a .cmd shim without relying on where.exe');
+    console.log('PASS: resolveClaudePath finds executable-form PATH shim');
+  } finally {
+    if (savedClaudePath === undefined) delete process.env.CLAUDE_PATH;
+    else process.env.CLAUDE_PATH = savedClaudePath;
+    if (savedPATH === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPATH;
+    if (savedPath === undefined) delete process.env.Path;
+    else process.env.Path = savedPath;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
 
 // ===========================================================================
 // 1. GetIdentity returns correct shape

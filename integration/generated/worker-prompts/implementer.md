@@ -14,6 +14,9 @@ not watching this session.
 - Never invoke a child command with an unbounded wait. Use the command's
   finite timeout option when available; if a tool or test hangs, stop it
   and report the bounded partial result instead of waiting indefinitely.
+- Do not recursively invoke the dcli shim for a subagent from your own
+  backend. If native subagents are needed, use the backend-native mechanism;
+  use dcli only for an intentional cross-backend boundary.
 
 Mode: {{MODE}}
 Access: {{ACCESS}}

@@ -5,6 +5,7 @@ const { spawnSync } = require('child_process');
 const SNAPSHOT_COMMIT_MESSAGE = 'dcli snapshot';
 const SNAPSHOT_AUTHOR_NAME = 'dcli';
 const SNAPSHOT_AUTHOR_EMAIL = 'dcli@localhost';
+const MAX_BUFFER_BYTES = 300 * 1024 * 1024;
 
 function _git(args, opts = {}) {
   const { cwd, timeoutMs = 30000, env } = opts;
@@ -13,7 +14,7 @@ function _git(args, opts = {}) {
     encoding: 'utf8',
     windowsHide: true,
     timeout: timeoutMs,
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer: MAX_BUFFER_BYTES,
   };
   if (env) spawnOpts.env = env;
   const result = spawnSync('git', args, spawnOpts);

@@ -17,6 +17,20 @@ Choose a backend, then load that backend's skill:
 | claude | `dcli-claude` | dcli-claude/SKILL.md |
 | any | `dcli --backend <name>` | per-backend, above |
 
+## Native subagents
+
+This router is for cross-backend delegation. If the current agent needs a
+subagent from its own backend, use the backend's native subagent mechanism
+directly instead of selecting the matching dcli shim:
+
+- Codex → Codex native subagent tool; not `dcli-codex`
+- Claude Code → Claude native Task/subagent capability; not `dcli-claude`
+- opencode → opencode native task/agent capability; not `dcli-opencode`
+
+Choose dcli only for an intentional different-backend boundary. Its durable
+jobs, bounded detached execution, findings protocol, and worktree isolation do
+not turn it into a same-backend subagent mechanism.
+
 ## When to delegate
 
 - Independent second opinion on a design or plan

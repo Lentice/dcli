@@ -8,6 +8,11 @@ const { generate, check, BACKENDS, COMMANDS } = require('../../scripts/generate-
 
 const GENERATED_DIR = path.resolve(__dirname, '../../integration/generated');
 
+// Verify the checked-in generated tree still matches the source generator before
+// asserting semantics against it. This catches source changes that were not
+// regenerated, rather than testing only whatever stale files happen to exist.
+check();
+
 // ---------------------------------------------------------------------------
 // 1. Generation succeeds and produces expected files
 // ---------------------------------------------------------------------------
@@ -30,6 +35,51 @@ const GENERATED_DIR = path.resolve(__dirname, '../../integration/generated');
   assert.ok(routerContent.includes('dcli-opencode'));
   assert.ok(routerContent.includes('dcli-codex'));
   assert.ok(routerContent.includes('dcli-claude'));
+  assert.ok(routerContent.includes('Native subagents'));
+  assert.ok(routerContent.includes('cross-backend delegation'));
+
+  const rulePath = path.join(GENERATED_DIR, 'rules', 'dcli-delegation.md');
+  const ruleContent = fs.readFileSync(rulePath, 'utf8');
+  const nativeSubagentPolicy = [
+    { file: 'router skill', content: routerContent },
+    ...BACKENDS.map((backend) => ({
+      file: `dcli-${backend} skill`,
+      content: fs.readFileSync(path.join(GENERATED_DIR, 'skills', `dcli-${backend}`, 'SKILL.md'), 'utf8'),
+    })),
+    { file: 'delegation rule', content: ruleContent },
+  ];
+  for (const content of nativeSubagentPolicy) {
+    assert.match(content.content, /native subagent/i,
+      `${content.file} must prefer native same-backend subagents`);
+    assert.match(content.content, /dcli.*cross-backend|cross-backend.*dcli/i,
+      `${content.file} must reserve dcli for cross-backend delegation`);
+    for (const backend of BACKENDS) {
+      const forbiddenRoute = 'not `dcli-' + backend + '`';
+      assert.ok(content.content.includes(forbiddenRoute),
+        `${content.file} must prohibit dcli-${backend} as a same-backend subagent substitute`);
+    }
+  }
+  for (const backend of BACKENDS) {
+    const skill = fs.readFileSync(
+      path.join(GENERATED_DIR, 'skills', `dcli-${backend}`, 'SKILL.md'), 'utf8'
+    );
+    assert.doesNotMatch(skill, /\bdcli\s+--backend\b/,
+      `dcli-${backend} skill must not teach the umbrella dcli as a subagent route`);
+  }
+  assert.match(ruleContent, /Use dcli only for intentional cross-backend delegation/,
+    'shared rule must make cross-backend delegation the only dcli use case');
+  assert.doesNotMatch(ruleContent, /dcli\s+--backend/,
+    'shared rule must not teach the umbrella dcli as a same-backend subagent route');
+  for (const line of ruleContent.split('\n')) {
+    if (!/same-backend|own backend/i.test(line)) continue;
+    assert.doesNotMatch(line, /\bdcli\b|shim/i,
+      `same-backend guidance must not mention a dcli route: ${line}`);
+  }
+  for (const backend of BACKENDS) {
+    const occurrences = ruleContent.split('dcli-' + backend).length - 1;
+    assert.strictEqual(occurrences, 1,
+      `shared rule must mention dcli-${backend} only in its same-backend prohibition`);
+  }
 
   // Commands per backend
   for (const backend of BACKENDS) {

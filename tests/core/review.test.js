@@ -7,7 +7,7 @@ const { spawnSync } = require('child_process');
 
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { JobStore } = require('../../core/job-store');
-const { buildReviewPrompt, generateDiff, executeReview, getDroppedFilesFromDiff, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT } = require('../../core/commands/review');
+const { buildReviewPrompt, generateDiff, executeReview, getUntrackedFiles, getDroppedFilesFromDiff, sliceByBytes, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT } = require('../../core/commands/review');
 const { parseFindings, APPENDIX_MARKER, KNOWN_SEVERITIES } = require('../../core/findings');
 const { createGitRepoTemplate } = require('../helpers/git-repo-template');
 let repoTemplate;
@@ -495,6 +495,161 @@ await withTempDir(async (dir) => {
   assert.ok('untracked_warning' in output.envelope, 'envelope must have untracked_warning field');
   console.log('PASS: review test 17 — executeReview envelope includes truncation_info');
 });
+
+// ===========================================================================
+// 18. generateDiff — large source diff is truncated, not reported as ENOBUFS
+// ===========================================================================
+await withTempDir(async (dir) => {
+  initGitRepo(dir);
+  const FILE_COUNT = 5;
+  for (let i = 1; i <= FILE_COUNT; i++) {
+    fs.writeFileSync(path.join(dir, `oversize${i}.js`), 'old\n', 'utf8');
+  }
+  gitAddCommit(dir, 'initial');
+
+  const largeContent = 'new\n'.repeat(13000);
+  for (let i = 1; i <= FILE_COUNT; i++) {
+    fs.writeFileSync(path.join(dir, `oversize${i}.js`), largeContent, 'utf8');
+  }
+
+  const info = generateDiff({ repoRoot: dir, scope: 'working', embedDiff: true });
+  assert.strictEqual(info.diff_status, 'ok', 'a diff larger than the review cap must still be captured');
+  assert.ok(info.truncated, 'large source diff must be truncated after capture');
+  assert.ok(info.totalBytes > DIFF_CAP_BYTES, 'fixture must exceed the review diff cap');
+  console.log('PASS: review test 18 — oversized source diff is bounded and classified');
+});
+
+// ===========================================================================
+// 19. generateDiff — external diff helpers are disabled
+// ===========================================================================
+if (process.platform === 'win32') {
+  await withTempDir(async (dir) => {
+    initGitRepo(dir);
+    fs.writeFileSync(path.join(dir, 'tracked.txt'), 'before\n', 'utf8');
+    gitAddCommit(dir, 'initial');
+    fs.writeFileSync(path.join(dir, 'tracked.txt'), 'after\n', 'utf8');
+
+    const marker = path.join(dir, 'external-diff-ran.txt');
+    const helper = path.join(dir, 'external-diff.cmd');
+    fs.writeFileSync(helper, `@echo off\r\necho invoked > "${marker}"\r\nexit /b 0\r\n`, 'utf8');
+    const savedExternal = process.env.GIT_EXTERNAL_DIFF;
+    try {
+      process.env.GIT_EXTERNAL_DIFF = helper;
+      const info = generateDiff({ repoRoot: dir, scope: 'working', embedDiff: true });
+      assert.strictEqual(info.diff_status, 'ok', 'diff must remain usable with an external helper configured');
+      assert.ok(!fs.existsSync(marker), 'review diff must not launch external diff helpers');
+      console.log('PASS: review test 19 — external diff helpers are disabled');
+    } finally {
+      if (savedExternal === undefined) delete process.env.GIT_EXTERNAL_DIFF;
+      else process.env.GIT_EXTERNAL_DIFF = savedExternal;
+    }
+  });
+}
+
+// ===========================================================================
+// 20. generateDiff — truncation names files beyond the captured prefix
+// ===========================================================================
+await withTempDir(async (dir) => {
+  initGitRepo(dir);
+  fs.writeFileSync(path.join(dir, 'aaa-large.js'), 'old\n', 'utf8');
+  fs.writeFileSync(path.join(dir, 'zzz-later.js'), 'old\n', 'utf8');
+  gitAddCommit(dir, 'initial');
+
+  fs.writeFileSync(path.join(dir, 'aaa-large.js'), 'new\n'.repeat(30000), 'utf8');
+  fs.writeFileSync(path.join(dir, 'zzz-later.js'), 'later\n', 'utf8');
+
+  const info = generateDiff({ repoRoot: dir, scope: 'working', embedDiff: true });
+  assert.ok(info.truncated, 'large diff must be truncated');
+  assert.ok(info.truncationInfo.includes('zzz-later.js'),
+    'truncation info must name changed files whose diff starts beyond the captured prefix');
+console.log('PASS: review test 20 — truncation names later files');
+});
+
+// ===========================================================================
+// 21. generateDiff — UTF-8 byte truncation names a partially shown file
+// ===========================================================================
+await withTempDir(async (dir) => {
+  initGitRepo(dir);
+  const multiByteFile = 'aaa-multibyte.js';
+  const completeFile = 'bbb-complete.js';
+  const largeFile = 'zzz-large.js';
+  fs.writeFileSync(path.join(dir, multiByteFile), 'old\n', 'utf8');
+  fs.writeFileSync(path.join(dir, completeFile), 'old\n', 'utf8');
+  fs.writeFileSync(path.join(dir, largeFile), 'old\n', 'utf8');
+  gitAddCommit(dir, 'initial');
+
+  fs.writeFileSync(path.join(dir, multiByteFile), 'new\n' + '中'.repeat(20000), 'utf8');
+  fs.writeFileSync(path.join(dir, completeFile), 'new\n' + 'a'.repeat(30000), 'utf8');
+  fs.writeFileSync(path.join(dir, largeFile), 'new\n'.repeat(30000), 'utf8');
+
+  const info = generateDiff({ repoRoot: dir, scope: 'working', embedDiff: true });
+  assert.ok(info.truncated, 'multi-byte diff fixture must be truncated');
+  assert.ok(info.truncationInfo.includes(largeFile), 'truncation info must name the partially shown file');
+  assert.ok(!info.truncationInfo.includes(completeFile),
+    'truncation info must not report a complete ASCII file after multi-byte content');
+  console.log('PASS: review test 21 — UTF-8 boundaries preserve complete-file coverage');
+});
+
+// ===========================================================================
+// 22. generateDiff — special filenames are matched without header parsing
+// ===========================================================================
+await withTempDir(async (dir) => {
+  initGitRepo(dir);
+  const completeFile = 'aaa special.js';
+  const largeFile = 'zzz-large.js';
+  fs.writeFileSync(path.join(dir, completeFile), 'old\n', 'utf8');
+  fs.writeFileSync(path.join(dir, largeFile), 'old\n', 'utf8');
+  gitAddCommit(dir, 'initial');
+
+  fs.writeFileSync(path.join(dir, completeFile), 'new\n', 'utf8');
+  fs.writeFileSync(path.join(dir, largeFile), 'new\n'.repeat(30000), 'utf8');
+
+  const info = generateDiff({ repoRoot: dir, scope: 'working', embedDiff: true });
+  assert.ok(info.truncated, 'special filename fixture must be truncated');
+  assert.ok(info.truncationInfo.includes(largeFile), 'truncation info must name the large file');
+  assert.ok(!info.truncationInfo.includes(completeFile),
+    'truncation info must not falsely report a complete special filename');
+  console.log('PASS: review test 22 — special filenames are matched correctly');
+});
+
+// ===========================================================================
+// 23. getDroppedFilesFromDiff — combined diff headers count as sections
+// ===========================================================================
+{
+  const combinedDiff = 'diff --cc conflict.js\n' + 'x'.repeat(DIFF_CAP_BYTES + 1);
+  assert.deepStrictEqual(
+    getDroppedFilesFromDiff(combinedDiff, 100, ['conflict.js']),
+    ['conflict.js'],
+    'combined diff sections must be mapped to their file names'
+  );
+  console.log('PASS: review test 23 — combined diff headers are recognized');
+}
+
+// ===========================================================================
+// 24. sliceByBytes — never emits a replacement character at the cutoff
+// ===========================================================================
+{
+  const text = 'a'.repeat(DIFF_CAP_BYTES - 1) + '中';
+  const sliced = sliceByBytes(text, DIFF_CAP_BYTES);
+  assert.ok(!sliced.includes('\uFFFD'), 'UTF-8 truncation must not emit U+FFFD');
+  assert.ok(Buffer.byteLength(sliced, 'utf8') <= DIFF_CAP_BYTES, 'slice must stay within the byte cap');
+  console.log('PASS: review test 24 — UTF-8 slicing avoids replacement characters');
+}
+
+// ===========================================================================
+// 25. getUntrackedFiles — NUL-separated paths preserve embedded newlines
+// ===========================================================================
+if (process.platform !== 'win32') {
+  await withTempDir(async (dir) => {
+    initGitRepo(dir);
+    const file = 'untracked\nname.js';
+    fs.writeFileSync(path.join(dir, file), 'new\n', 'utf8');
+
+    assert.deepStrictEqual(getUntrackedFiles(dir), [file],
+      'untracked path enumeration must preserve embedded newlines');
+    console.log('PASS: review test 25 — untracked paths preserve embedded newlines');
+  });
+}
 
 // ===========================================================================
 // Summary

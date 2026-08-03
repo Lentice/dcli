@@ -18,6 +18,15 @@ and get a durable, inspectable result back. Three backends behind three shim com
 
 **Status:** design complete, no code written. Start at [`docs/tickets/`](docs/tickets/).
 
+## Native subagent routing
+
+`dcli` is only for intentional cross-backend delegation; its durable job
+guarantees do not replace a same-backend native subagent. If the current agent needs a subagent from its own backend, use the
+backend's native subagent mechanism directly: Codex native subagents for Codex,
+Claude's native Task/subagent capability for Claude Code, and opencode's native
+task/agent capability for opencode. Do not invoke the matching `dcli-*` shim for
+that same-backend case; it adds an unnecessary wrapper and can create recursion.
+
 ## Where to read what
 
 `README.md` is **user-facing only**. Never use it as a technical source when developing.
