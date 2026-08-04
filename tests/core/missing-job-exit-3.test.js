@@ -16,7 +16,8 @@ const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 
 const CLI = path.resolve(__dirname, '..', '..', 'cli', 'dcli.js');
-const MISSING_ID = '20990101T000000Z-doesnotex';
+// Well-formed (must pass the CLI's id-shape guard) but absent.
+const MISSING_ID = '20990101T000000Z-doesnotx';
 
 function run(args, stateRoot) {
   return spawnSync(process.execPath, [CLI, '--backend', 'fake', ...args], {

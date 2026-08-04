@@ -15,12 +15,12 @@ function generateJobId() {
   return `${ts}-${rand}`;
 }
 
-// The shape generateJobId() produces: `<UTC compact timestamp>-<8 lowercase
-// alphanumerics>`. The suffix length is deliberately loose here — the
-// timestamp prefix is what discriminates a dcli id from a foreign one, and a
-// check that also polices the suffix width would reject nothing extra that
-// matters while making the id format harder to widen later.
-const JOB_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{4,16}$/;
+// Exactly the shape generateJobId() produces: `<UTC compact timestamp>-<8
+// lowercase alphanumerics>`. Anything wider would accept ids dcli cannot mint,
+// which is the opposite of what the check is for. The calendar validity of the
+// timestamp is not checked: a well-shaped id that names no job is correctly
+// "not found" (exit 3), and only the shape distinguishes a foreign id.
+const JOB_ID_PATTERN = /^\d{8}T\d{6}Z-[a-z0-9]{8}$/;
 
 // An id minted by some other runtime can never name a dcli job, and reporting
 // it as "not found" sends the caller hunting through a job store that was never

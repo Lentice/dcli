@@ -42,6 +42,17 @@ try {
     console.log(`PASS: ${command} rejects a foreign job id by shape`);
   }
 
+  // The accepted shape is exactly what generateJobId() mints — a wider one
+  // would admit ids dcli cannot produce, which is what the guard exists to
+  // reject. Suffix width is part of the shape.
+  for (const wrongWidth of ['20260804T123456Z-abcdefg', '20260804T123456Z-abcdefghi']) {
+    const r = run(['--backend', 'fake', 'status', wrongWidth], stateRoot);
+    assert.strictEqual(r.status, 2,
+      `${wrongWidth}: a suffix dcli cannot mint must be exit 2, got ${r.status}`);
+    assert.ok(/Not a dcli job ID/.test(r.stderr), `${wrongWidth}: got ${r.stderr}`);
+  }
+  console.log('PASS: only the exact minted id width is accepted');
+
   // A well-formed but absent id still reports not-found (exit 3), unchanged.
   const absent = run(['--backend', 'fake', 'status', '20990101T000000Z-abcdefgh'], stateRoot);
   assert.strictEqual(absent.status, 3,
