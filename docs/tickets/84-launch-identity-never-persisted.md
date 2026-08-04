@@ -1,6 +1,6 @@
 # Ticket 84 — launch identity is never persisted, so `cancel` kills nothing and no death can be proven
 
-**Status:** open (2026-08-04)
+**Status:** done (2026-08-04)
 **Tier:** blocker. This is AGENTS.md mistake #5 in the shipped code, and it produces both failures that
 rule was written to prevent — simultaneously.
 **Blocked by:** none — can start immediately.
@@ -64,26 +64,37 @@ reports a real pid and identity instead of `pid=null identity=-`.
 
 ## Acceptance criteria
 
-- [ ] **A.** After `submit` returns, the record carries a `worker_pid` and a `worker_identity` for the
+- [x] **A.** After `submit` returns, the record carries a `worker_pid` and a `worker_identity` for the
   spawned worker. Asserted on the real spawn path, not by writing the fields in the test.
-- [ ] **B.** `cancel` on a live submitted job terminates the worker's process tree and confirms it — exit
+- [x] **B.** `cancel` on a live submitted job terminates the worker's process tree and confirms it — exit
   0 with a terminal state, not `termination_unconfirmed`.
-- [ ] **C.** Killing a worker out-of-band leaves a job that the next read resolves to `interrupted`,
+- [x] **C.** Killing a worker out-of-band leaves a job that the next read resolves to `interrupted`,
   preserving `failure_reason` and `backend_session_id`.
-- [ ] **D.** The identity is durable across a crash of the launching process between spawn and the end of
+- [x] **D.** The identity is durable across a crash of the launching process between spawn and the end of
   the launch sequence: a job whose launcher dies immediately after the child exists is still cancellable
   and still reconcilable.
-- [ ] **E.** Reconciliation prefers identity over bare pid, and a reused pid whose identity does not
+- [x] **E.** Reconciliation prefers identity over bare pid, and a reused pid whose identity does not
   match is treated as "worker gone", not "worker alive".
-- [ ] **F.** A test asserts the child's own observable behaviour, never that `spawn` did not throw.
-- [ ] **G.** `npm run check` green; docs updated in the same commit.
+- [x] **F.** A test asserts the child's own observable behaviour, never that `spawn` did not throw.
+- [x] **G.** `npm run check` green; docs updated in the same commit.
 
 ## Notes
 
 - Ticket 81's Notes record a sibling observation from the other direction: `status.json.backend_pid`
-  stays `null` even after the adapter emits a `started` fact carrying a real pid. Same class, different
-  field — decide while working here whether the backend pid belongs in this fix or its own ticket, and
-  record the answer.
+  stays `null` even after the adapter emits a `started` fact carrying a real pid. This ticket folds that
+  field into the same fix: the shared engine now journals `backend_pid` and `backend_session_id` for a
+  `started` fact, for both foreground attempts and detached workers.
 - The synchronous `run` path has the same gap for a different reason: its "worker" is the CLI process
-  itself, so a `run` killed by an outer tool's timeout leaves the same unprovable record. Decide whether
-  `run` journals its own identity here, and say so in the Notes either way.
+  itself, so a `run` killed by an outer tool's timeout leaves the same unprovable record. It already
+  journals its own process identity before adapter startup; no additional run-path change was needed.
+
+## Notes — 2026-08-04 implementation
+
+- `submit` journals the detached child's pid, OS creation identity when available, and execution token
+  immediately after `spawn` returns, before waiting for worker startup. The token is passed to the worker
+  and retained across admission queue re-launches.
+- Queued workers clear the exited launcher's identity and persist the replacement child's identity before
+  it can be lost. If identity persistence fails, the child is terminated rather than left untracked.
+- `tests/core/submit-launch-identity.test.js` delays worker startup, observes the real child pid and
+  backend pid on disk, and confirms cancellation through the public command. It asserts live process
+  behaviour and never treats "spawn did not throw" as success.

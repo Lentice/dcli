@@ -3,7 +3,7 @@ const path = require('path');
 const { writeTextFileAtomic, writeJsonFileAtomic, appendJsonLine } = require('./fs-text');
 const { maybeInject } = require('./inject-points');
 const { reduce, TERMINAL } = require('./reducer');
-const { isProcessAlive, isSameProcessAlive, parseWorkerIdentity } = require('./process-identity');
+const { isProcessAlive, isSameProcessAlive, parseWorkerIdentity, workerIdentityDetail } = require('./process-identity');
 const { LockManager, LOCK_SCOPES } = require('./locking');
 
 const ATOMIC_WRITE_MAX_RETRIES = 10;
@@ -153,6 +153,7 @@ class JobStore {
         const d = entry.detail || {};
         if (d.started_at !== undefined) updated.started_at = d.started_at;
         if (d.finished_at !== undefined) updated.finished_at = d.finished_at;
+        if (d.execution_token !== undefined) updated.execution_token = d.execution_token;
         if (d.worker_pid !== undefined) updated.worker_pid = d.worker_pid;
         if (d.worker_identity !== undefined) updated.worker_identity = d.worker_identity;
         if (d.backend_pid !== undefined) updated.backend_pid = d.backend_pid;
@@ -586,6 +587,20 @@ class JobStore {
     } finally {
       this._jobLocks.release(lock);
     }
+  }
+
+  recordWorkerLaunch({ jobId, repoKey, attempt, from, pid, executionToken }) {
+    if (!Number.isInteger(pid) || pid <= 0) throw new Error('Worker launch returned no usable pid');
+    return this.journalTransition(jobId, repoKey, {
+      kind: 'attempt_state_changed',
+      attempt,
+      from,
+      to: null,
+      detail: {
+        ...workerIdentityDetail({ pid }),
+        execution_token: executionToken,
+      },
+    });
   }
 
   createAttemptDir({ repoKey, jobId, attemptNum }) {

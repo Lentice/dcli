@@ -18,13 +18,13 @@ if (process.env.DCLI_WORKER !== '1') {
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { resolveDeadline } = require('../deadlines');
 const { writeJsonFileAtomic } = require('../fs-text');
 const { persistCollectedResult, persistInitFiles, persistBackendEvents, persistFindings } = require('../result-artifact');
 const { tryDisposeAdapter, classifyTerminalFailure, terminalExitCode } = require('./index');
+const { persistStartedFact } = require('./attempt');
 const { reduce, TERMINAL } = require('../reducer');
-const { workerIdentityDetail } = require('../process-identity');
+const { generateExecutionToken, workerIdentityDetail } = require('../process-identity');
 
 // Must stay well under the reducer's 15s heartbeat-staleness threshold.
 const HEARTBEAT_INTERVAL_MS = 5000;
@@ -61,6 +61,7 @@ async function main() {
     journalFailure(store, null, repoKey, jobId, null, 'worker_startup_failed', `Cannot read params: ${err.message}`);
     process.exit(1);
   }
+  const executionToken = params.executionToken || generateExecutionToken();
 
   // Read prompt
   let prompt;
@@ -82,6 +83,7 @@ async function main() {
     const repoKey = entry.repoKey || 'unknown';
     const workerLogPath = path.join(stateRoot, 'jobs', repoKey, entry.jobId, 'attempts', '1', 'worker.log');
     const workerLog = fs.openSync(workerLogPath, 'a');
+    const queuedExecutionToken = entry.executionToken || executionToken;
     let child;
     try {
       child = spawn(process.execPath, [workerPath], {
@@ -103,6 +105,15 @@ async function main() {
     } finally {
       fs.closeSync(workerLog);
     }
+    try {
+      store.recordWorkerLaunch({
+        jobId: entry.jobId, repoKey, attempt: 1, from: 'queued', pid: child.pid,
+        executionToken: queuedExecutionToken,
+      });
+    } catch (err) {
+      try { child.kill(); } catch {}
+      throw err;
+    }
     child.unref();
   });
 
@@ -113,13 +124,17 @@ async function main() {
       attempt: null,
       from: 'created',
       to: 'queued',
-      detail: { phase: 'queued', queue_reason: slotResult.reason },
+      detail: {
+        phase: 'queued', queue_reason: slotResult.reason,
+        worker_pid: null, worker_identity: null,
+      },
     });
     if (queueClaimPath && fs.existsSync(queueClaimPath)) {
       try { fs.renameSync(queueClaimPath, path.join(stateRoot, 'queue', `${jobId}.json`)); } catch {}
     } else {
       admission.enqueueJob(backendName, jobId, {
         repoKey, repoRoot, hardTimeoutMs: hardTimeoutMsRaw > 0 ? hardTimeoutMsRaw : 0,
+        executionToken,
       });
     }
     process.exit(0);
@@ -191,7 +206,6 @@ async function main() {
   });
 
   // Journal attempt_created
-  const executionToken = 'tok-' + crypto.randomBytes(16).toString('hex');
   store.journalTransition(jobId, repoKey, {
     kind: 'attempt_created',
     attempt: attemptNum,
@@ -356,6 +370,7 @@ async function main() {
     for await (const fact of raceObserve(adapter.Observe(attempt), deadline)) {
       if (hardTimedOut || cancelled) throw null;
       facts.push(fact);
+      persistStartedFact(store, repoKey, jobId, attemptNum, fact);
 
       if (fact.type === 'process_exited') {
         clearTimeout(hardTimeoutTimer);

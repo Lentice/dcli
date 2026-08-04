@@ -6,6 +6,7 @@ const { buildEnvelope, loadJobOrThrow } = require('./index');
 const { prepareBackend } = require('./attempt');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { persistInitFiles } = require('../result-artifact');
+const { generateExecutionToken } = require('../process-identity');
 
 async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, stateRoot, backend }) {
   stateRoot = stateRoot || store._stateRoot;
@@ -36,6 +37,7 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
   const inheritedGroup = group || (parentStatus ? parentStatus.group : null);
   const inheritedLabel = label || (parentStatus ? parentStatus.label : null);
   const inheritedAccess = access || (parentStatus ? parentStatus.access : null) || 'read-only';
+  const executionToken = generateExecutionToken();
 
   store.createJob({
     jobId, repoKey, repoRoot,
@@ -66,6 +68,7 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     effort: effort || null,
     mode: 'run',
     hardTimeoutMs: hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0,
+    executionToken,
     _adapterScript: adapter.script || null,
   });
 
@@ -90,12 +93,15 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
   });
 
   // Spawn detached worker (admission slot acquired by the worker itself)
-  await spawnWorker({ stateRoot, backend: backend || resolvedBackend, jobId, repoKey, repoRoot, hardTimeoutSec });
+  await spawnWorker({
+    store, stateRoot, backend: backend || resolvedBackend, jobId, repoKey, repoRoot, hardTimeoutSec,
+    executionToken,
+  });
 
   return { jobId };
 }
 
-function spawnWorker({ stateRoot, backend, jobId, repoKey, repoRoot, hardTimeoutSec }) {
+function spawnWorker({ store, stateRoot, backend, jobId, repoKey, repoRoot, hardTimeoutSec, executionToken }) {
   const workerScript = path.resolve(__dirname, 'worker.js');
   const workerLog = fs.openSync(path.join(stateRoot, 'jobs', repoKey, jobId, 'attempts', '1', 'worker.log'), 'a');
   const hardTimeoutMs = hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0;
@@ -121,6 +127,13 @@ function spawnWorker({ stateRoot, backend, jobId, repoKey, repoRoot, hardTimeout
     });
   } finally {
     fs.closeSync(workerLog);
+  }
+
+  try {
+    store.recordWorkerLaunch({ jobId, repoKey, attempt: 1, from: 'created', pid: child.pid, executionToken });
+  } catch (err) {
+    try { child.kill(); } catch {}
+    throw err;
   }
 
   return new Promise((resolve) => {

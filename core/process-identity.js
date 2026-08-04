@@ -211,8 +211,18 @@ function getDurableOwnIdentity() {
  *
  * @returns {{ worker_pid: number, worker_identity: string }}
  */
-function workerIdentityDetail({ durable = true } = {}) {
-  const id = getOwnIdentity();
+function workerIdentityDetail({ durable = true, pid = process.pid } = {}) {
+  const foreignStartTime = pid === process.pid ? null : getProcessStartTime(pid);
+  const id = pid === process.pid
+    ? getOwnIdentity()
+    : {
+      pid,
+      ppid: 0,
+      startTime: foreignStartTime || new Date().toISOString(),
+      startTimeSource: foreignStartTime ? 'os' : 'node',
+      imagePath: process.execPath,
+      hostname: os.hostname(),
+    };
   // Identity is pid + creation time, not a bare pid: a reused pid otherwise
   // answers "the worker is alive" for an unrelated process and the abandoned
   // job never reaches a terminal state. Only the OS knows the real creation
@@ -220,7 +230,7 @@ function workerIdentityDetail({ durable = true } = {}) {
   // runs once when an attempt starts, never on a read path. Best-effort: if
   // the query fails we record Node's clock, tagged as such, and readers fall
   // back to bare liveness rather than comparing incomparable values.
-  const durableIdentity = durable ? getDurableOwnIdentity() : id;
+  const durableIdentity = pid === process.pid && durable ? getDurableOwnIdentity() : id;
   const startTime = durableIdentity.startTimeSource === 'os'
     ? OS_START_TIME_TAG + durableIdentity.startTime
     : id.startTime;

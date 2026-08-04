@@ -288,6 +288,13 @@ alive. Callers must key off `state`, and `status` must surface a warning when
 sentinel is absent, the heartbeat is stale, or the backend process no longer exists while result
 and event evidence indicate a terminal outcome. Heartbeat interval: 5 s.
 
+**Launch identity.** A detached `submit` worker is recorded immediately after process creation, before
+the launcher waits for worker startup. The journal carries its `worker_pid`, `worker_identity` (pid plus
+creation time when the OS can report it), and `execution_token`; admission queue re-launches replace the
+identity before the replacement can be lost. A `started` fact also journals the shared `backend_pid`
+and `backend_session_id` fields so live records expose backend ownership without a backend-specific
+condition in `core/`.
+
 ---
 
 ## 7. Exit-code contract

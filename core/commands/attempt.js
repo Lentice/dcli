@@ -201,6 +201,7 @@ async function runAttempt({
     for await (const fact of raceObserve(adapter.Observe(attempt), hardDeadline)) {
       if (hardTimedOut) throw null;
       facts.push(fact);
+      persistStartedFact(store, repoKey, jobId, attemptNum, fact);
 
       if (fact.type === 'process_exited') {
         const status = store.regenerateStatus({ repoKey, jobId });
@@ -327,7 +328,22 @@ async function runAttempt({
   };
 }
 
-module.exports = { runAttempt, prepareBackend };
+module.exports = { runAttempt, prepareBackend, persistStartedFact };
+
+function persistStartedFact(store, repoKey, jobId, attemptNum, fact) {
+  if (!fact || fact.type !== 'started') return;
+  const detail = {};
+  if (fact.backend_pid !== undefined) detail.backend_pid = fact.backend_pid;
+  if (fact.backend_session_id !== undefined) detail.backend_session_id = fact.backend_session_id;
+  if (Object.keys(detail).length === 0) return;
+  store.journalTransition(jobId, repoKey, {
+    kind: 'attempt_state_changed',
+    attempt: attemptNum,
+    from: 'running',
+    to: null,
+    detail,
+  });
+}
 
 const HARD_TIMEOUT_ERROR = Symbol('hard_timeout');
 
