@@ -207,6 +207,8 @@ The wrapper command is:
 dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
 
+`N` must be a positive integer; `d` means days and `h` means hours.
+
 For eligible terminal implement jobs it removes the job record, isolated
 worktree, and git registration together. It also discovers orphan worktrees
 under the dcli state root. `--dry-run` names each worktree and reports its

@@ -1,6 +1,6 @@
 # Ticket 83 — `--older-than <Nh>` is accepted by the parser and then always rejected
 
-**Status:** open (2026-08-04)
+**Status:** done (2026-08-04)
 **Tier:** small, but it is documented behaviour that cannot work, in three places at once.
 **Blocked by:** none — can start immediately.
 
@@ -43,15 +43,19 @@ in the ticket Notes — a floor with no recorded rationale is the thing that pro
 
 ## Acceptance criteria
 
-- [ ] **A.** A single validation site decides what `--older-than` accepts. No value passes one layer and
+- [x] **A.** A single validation site decides what `--older-than` accepts. No value passes one layer and
   fails the next.
-- [ ] **B.** `--help`, the command's own error strings, `docs/reference/*`, and the generated skills all
+- [x] **B.** `--help`, the command's own error strings, `docs/reference/*`, and the generated skills all
   describe exactly the accepted units. No example in any of them is a value the tool rejects.
-- [ ] **C.** `--older-than 0`, `0d`, `0h`, a bare `--older-than` with no value, and a non-numeric value
+- [x] **C.** `--older-than 0`, `0d`, `0h`, a bare `--older-than` with no value, and a non-numeric value
   are each still rejected, with the failure's identity asserted — not merely that something threw.
-- [ ] **D.** `npm run check` green; docs regenerated and installed copies byte-match, in the same commit.
+- [x] **D.** `npm run check` green; docs regenerated and installed copies byte-match, in the same commit.
 
 ## Notes
 
 - 2026-08-04: found while retiring a state root. `--older-than 1h` was the natural way to sweep jobs
   created earlier the same day, which is exactly the case the accepted-but-refused unit describes.
+- 2026-08-04: chose to support hours. The positive-integer validation prevents `0` from sweeping every
+  job, while allowing `1h`/`12h` makes same-day retention useful for jobs that finish in minutes.
+- 2026-08-04: implemented one shared duration validator for argument parsing and cleanup execution;
+  generated integration files were rebuilt from source.

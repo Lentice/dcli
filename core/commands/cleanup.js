@@ -8,7 +8,7 @@ const { TERMINAL } = require('../reducer');
 
 /**
  * Parse a duration string like "30d" or "12h" into milliseconds.
- * Validates format and enforces a minimum of 1 day.
+ * Validates format and requires a positive integer value.
  * @param {string} str
  * @returns {number} milliseconds
  */
@@ -29,16 +29,14 @@ function parseDuration(str) {
   const value = parseInt(match[1], 10);
   const unit = match[2];
   const msPerUnit = unit === 'd' ? 86400000 : 3600000;
-  const totalMs = value * msPerUnit;
 
-  // Enforce minimum of 1 day
-  if (totalMs < 86400000) {
-    const err = new Error(`--older-than "${str}" is below the minimum of 1 day`);
+  if (value < 1) {
+    const err = new Error(`--older-than value must be at least 1, got "${str}"`);
     err.exitCode = 2;
     throw err;
   }
 
-  return totalMs;
+  return value * msPerUnit;
 }
 
 /**

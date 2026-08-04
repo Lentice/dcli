@@ -73,6 +73,8 @@ dcli-codex doctor --json
 dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
 
+`N` must be a positive integer; `d` means days and `h` means hours.
+
 Removes aged terminal job records and their isolated worktrees/git
 registrations, and removes orphan worktrees under the dcli state root. Use
 `--dry-run` first: it names each worktree and reports its bytes. Worktrees

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { generateJobId, isJobId } = require('../job-id');
 const { resolveDeadline } = require('../deadlines');
+const { parseDuration } = require('./cleanup');
 
 /**
  * Load a job's status, or throw the canonical exit-3 "not found" error.
@@ -318,17 +319,7 @@ function parseArgs(argv) {
           case '--label': result.label = val; break;
           case '--model': result.model = val; break;
           case '--older-than':
-            if (!/^\d+[dh]$/.test(val)) {
-              const err = new Error(`Invalid --older-than format: "${val}". Use e.g. "30d" or "12h"`);
-              err.exitCode = 2;
-              throw err;
-            }
-            const ageNum = parseInt(val, 10);
-            if (ageNum < 1) {
-              const err = new Error(`--older-than value must be at least 1, got "${val}"`);
-              err.exitCode = 2;
-              throw err;
-            }
+            parseDuration(val);
             result.olderThan = val;
             break;
           case '--max-bytes':

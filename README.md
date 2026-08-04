@@ -103,7 +103,7 @@ dcli-opencode resume <job-id> --kind retry_attempt --hard-timeout-sec 600 "Re-ru
 # resume — fork from a completed result
 dcli-opencode resume <job-id> --kind fork_from_artifacts --hard-timeout-sec 600 "Build on what you found"
 
-# preview and then remove aged jobs and their worktree artifacts
+# preview and then remove aged jobs and their worktree artifacts (days or hours)
 dcli-codex cleanup --older-than 1d --dry-run
 dcli-codex cleanup --older-than 1d
 ```

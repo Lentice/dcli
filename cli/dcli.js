@@ -55,7 +55,7 @@ Options:
   --json                    JSON output envelope
   --timeout-sec <n>         Wait timeout in seconds (default: ${WAIT_TIMEOUT_SEC})
   --all                     Wait for all matching jobs
-  --older-than <Nd|Nh>      Retention threshold for cleanup
+  --older-than <Nd|Nh>      Retention threshold (positive days or hours)
   --dry-run                 Preview cleanup without deleting
   --scrub-session-ids       Blank recorded backend session ids
   --max-bytes <n>           Maximum bytes for tail (default: 4096)

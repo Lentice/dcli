@@ -6,6 +6,7 @@ const os = require('os');
 
 const { JobStore } = require('../../core/job-store');
 const { LockManager } = require('../../core/locking');
+const { assertRealFailure } = require('../helpers/assert-failure');
 
 const TERMINAL = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
@@ -279,35 +280,59 @@ await withTempDir(async (dir) => {
   console.log('PASS: cleanup test 1 — --dry-run deletes nothing');
 });
 
-// 9. Invalid --older-than is exit 2
+// 9. Hours are accepted by both argument parsing and cleanup conversion
 {
   const { parseArgs } = require('../../core/commands/index');
+  const { parseDuration } = require('../../core/commands/cleanup');
+  const parsed = parseArgs(['--backend', 'fake', 'cleanup', '--older-than', '12h']);
+  assert.strictEqual(parsed.olderThan, '12h', '12h must be accepted by argument parsing');
+  assert.strictEqual(parseDuration(parsed.olderThan), 12 * 60 * 60 * 1000,
+    '12h must be accepted by cleanup execution');
+  console.log('PASS: cleanup test 2 — 12h is accepted end to end');
+}
+
+// 10. Invalid --older-than values carry an identifiable validation failure
+{
+  const { parseArgs } = require('../../core/commands/index');
+
   try {
     parseArgs(['--backend', 'fake', 'cleanup', '--older-than', 'invalid']);
     assert.fail('Should have thrown for invalid --older-than');
   } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'invalid --older-than must exit 2');
+    assertRealFailure(err, { exitCode: 2, match: /Invalid --older-than format/ }, 'non-numeric --older-than');
   }
-  console.log('PASS: cleanup test 2 — invalid --older-than is exit 2');
-}
 
-// 10. Retention floor: 0 or negative is exit 2
-{
-  const { parseArgs } = require('../../core/commands/index');
   try {
-    parseArgs(['--backend', 'fake', 'cleanup', '--older-than', '0d']);
-    assert.fail('Should have thrown for 0d');
+    parseArgs(['--backend', 'fake', 'cleanup', '--older-than', '0']);
+    assert.fail('Should have thrown for bare 0');
   } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'retention 0 must exit 2');
+    assertRealFailure(err, { exitCode: 2, match: /Invalid --older-than format/ }, 'unitless --older-than');
+  }
+
+  for (const value of ['0d', '0h']) {
+    try {
+      parseArgs(['--backend', 'fake', 'cleanup', '--older-than', value]);
+      assert.fail(`Should have thrown for ${value}`);
+    } catch (err) {
+      assertRealFailure(err, { exitCode: 2, match: /at least 1/ }, `zero --older-than ${value}`);
+    }
+  }
+
+  try {
+    parseArgs(['--backend', 'fake', 'cleanup', '--older-than']);
+    assert.fail('Should have thrown for missing --older-than value');
+  } catch (err) {
+    assertRealFailure(err, { exitCode: 2, match: /requires a value/ }, 'missing --older-than value');
   }
 
   try {
     parseArgs(['--backend', 'fake', 'cleanup', '--older-than', '-1d']);
     assert.fail('Should have thrown for negative');
   } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'negative retention must exit 2');
+    assertRealFailure(err, { exitCode: 2, match: /Invalid --older-than format/ }, 'negative retention');
   }
-  console.log('PASS: cleanup test 3 — retention floor ≥1');
+
+  console.log('PASS: cleanup test 3 — invalid --older-than values are rejected');
 }
 
 // 11. Only terminal jobs are eligible
@@ -337,7 +362,7 @@ await withTempDir(async (dir) => {
   const { executeCleanup } = require('../../core/commands/cleanup');
   const result = await executeCleanup({ store });
   assert.strictEqual(result.removed, 1, 'only terminal job should be removed');
-  console.log('PASS: cleanup test 4 — only terminal jobs eligible');
+  console.log('PASS: cleanup test 5 — only terminal jobs eligible');
 });
 
 // 12. Per-job lock: removal takes lock and re-checks
