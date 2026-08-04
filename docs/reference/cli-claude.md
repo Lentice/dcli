@@ -200,6 +200,7 @@ adapter for this backend, not delegated as it can be for Codex.
 | structured output | `--json-schema <inline schema>` (works; still not a shared flag) |
 | cost guard | `--max-budget-usd`, `--max-turns` |
 | auth remediation | `claude auth` / `claude setup-token` |
+| dcli doctor live smoke | `dcli-claude doctor` starts `claude -p`, sends a trivial request, and reports `ok`, `coverage`, and `live_smoke_timeout_sec`; timeout `0` is static-only |
 | cancellation | no graceful API — **process-tree kill only** (native agents excepted) |
 | interactive permission reply | **unverified** — possibly via `--input-format stream-json` |
 | recursion guard | `DCLI_WORKER=1` + `--safe-mode`/`--disable-slash-commands` (ADR-005) |

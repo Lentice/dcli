@@ -80,6 +80,10 @@ dcli-opencode wait --all --group <g> --timeout-sec <n> [--json]
 dcli-opencode doctor [--json]
 ```
 
+The command runs a bounded live smoke by default. Add
+`--live-smoke-timeout-sec <n>` to override the deadline, or use
+`--live-smoke-timeout-sec 0` for an explicitly reported static-only check.
+
 ### cleanup
 
 ```

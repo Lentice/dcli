@@ -235,6 +235,7 @@ runs opencode. Not used by the wrapper.
 | auth remediation | `opencode providers login` |
 | version detection | `opencode --version`, confirmed by `GET /global/health.version` |
 | doctor endpoint shape | `_runEndpointShapeProbes` checks `/global/health` (healthy + version shape), `/permission` (array), `/question` (array), `/session/status` (reachable) |
+| doctor live smoke | `dcli-opencode doctor` starts `opencode serve`, sends a trivial read-only request, and reports `ok`, `coverage`, and `live_smoke_timeout_sec`; `--live-smoke-timeout-sec 0` is static-only |
 | failure classification | Structured error events parsed via `_classifyBackendError`: `CreditsError` → `quota_or_rate_limit`; unmatched → `null` (no guessing); an unresolvable session status → `backend_status_unresolved` |
 | interaction handling | `GET /permission` and `GET /question` polled every `INTERACTION_POLL_MS` (2 s) independently of SSE; unattended interactions rejected with `reply: reject` and explanatory message, emitted as `backend_error` with `class_hint: permission_or_sandbox` |
 | structured output | **unavailable** — broken in 1.18.7 (study §8, ADR-006) |

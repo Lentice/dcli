@@ -209,7 +209,7 @@ class FakeAdapter {
   async LiveSmoke(timeoutMs) {
     const wait = this._script.behaviors && this._script.behaviors.liveSmokeWaitMs;
     if (wait) {
-      await new Promise(r => setTimeout(r, wait));
+      await this._interruptibleSleep(wait);
     }
     if (this._script.behaviors && this._script.behaviors.liveSmokeFail) {
       throw new Error(this._script.behaviors.liveSmokeFail);
@@ -219,7 +219,7 @@ class FakeAdapter {
   async _interruptibleSleep(ms) {
     const step = 50;
     while (ms > 0) {
-      if (this._cancelled) return;
+      if (this._cancelled || this._disposed) return;
       await new Promise(r => setTimeout(r, Math.min(step, ms)));
       ms -= step;
     }

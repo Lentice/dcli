@@ -5,6 +5,7 @@ const os = require('node:os');
 const { buildCmdInvocation } = require('./cmd-quoting');
 const { applyProcessLifecycle } = require('../shared/process-lifecycle');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
+const { runAdapterSmoke } = require('../../core/adapter-smoke');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
 const STARTUP_SENTINEL_MS = 10000;
@@ -620,6 +621,11 @@ class CodexAdapter {
     } catch {
       // codex doctor --json may not be available in all versions; non-fatal
     }
+  }
+
+  async LiveSmokeRequest(timeoutMs, repoPath) {
+    if (this._testMode) return;
+    return runAdapterSmoke(this, repoPath);
   }
 
   /**

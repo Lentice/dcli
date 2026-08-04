@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 
 const { FakeAdapter } = require('../../adapters/fake/adapter');
+const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-doc-test-'));
@@ -65,6 +66,33 @@ await withTempDir(async (dir) => {
   assert.ok(containmentProbe.detail.length > 0);
 });
 console.log('PASS: doctor test 1 — --json returns envelope with probe results');
+
+// ===========================================================================
+// 1b. The default doctor run includes the live smoke with its real deadline
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({
+    facts: [],
+    exitCode: 0,
+    declaredRungs: ['hard_kill'],
+  });
+
+  const { executeDoctor } = require('../../core/commands/doctor');
+  const result = await executeDoctor({
+    adapter,
+    stateRoot: dir,
+    repoPath: dir,
+    json: true,
+  });
+
+  const liveProbe = result.envelope.probes.find(p => p.name === 'live_smoke');
+  assert.ok(liveProbe, 'doctor without flags must run live_smoke');
+  assert.strictEqual(liveProbe.ok, true, 'default live smoke should pass for fake adapter');
+  assert.strictEqual(result.envelope.live_smoke_timeout_sec, 120,
+    'default live smoke timeout must use DOCTOR_LIVE_SMOKE_MS');
+  assert.strictEqual(result.envelope.coverage, 'full', 'default doctor coverage must be full');
+});
+console.log('PASS: doctor test 1b — live smoke runs by default with the default deadline');
 
 // ===========================================================================
 // 2. doctor --json returns its envelope on stdout even when probes fail
@@ -249,6 +277,8 @@ await withTempDir(async (dir) => {
   assert.ok(failProbe, 'live_smoke probe must be present');
   assert.strictEqual(failProbe.ok, false, 'live smoke must report ok: false on failure');
   assert.strictEqual(failProbe.status, 'failed', 'failure result must have status: failed');
+  assert.strictEqual(failProbe.failure_class, 'environment', 'generic backend failures are environment failures');
+  assert.strictEqual(failProbe.exit_code, 12, 'environment failures must use exit code 12');
   assert.ok(failProbe.detail.includes('adapter unavailable'), 'detail must mention the failure reason');
 
   // Verify the two outcomes are distinguishable
@@ -257,6 +287,63 @@ await withTempDir(async (dir) => {
   assert.notStrictEqual(liveProbe.status, failProbe.status, 'timeout and failure status values must differ');
 });
 console.log('PASS: doctor test 6 — live smoke timeout vs failure distinguishable');
+
+// ===========================================================================
+// 7. Explicit zero opts out and reports reduced coverage
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const adapter = new FakeAdapter({ facts: [], exitCode: 0 });
+  const { executeDoctor } = require('../../core/commands/doctor');
+  const result = await executeDoctor({
+    adapter,
+    stateRoot: dir,
+    repoPath: dir,
+    json: true,
+    liveSmokeTimeoutSec: 0,
+  });
+
+  const liveProbe = result.envelope.probes.find(p => p.name === 'live_smoke');
+  assert.ok(liveProbe, 'static-only doctor must report the skipped live_smoke probe');
+  assert.strictEqual(liveProbe.ok, true);
+  assert.strictEqual(liveProbe.status, 'skipped');
+  assert.ok(/skipped|static/i.test(liveProbe.detail), 'skip detail must explain reduced coverage');
+  assert.strictEqual(result.envelope.live_smoke_timeout_sec, 0);
+  assert.strictEqual(result.envelope.coverage, 'static_only');
+});
+console.log('PASS: doctor test 7 — explicit zero opts out and reports static-only coverage');
+
+// ===========================================================================
+// 8. A present executable that cannot serve a request is not healthy
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const savedPath = process.env.OPENCODE_PATH;
+  process.env.OPENCODE_PATH = process.execPath;
+  try {
+    const adapter = new OpencodeAdapter();
+    const { executeDoctor } = require('../../core/commands/doctor');
+    const startedAt = Date.now();
+    const result = await executeDoctor({
+      adapter,
+      stateRoot: dir,
+      repoPath: dir,
+      json: true,
+      liveSmokeTimeoutSec: 1,
+    });
+
+    const liveProbe = result.envelope.probes.find(p => p.name === 'live_smoke');
+    assert.ok(liveProbe, 'live_smoke probe must be present');
+    assert.strictEqual(liveProbe.ok, false,
+      'an executable which cannot serve a request must fail doctor');
+    assert.ok(liveProbe.detail.length > 0 && /serve|startup|exit|request/i.test(liveProbe.detail),
+      `failure detail must identify the backend failure: ${liveProbe.detail}`);
+    assert.ok(liveProbe.failure_class, 'failure must carry a classified failure class');
+    assert.ok(Date.now() - startedAt < 10000, 'startup death must fail fast');
+  } finally {
+    if (savedPath === undefined) delete process.env.OPENCODE_PATH;
+    else process.env.OPENCODE_PATH = savedPath;
+  }
+});
+console.log('PASS: doctor test 8 — present but unusable backend is non-ok and fails fast');
 
 // ===========================================================================
 // Summary

@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 const { getRedactor } = require('../../core/fs-text');
+const { runAdapterSmoke } = require('../../core/adapter-smoke');
 
 const PORT_RESERVE_MAX_RETRIES = 5;
 const PORT_RESERVE_TIMEOUT_MS = 5000;
@@ -1745,7 +1746,7 @@ class OpencodeAdapter {
     return results;
   }
 
-  async LiveSmoke(timeoutMs) {
+  async LiveSmoke() {
     if (this._testMode) return;
     const opencodePath = resolveOpencodePath();
     if (!opencodePath) {
@@ -1759,6 +1760,11 @@ class OpencodeAdapter {
     } catch (err) {
       throw new Error(`opencode not available: ${err.message}`);
     }
+  }
+
+  async LiveSmokeRequest(timeoutMs, repoPath) {
+    if (this._testMode) return;
+    return runAdapterSmoke(this, repoPath);
   }
 }
 

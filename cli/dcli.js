@@ -65,7 +65,7 @@ Options:
   --effort <s>              Codex/Claude effort level
   --access <s>              Access mode: read-only (default), workspace, full
   --mode <s>                run mode: run (default), implement (worktree-isolated)
-  --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: ${LIVE_SMOKE_TIMEOUT_SEC})
+  --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: ${LIVE_SMOKE_TIMEOUT_SEC}; 0 = static-only)
   --staged                      Review staged changes (git diff --staged)
   --working                     Review working tree changes (default)
   --range <base>..<head>        Review changes between base and head

@@ -106,6 +106,9 @@ dcli-opencode resume <job-id> --kind fork_from_artifacts --hard-timeout-sec 600 
 # preview and then remove aged jobs and their worktree artifacts (days or hours)
 dcli-codex cleanup --older-than 1d --dry-run
 dcli-codex cleanup --older-than 1d
+
+# diagnose the backend with a real bounded request (120 seconds by default)
+dcli-opencode doctor --json
 ```
 
 Every recipe carries an execution budget and a wait budget. That is not decoration — an unbounded wait once cost a
@@ -134,6 +137,9 @@ that are. Records are per repository, so read a job with the same `--repo` you s
   one flag with three meanings.
 - **A parse failure is never a pass.** An unreadable review appendix reports `malformed` — never "no findings".
 - **Reduced coverage is always announced.** Truncated diffs and excluded untracked files are reported, not silent.
+- **`doctor` runs a live smoke by default.** It starts the selected backend, sends a trivial read-only request, and
+  reports `ok`, `coverage`, and `live_smoke_timeout_sec` in its JSON envelope. Use
+  `--live-smoke-timeout-sec 0` only for an explicit static-only check; the output reports that reduced coverage.
 
 ## One thing it deliberately does not promise
 

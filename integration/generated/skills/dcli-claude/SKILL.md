@@ -63,6 +63,16 @@ The slash-command names are not CLI subcommands — `jobs` is not a command:
 A mistyped subcommand is rejected with a suggestion (`Unknown command: jobs —
 did you mean 'list'?`), not with usage text.
 
+## Doctor
+
+`<shim> doctor --json` runs the common checks and, by default, starts the selected
+backend and sends a trivial read-only request. The live smoke is bounded to 120
+seconds by default; `--live-smoke-timeout-sec <n>` overrides that deadline.
+Inspect `ok`, `coverage`, and `live_smoke_timeout_sec` in the envelope. A live
+smoke failure is non-ok and carries its failure class. Use
+`--live-smoke-timeout-sec 0` only when a static-only check is intentional; the
+response reports `coverage: static_only` and a skipped `live_smoke` probe.
+
 ## Job IDs
 
 A dcli job id is `<UTC compact timestamp>-<8 alphanumerics>`, e.g.
@@ -286,8 +296,11 @@ dcli-claude wait --all --group <g> --timeout-sec <n>
 ### doctor
 
 ```
-dcli-claude doctor --json
+dcli-claude doctor --json [--live-smoke-timeout-sec <n>]
 ```
+
+The command runs a bounded live smoke by default. Use timeout `0` only for an
+explicitly reported static-only check.
 
 ### cleanup
 

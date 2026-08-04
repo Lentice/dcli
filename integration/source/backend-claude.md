@@ -60,8 +60,11 @@ dcli-claude wait --all --group <g> --timeout-sec <n>
 ### doctor
 
 ```
-dcli-claude doctor --json
+dcli-claude doctor --json [--live-smoke-timeout-sec <n>]
 ```
+
+The command runs a bounded live smoke by default. Use timeout `0` only for an
+explicitly reported static-only check.
 
 ### cleanup
 

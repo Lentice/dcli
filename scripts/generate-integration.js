@@ -156,7 +156,7 @@ function generateTo(dir) {
         '',
         'System and backend health checks.',
         '',
-        `  dcli-${backend} doctor [--json]`,
+        `  dcli-${backend} doctor [--json] [--live-smoke-timeout-sec <n>]`,
         '',
       ].join('\n'),
       'cleanup.md': [

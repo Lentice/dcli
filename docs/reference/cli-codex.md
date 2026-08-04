@@ -191,6 +191,7 @@ as JSON).
 | clean/reproducible run | `--ignore-user-config --ignore-rules --ephemeral` |
 | structured output | `--output-schema <FILE>` (works; still not a shared flag) |
 | doctor | `codex doctor --json` |
+| dcli doctor live smoke | `dcli-codex doctor` starts `codex exec`, sends a trivial request, and reports `ok`, `coverage`, and `live_smoke_timeout_sec`; timeout `0` is static-only |
 | auth remediation | `codex login` |
 | cancellation | no graceful API — **process-tree kill only** |
 | interactive permission reply | **not possible** in this execution model |

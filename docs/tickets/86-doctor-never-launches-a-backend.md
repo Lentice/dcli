@@ -1,6 +1,6 @@
 # Ticket 86 — `doctor` reports all-green without ever launching a backend
 
-**Status:** open (2026-08-04)
+**Status:** done (2026-08-04)
 **Tier:** trust. `doctor` is what every failure path tells the user to run, and it is the one command that
 answered "everything is fine" while no opencode job could complete a single request.
 **Blocked by:** none — can start immediately.
@@ -44,19 +44,19 @@ fine is that the static-only answer is today's default and calls itself green.
 
 ## Acceptance criteria
 
-- [ ] **A.** `doctor` with no flags starts the backend, completes a trivial request, and reports the
+- [x] **A.** `doctor` with no flags starts the backend, completes a trivial request, and reports the
   result. `live_smoke_timeout_sec` in the output reflects the deadline actually used, never `null` when a
   smoke ran.
-- [ ] **B.** A backend that cannot answer produces a non-ok `doctor`, with a detail naming what failed and
+- [x] **B.** A backend that cannot answer produces a non-ok `doctor`, with a detail naming what failed and
   a failure class consistent with the exit-code table.
-- [ ] **C.** The smoke is bounded, and a backend that dies at startup fails fast rather than waiting out
+- [x] **C.** The smoke is bounded, and a backend that dies at startup fails fast rather than waiting out
   the full window.
-- [ ] **D.** Opting out of the live smoke is explicit and is reported as reduced coverage in the output —
+- [x] **D.** Opting out of the live smoke is explicit and is reported as reduced coverage in the output —
   a static-only run must not be indistinguishable from a full one. If coverage is reduced, say so.
-- [ ] **E.** A test asserts a non-ok `doctor` against a backend that is present but cannot serve a
+- [x] **E.** A test asserts a non-ok `doctor` against a backend that is present but cannot serve a
   request — the case that was green while nothing worked. Not a mocked adapter: the point of this check
   is the path a mock removes.
-- [ ] **F.** `npm run check` green; README, `docs/reference/*` and `integration/source/*` updated in the
+- [x] **F.** `npm run check` green; README, `docs/reference/*` and `integration/source/*` updated in the
   same commit, since every skill points users at `doctor` for diagnosis.
 
 ## Notes
@@ -64,3 +64,10 @@ fine is that the static-only answer is today's default and calls itself green.
 - 2026-08-04: `--live-smoke-timeout-sec` already exists and works; only the default is wrong. The smallest
   correct change may be a default value rather than new machinery — but the coverage statement in D is
   part of the fix, not a nicety.
+- 2026-08-04 implementation: the existing adapter `LiveSmoke()` methods only checked executable/version
+  availability, so changing the default alone would still certify a backend that could not answer. The
+  shared smoke lifecycle now runs `Start → SendPrompt → Observe → CollectResult`, disposes on timeout, and
+  classifies failures against the exit-code table. `doctor` defaults to `DOCTOR_LIVE_SMOKE_MS` (120s), adds
+  `ok`/`coverage`, and reports `coverage: static_only` when timeout `0` explicitly opts out. The regression
+  test uses a real non-test `OpencodeAdapter` pointed at the Node executable: it is present but cannot serve,
+  and doctor fails fast.

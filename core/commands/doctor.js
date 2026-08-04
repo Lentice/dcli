@@ -8,10 +8,19 @@ const PROBE_TIMEOUT_MS = 10000;
 
 async function executeDoctor({ adapter, stateRoot, repoPath, json, liveSmokeTimeoutSec }) {
   const probes = await runCommonProbes({ stateRoot, repoPath });
+  const liveSmokeTimeoutMs = liveSmokeTimeoutSec === undefined || liveSmokeTimeoutSec === null
+    ? resolveDeadline('DOCTOR_LIVE_SMOKE_MS')
+    : resolveDeadline('DOCTOR_LIVE_SMOKE_MS', liveSmokeTimeoutSec * 1000);
 
-  if (liveSmokeTimeoutSec) {
-    const timeoutMs = liveSmokeTimeoutSec * 1000;
-    probes.push(await runLiveSmoke(adapter, timeoutMs));
+  if (liveSmokeTimeoutMs > 0) {
+    probes.push(await runLiveSmoke(adapter, liveSmokeTimeoutMs, repoPath));
+  } else {
+    probes.push({
+      name: 'live_smoke',
+      ok: true,
+      status: 'skipped',
+      detail: 'Live smoke skipped by --live-smoke-timeout-sec 0; coverage is static-only',
+    });
   }
 
   let backendInfo = {};
@@ -39,33 +48,100 @@ async function executeDoctor({ adapter, stateRoot, repoPath, json, liveSmokeTime
     adapter_version: identity.adapter_version || null,
     probes,
     backend_info: backendInfo,
-    live_smoke_timeout_sec: liveSmokeTimeoutSec || null,
+    ok: probes.every(probe => probe.ok === true),
+    coverage: liveSmokeTimeoutMs > 0 ? 'full' : 'static_only',
+    live_smoke_timeout_sec: liveSmokeTimeoutMs / 1000,
   };
 
   return { envelope, json };
 }
 
-async function runLiveSmoke(adapter, timeoutMs) {
-  const probePromise = (async () => {
-    try {
-      if (typeof adapter.LiveSmoke === 'function') {
-        await adapter.LiveSmoke(timeoutMs);
+async function runLiveSmoke(adapter, timeoutMs, repoPath) {
+  let timerHandle;
+  const probePromise = new Promise((resolve, reject) => {
+    // Arm the deadline before calling adapter code. A synchronous executable
+    // resolver must not postpone the smoke's entire budget.
+    queueMicrotask(async () => {
+      try {
+        const smokeMethod = typeof adapter.LiveSmokeRequest === 'function'
+          ? adapter.LiveSmokeRequest
+          : adapter.LiveSmoke;
+        if (typeof smokeMethod !== 'function') {
+          throw new Error('Adapter does not implement LiveSmoke');
+        }
+        const smoke = smokeMethod.bind(adapter);
+        const result = await smoke(timeoutMs, repoPath);
+        const responseBytes = result && typeof result.text === 'string'
+          ? Buffer.byteLength(result.text, 'utf8')
+          : null;
+        resolve({
+          name: 'live_smoke',
+          ok: true,
+          detail: responseBytes === null
+            ? 'Backend live smoke check passed'
+            : `Backend live smoke check passed; received ${responseBytes} response bytes`,
+        });
+      } catch (err) {
+        reject(err);
       }
-      return { name: 'live_smoke', ok: true, detail: 'Backend live smoke check passed' };
-    } catch (err) {
-      return { name: 'live_smoke', ok: false, status: 'failed', detail: `Environment failure: ${err.message}` };
-    }
-  })();
+    });
+  });
 
   const timer = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('timed_out')), timeoutMs);
+    timerHandle = setTimeout(() => {
+      try { adapter.Dispose({}); } catch {}
+      const err = new Error(`Live smoke timed out after ${timeoutMs}ms`);
+      err.code = 'DOCTOR_SMOKE_TIMEOUT';
+      reject(err);
+    }, timeoutMs);
   });
 
   try {
     return await Promise.race([probePromise, timer]);
   } catch (err) {
-    return { name: 'live_smoke', ok: false, status: 'timed_out', detail: `Live smoke timed out after ${timeoutMs}ms` };
+    const timedOut = err && err.code === 'DOCTOR_SMOKE_TIMEOUT';
+    const failureClass = timedOut ? 'environment' : classifySmokeFailure(err);
+    return {
+      name: 'live_smoke',
+      ok: false,
+      status: timedOut ? 'timed_out' : 'failed',
+      failure_class: failureClass,
+      exit_code: smokeExitCode(failureClass),
+      detail: timedOut
+        ? err.message
+        : `Backend live smoke failed (${failureClass}): ${err && err.message ? err.message : 'unknown error'}`,
+    };
+  } finally {
+    clearTimeout(timerHandle);
   }
+}
+
+function classifySmokeFailure(err) {
+  const hinted = err && (err.failureClass || err.classHint || err.class_hint);
+  if (hinted === 'authentication' || hinted === 'quota_or_rate_limit' ||
+      hinted === 'permission_or_sandbox' || hinted === 'network_error') {
+    return hinted;
+  }
+  if (hinted === 'protocol' || hinted === 'protocol_incompatible') return 'protocol';
+
+  const message = err && err.message ? err.message : '';
+  if (/auth|login|token|api key|unauthori[sz]ed/i.test(message)) return 'authentication';
+  if (/quota|rate.?limit|credit|billing/i.test(message)) return 'quota_or_rate_limit';
+  if (/permission|access denied|sandbox/i.test(message)) return 'permission_or_sandbox';
+  if (/network|connection refused|connection reset|ENOTFOUND|ECONN/i.test(message)) return 'network_error';
+  if (/protocol|endpoint|malformed|incompatible/i.test(message)) return 'protocol';
+  return 'environment';
+}
+
+function smokeExitCode(failureClass) {
+  return {
+    environment: 12,
+    authentication: 13,
+    quota_or_rate_limit: 14,
+    permission_or_sandbox: 15,
+    network_error: 16,
+    protocol: 26,
+  }[failureClass] || 12;
 }
 
 async function probeContainmentHelper() {

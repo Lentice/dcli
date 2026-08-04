@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
 const { applyProcessLifecycle } = require('../shared/process-lifecycle');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
+const { runAdapterSmoke } = require('../../core/adapter-smoke');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
 const LIVE_SMOKE_TIMEOUT_MS = 30000;
@@ -469,6 +470,11 @@ class ClaudeAdapter {
     } catch (err) {
       throw new Error(`claude not available: ${err.message}`);
     }
+  }
+
+  async LiveSmokeRequest(timeoutMs, repoPath) {
+    if (this._testMode) return;
+    return runAdapterSmoke(this, repoPath);
   }
 
   _parseStreamEvent(line) {
