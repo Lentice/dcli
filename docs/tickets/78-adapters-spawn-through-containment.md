@@ -9,7 +9,9 @@ specifies and what ADR-003/ADR-008 assume. Today none of it runs.
 **Blocked by:** native helper stdin forwarding and bounded EOF draining. The historical implementation ticket was
 removed after archival; the prerequisite remains stated here because it is still a real protocol dependency.
 
-**Status:** open
+**Status:** closed 2026-08-04 — **not implemented, abandoned by decision.** Nothing in this ticket was
+built. See "Closed without implementation" at the end of this file before relying on any termination
+guarantee.
 
 ## What was found (verified 2026-07-31)
 
@@ -123,3 +125,47 @@ npm run check
 ```
 feat(adapters,containment): backend trees are contained from birth, so cancel and hard timeout can prove termination
 ```
+
+---
+
+## Closed without implementation (2026-08-04)
+
+Closed by owner decision: containment will not be wired up, and no code was changed. Every finding in
+"What was found" above was re-verified on the day of closing and all of it still holds:
+
+```
+core/containment.js:34            ContainmentContext — defined, zero production constructors
+adapters/claude/adapter.js:236    plain spawn()
+adapters/codex/adapter.js:335     plain spawn()
+adapters/opencode/adapter.js:886  plain spawn()
+core/commands/cancel.js:42        containment: null   (still hardcoded)
+native/windows-job-helper/Program.cs:133  "// ignore other types (e.g., stdin data for child)"
+```
+
+The prerequisite this ticket was blocked by — native helper stdin forwarding and bounded EOF draining,
+formerly ticket 60 — was removed with the historical tickets and is **not** being re-filed. Without it,
+routing codex or claude through the helper would hang, because both deliver the prompt on the child's
+stdin.
+
+### What this means, permanently, until someone reopens it
+
+- **Termination is adapter-cooperative, not guaranteed.** When a backend hangs in a way its own cancel
+  rungs do not cover, nothing escalates. There is no mechanism below the adapter.
+- **The worker's hard timeout does not kill the tree.** It journals `timed_out` and exits. The backend
+  tree can survive holding ports, temp directories, locks and the stdout pipe. This is the shape of
+  AGENTS.md mistake #1, with the wrapper on the correct side of the bound and the process tree on the
+  wrong one.
+- **`containment.degraded` and the fail-closed rule in design spec §14 (§638) stay unimplemented.** The
+  spec continues to specify a mechanism the system does not have. The spec was **not** amended as part of
+  this closure — a reader of §14 will believe containment exists.
+- **`cancel` reports `containment_unavailable` rather than claiming a kill.** That honesty commit
+  (ticket 69) is what keeps this from being a lie in the job record; it is the only reason closing this is
+  merely a missing guarantee and not a false one.
+- **User-facing text still promises more than the code delivers.** README's "Every wait is bounded" and
+  the generated skills' "Nothing blocks forever" describe the wrapper's own waits, which are bounded — but
+  a reader takes them to cover the process tree, and it is not covered. This was raised at closing time
+  and deliberately left unchanged.
+
+Ticket 84 (persist launch identity) is unaffected and still worth doing: it records the pid of the
+plain-`spawn`ed process, which is what exists today. Had this ticket landed, identity would have come from
+`context.spawn()` instead — so 84 is now the only path to a provable worker identity.
