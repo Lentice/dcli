@@ -275,6 +275,17 @@ means a completion is never observed: a turn that failed 5 s in (a 403 `RegionEr
 was polled for the whole hard-timeout budget and reported as `timed_out` with zero bytes. Absence is
 only meaningful after the prompt has been accepted, hence the registration grace period in the adapter.
 
+**Amendment 2026-08-04 (ticket 81) — an unresolvable status is bounded, never progress.** Absence is
+handled above, but a status the parse *cannot* resolve at all (a non-object body, an unexpected shape, or
+a poll that keeps failing) still yielded `unknown` and the loop treated it as "still working" — an
+unbounded wait, invariant #3. Now: `unknown` is not emitted as a `backend_status` fact (that fact's state
+enum is `busy|idle|retrying`, so it never was legal), consecutive unresolved polls are bounded to
+`UNRESOLVED_STATUS_LIMIT_MS / POLL_INTERVAL_MS` (12 at the defaults, minimum 2), and on exhaustion the
+adapter emits `backend_error` with `class_hint: backend_status_unresolved` so the job goes terminal as
+`failed` naming the ambiguity — never `done`, never a silent empty result. A failing poll also no longer
+leaves the previous status cache in place: it records `unknown`, because leaving it looked like "never
+polled" and broke the reconnect loop out, reporting a partial turn as clean.
+
 **A failed turn is a normal message carrying `info.error` [verified live].** There is no separate
 failure event once the SSE stream has closed; `GET /session/{id}/message` is the only place the error
 is visible, as `info.error.data.{message,statusCode}`. Nothing else reports it, so a turn that the

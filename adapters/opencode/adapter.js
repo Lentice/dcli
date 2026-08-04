@@ -38,6 +38,11 @@ const PROMPT_ASYNC_TIMEOUT_MS = 15000;
 // /session/status before its absence is taken to mean the turn is over.
 // Bounds the "turn failed instantly" case, which otherwise never terminates.
 const SESSION_REGISTRATION_GRACE_MS = 15000;
+// How long the session status may stay unresolvable — 'unknown', or a status
+// poll that keeps failing — before the turn's outcome is declared ambiguous.
+// An unresolved status is not "still working": treating it as such polled the
+// full hard-timeout budget and produced zero bytes (ticket 81).
+const UNRESOLVED_STATUS_LIMIT_MS = 60000;
 const MESSAGES_TIMEOUT_MS = 30000;
 const SESSION_STATUS_TIMEOUT_MS = 10000;
 const MAX_SSE_RECONNECTS = 5;
@@ -214,6 +219,7 @@ class OpencodeAdapter {
     this._idleTimeoutMs = options._mockIdleTimeoutMs !== undefined ? options._mockIdleTimeoutMs : IDLE_TIMEOUT_MS;
     this._pollIntervalMs = options._mockPollIntervalMs !== undefined ? options._mockPollIntervalMs : POLL_INTERVAL_MS;
     this._interactionPollMs = options._mockInteractionPollMs !== undefined ? options._mockInteractionPollMs : INTERACTION_POLL_MS;
+    this._unresolvedStatusLimitMs = options._mockUnresolvedStatusLimitMs !== undefined ? options._mockUnresolvedStatusLimitMs : UNRESOLVED_STATUS_LIMIT_MS;
     this._automationPolicy = null;
     this._hardDeadlineMs = null;
     this._seenInteractionIds = new Set();
@@ -1040,6 +1046,9 @@ class OpencodeAdapter {
     let lastInteractionPoll = 0;
     let reconnectCount = 0;
     let statusCache = null;
+    let unresolvedPolls = 0;
+    let unresolvedExhausted = false;
+    const maxUnresolvedPolls = Math.max(2, Math.ceil(this._unresolvedStatusLimitMs / Math.max(1, POLL_MS)));
 
     async function pollNow(self) {
       try {
@@ -1047,6 +1056,10 @@ class OpencodeAdapter {
         self._asyncBackendSessionId = self._asyncBackendSessionId || self._sessionId;
         return statusCache;
       } catch {
+        // A failed poll leaves no opinion — but leaving the *previous* cache in
+        // place made a transport error look like "never polled", which broke the
+        // reconnect loop out and reported a partial turn as clean.
+        statusCache = 'unknown';
         return null;
       }
     }
@@ -1063,7 +1076,30 @@ class OpencodeAdapter {
         if (Date.now() - lastPoll >= POLL_MS) {
           lastPoll = Date.now();
           const s = await pollNow(this);
-          if (s) yield { type: 'backend_status', state: s };
+          // 'unknown' is not a reportable state (see core/fact-types.js) and is
+          // handled by the bound below, not published as progress.
+          if (s && s !== 'unknown') yield { type: 'backend_status', state: s };
+
+          if (!s || s === 'unknown') {
+            unresolvedPolls++;
+            // Counted, not clocked: consecutive polls are the thing that must be
+            // bounded, and a count cannot be defeated by a loop that spins
+            // several polls inside one millisecond.
+            if (unresolvedPolls >= maxUnresolvedPolls) {
+              yield {
+                type: 'backend_error',
+                class_hint: 'backend_status_unresolved',
+                structured_payload: {
+                  message: `Backend session status was unresolvable for ${maxUnresolvedPolls} consecutive polls (last status: ${s || 'poll_failed'}). The turn's outcome is unknown; any result recorded may be incomplete.`,
+                },
+              };
+              unresolvedExhausted = true;
+              sseDone = true;
+              break;
+            }
+          } else {
+            unresolvedPolls = 0;
+          }
         }
 
         if (Date.now() - lastInteractionPoll >= this._interactionPollMs) {
@@ -1125,7 +1161,7 @@ class OpencodeAdapter {
         idleSince = null;
       }
 
-      if (this._cancelled) break;
+      if (this._cancelled || unresolvedExhausted) break;
 
       reconnectCount++;
 

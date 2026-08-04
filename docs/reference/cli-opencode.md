@@ -229,13 +229,13 @@ runs opencode. Not used by the wrapper.
 | fork | `POST /session/{id}/fork` |
 | working directory | canonical job dir: launch cwd **and** `directory` query param on every request |
 | cancel (graceful) | `POST /session/{id}/abort` → `POST /global/dispose` |
-| progress | `GET /event` SSE + `GET /session/status` |
+| progress | `GET /event` SSE + `GET /session/status` — an unresolvable status is bounded to 12 consecutive polls (60 s at the 5 s interval), then `backend_error` / `class_hint: backend_status_unresolved` and a `failed` job; `unknown` is never a `backend_status` fact |
 | permission prompt | `GET /permission` → `POST /permission/{id}/reply {reply: once\|always\|reject}` — polled on an interval during reconciliation; unattended jobs reject with `rejected_unattended` |
 | clarifying question | `GET /question` → `POST /question/{id}/reply {answers}` / `/reject` — polled on same interval; unattended rejection with explanatory message |
 | auth remediation | `opencode providers login` |
 | version detection | `opencode --version`, confirmed by `GET /global/health.version` |
 | doctor endpoint shape | `_runEndpointShapeProbes` checks `/global/health` (healthy + version shape), `/permission` (array), `/question` (array), `/session/status` (reachable) |
-| failure classification | Structured error events parsed via `_classifyBackendError`: `CreditsError` → `quota_or_rate_limit`; unmatched → `null` (no guessing) |
+| failure classification | Structured error events parsed via `_classifyBackendError`: `CreditsError` → `quota_or_rate_limit`; unmatched → `null` (no guessing); an unresolvable session status → `backend_status_unresolved` |
 | interaction handling | `GET /permission` and `GET /question` polled every `INTERACTION_POLL_MS` (2 s) independently of SSE; unattended interactions rejected with `reply: reject` and explanatory message, emitted as `backend_error` with `class_hint: permission_or_sandbox` |
 | structured output | **unavailable** — broken in 1.18.7 (study §8, ADR-006) |
 | native worktree | `/experimental/worktree` — namespaced extension, diagnostics only |

@@ -1,6 +1,6 @@
 # Ticket 81 — opencode polls `unknown` forever, so every opencode job runs to its hard timeout
 
-**Status:** open (2026-07-31)
+**Status:** done (2026-08-04)
 **Tier:** blocker for delegation — opencode is the interactive-capable backend, so this is the one that
 blocks per-phase dogfooding review and any delegated verification.
 **Sibling:** the codex and Claude adapters already have a bounded exit-wait path, but through a different
@@ -66,21 +66,44 @@ empty result — the exact thing that teaches users to distrust the tool.
 
 ## Acceptance criteria
 
-- [ ] **A.** A run of a trivial prompt reaches a terminal state on the backend's own timeline, not on the
+- [x] **A.** A run of a trivial prompt reaches a terminal state on the backend's own timeline, not on the
   hard timeout, and persists `result.md` + `backend-events.jsonl`.
-- [ ] **B.** `unknown` is never an implicit "keep waiting". Consecutive `unknown` polls are bounded; on
+- [x] **B.** `unknown` is never an implicit "keep waiting". Consecutive `unknown` polls are bounded; on
   exhaustion the job goes terminal with an honest `failure_reason` that names the ambiguity — never
   `done`, and never a silent empty result.
-- [ ] **C.** Heartbeats are written for the life of the job, not once at startup. A frozen heartbeat must
+- [x] **C.** Heartbeats are written for the life of the job, not once at startup. A frozen heartbeat must
   be distinguishable from a working job in `status.json` alone, because that is all reconciliation and
   `debug` can see.
-- [ ] **D.** A test drives the non-mocked poll path and asserts termination. Per AGENTS.md, a mocked-out
+- [x] **D.** A test drives the non-mocked poll path and asserts termination. Per AGENTS.md, a mocked-out
   path is an uncovered path: every opencode adapter test currently sets `_testMode`, and that is why 30
   minutes of producing nothing was green.
-- [ ] **E.** `npm run check` green; docs updated in the same commit.
+- [x] **E.** `npm run check` green; docs updated in the same commit.
 
 ## Notes
 
+- **2026-08-04 root cause determined (the "what to determine first" question):** it was case 1 *and* a
+  fourth case the ticket did not list. Case 1 — the session leaving `/session/status` once the turn is
+  over — had already been fixed (`_sawLiveStatus` plus `SESSION_REGISTRATION_GRACE_MS`), and a live
+  `run` of the ticket's own PONG prompt now returns `PONG`, exit 0, in seconds, with `result.md` and
+  `backend-events.jsonl` both present. Not case 2 (the URL and session id are correct) and not case 3
+  (the shape in `docs/2026-07-28-opencode-cli-study.md` still matches this machine, opencode 1.18.11).
+  What remained was the ambiguity itself: any status the parse could not resolve, and any poll that kept
+  throwing, still meant "keep waiting" forever. That is now bounded:
+  - `unknown` is no longer emitted as a `backend_status` fact at all — `core/fact-types.js` only ever
+    allowed `busy|idle|retrying`, so emitting it was already contract-invalid.
+  - Consecutive unresolved polls are bounded by count (`UNRESOLVED_STATUS_LIMIT_MS / POLL_INTERVAL_MS`,
+    12 at the defaults, floor 2). Counted rather than clocked deliberately: a clock bound is defeated by
+    a loop that completes several polls inside one millisecond, which is exactly what the first version
+    of the test hit.
+  - On exhaustion the adapter emits `backend_error` with `class_hint: backend_status_unresolved`, so the
+    reducer decides `failed` with that `failure_reason`. Never `done`, never a silent empty result.
+  - A poll that throws now records `statusCache = 'unknown'` instead of leaving the previous cache. That
+    was a second, quieter defect: a stale `null` read as "never polled", broke the reconnect loop out
+    after one round, and reported a partial turn as clean.
+- **C was already in place** — `core/commands/worker.js` heartbeats on an interval, not once.
+- **D:** `tests/adapters/opencode/unresolved-status-bound.test.js` drives the real `_fetchSessionStatus`
+  parse path (no `_mockSessionStatusResponses`), asserts `Observe()` terminates, asserts the reducer's
+  decision for both the unresolved and the healthy case, and pins that a resolved status clears the bound.
 - **2026-08-03 local verification:** the installed live backend reported opencode `1.18.11`,
   while onboarding still names `1.18.7`. The live P1–P4 opencode tests passed against the
   installed version; re-check the version pin and endpoint study before closing this ticket.
