@@ -271,6 +271,7 @@ class JobStore {
       commandExitCode: null,
       sentinelExitCode: null,
       sentinelState: null,
+      workerIdentityMissing: null,
     };
 
     try {
@@ -294,6 +295,8 @@ class JobStore {
       // isSameProcessAlive() only degrades to bare liveness when the recorded
       // start time is not OS-sourced, which is what it is today.
       const identity = parseWorkerIdentity(status.worker_identity);
+      evidence.workerIdentityMissing = !identity &&
+        !(Number.isInteger(status.worker_pid) && status.worker_pid > 0);
       if (evidence.workerAlive !== true && identity) {
         try { evidence.workerAlive = isSameProcessAlive(identity); } catch {}
       } else if (status.worker_pid) {
@@ -366,14 +369,17 @@ class JobStore {
       if (TERMINAL.has(fresh.state)) return fresh;
       const freshEvidence = this.gatherEvidence({ repoKey, jobId, status: fresh });
       if (freshEvidence.workerAlive === true) return fresh;
+      const freshReduced = reduce(fresh, [], freshEvidence);
       // Publish only on POSITIVE evidence that the owner is gone. A stale
       // heartbeat with unknown liveness is enough to *display* `interrupted`,
-      // but not to write it: a job that predates worker-identity recording has
-      // no pid to check and only ever wrote one heartbeat, so a passing
-      // `status` would have declared every such job interrupted — permanently,
-      // since terminal states are monotonic — while its backend ran on.
-      if (freshEvidence.workerAlive !== false && !freshEvidence.completionSentinelPresent) return fresh;
-      const freshReduced = reduce(fresh, [], freshEvidence);
+      // but not to write it. The sole exception is the explicit legacy-record
+      // rule in the reducer: its own hard deadline has elapsed, so no worker
+      // can still be inside the recorded budget.
+      const expiredIdentityless = freshEvidence.workerIdentityMissing === true &&
+        freshReduced.state === 'interrupted' &&
+        freshReduced.failure && freshReduced.failure.reason === 'worker_identity_missing';
+      if (freshEvidence.workerAlive !== false && !freshEvidence.completionSentinelPresent &&
+          !expiredIdentityless) return fresh;
       if (freshReduced.state === fresh.state) return fresh;
       return this._publishReconciled({ repoKey, jobId, projected: fresh, reduced: freshReduced, evidence: freshEvidence });
     } finally {

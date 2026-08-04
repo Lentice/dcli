@@ -9,6 +9,7 @@
  * @property {boolean|null} executionTokenMatch - Does execution token match the expected one?
  * @property {number|null} commandExitCode - Exit code from evidence
  * @property {string|null} sentinelState - Terminal state the worker published in its sentinel
+ * @property {boolean|null} workerIdentityMissing - No usable worker identity or pid is recorded
  */
 
 const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
@@ -37,9 +38,37 @@ function reduce(state, facts, evidence) {
 
   const ev = evidence && typeof evidence === 'object' ? evidence : {};
 
+  const hardTimeoutElapsed = state.hard_timeout_sec && state.started_at
+    ? (() => {
+      const deadline = new Date(state.started_at).getTime() + Number(state.hard_timeout_sec) * 1000;
+      return Number.isFinite(deadline) && Date.now() > deadline;
+    })()
+    : false;
+  const hasWorkerPid = Number.isInteger(state.worker_pid) && state.worker_pid > 0;
+  const workerIdentityMissing = ev.workerIdentityMissing === true ||
+    (!state.worker_identity && !hasWorkerPid);
+  const heartbeatMissing = ev.heartbeatAgeMs === null || ev.heartbeatAgeMs === undefined;
+  const heartbeatStale = ev.heartbeatAgeMs !== null && ev.heartbeatAgeMs !== undefined &&
+    ev.heartbeatAgeMs > 15000;
+  const noCompletionSentinel = ev.completionSentinelPresent !== true;
+
   // 1. Already terminal — idempotent
   if (TERMINAL.has(state.state)) {
     return pick(state, ['state', 'phase', 'failure', 'failure_reason', 'backend_session_id']);
+  }
+
+  // Legacy records may have no proof of which worker owns them. They become
+  // decidable only after their own deadline: before then, retiring one could
+  // race a still-running backend. This is intentionally not a new age knob.
+  if (workerIdentityMissing && (heartbeatMissing || heartbeatStale) &&
+      noCompletionSentinel && hardTimeoutElapsed) {
+    return {
+      state: 'interrupted',
+      phase: 'terminal',
+      failure: { reason: 'worker_identity_missing' },
+      failure_reason: state.failure_reason || 'worker_identity_missing',
+      backend_session_id: state.backend_session_id || null,
+    };
   }
 
   // 2. Cancel requested → cancelled (any non-terminal state, including created).
@@ -56,16 +85,13 @@ function reduce(state, facts, evidence) {
   }
 
   // 3. Hard timeout → timed_out
-  if (state.hard_timeout_sec && state.started_at) {
-    const deadline = new Date(state.started_at).getTime() + state.hard_timeout_sec * 1000;
-    if (Number.isFinite(deadline) && Date.now() > deadline) {
-      return {
-        state: 'timed_out',
-        phase: 'terminal',
-        failure_reason: state.failure_reason || null,
-        backend_session_id: state.backend_session_id || null,
-      };
-    }
+  if (hardTimeoutElapsed) {
+    return {
+      state: 'timed_out',
+      phase: 'terminal',
+      failure_reason: state.failure_reason || null,
+      backend_session_id: state.backend_session_id || null,
+    };
   }
 
   // 4. Process facts
@@ -132,8 +158,6 @@ function reduce(state, facts, evidence) {
   // not as confirmations
   const workerGone = ev.workerAlive === false;
   const hasSentinel = ev.completionSentinelPresent === true;
-  const heartbeatStale = ev.heartbeatAgeMs !== null && ev.heartbeatAgeMs > 15000;
-
   // PID-reuse safety: if execution token is provided and doesn't match,
   // treat worker as absent even if workerAlive is true
   const tokenMismatch = ev.executionToken !== undefined && ev.executionToken !== null &&

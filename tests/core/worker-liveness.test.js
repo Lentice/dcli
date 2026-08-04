@@ -52,11 +52,12 @@ function clean(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
-function seedRunningJob(store, jobId, runningDetail) {
+function seedRunningJob(store, jobId, runningDetail, { hardTimeoutSec = null } = {}) {
   store.createJob({
     jobId, repoKey: REPO_KEY, repoRoot: process.cwd(),
     backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0',
     mode: 'submit', access: 'read-only',
+    hardTimeoutSec,
   });
   store.createAttemptDir({ repoKey: REPO_KEY, jobId, attemptNum: 1 });
   store.journalTransition(jobId, REPO_KEY, {
@@ -616,26 +617,107 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
-  // 6m. A job with no recorded worker identity — every job created before this
-  //     change — must not be journaled terminal on a guess. Its heartbeat is
-  //     stale by construction (the old worker wrote one at startup), so an
-  //     ordinary `status` would have ended every running legacy job.
+  // 6m. A legacy job with no recorded worker identity is resolved only after
+  //     its own hard-timeout deadline. Before the deadline, it remains active.
   // ---------------------------------------------------------------------------
   {
     const dir = tmpDir();
     try {
       const store = new JobStore({ stateRoot: dir });
       const jobId = 'liveness-19';
-      seedRunningJob(store, jobId, {});   // no worker_pid, no worker_identity
+      seedRunningJob(store, jobId, {
+        started_at: new Date(Date.now() - 60000).toISOString(),
+      }, { hardTimeoutSec: 1 });   // no worker_pid, no worker_identity
       store.journalTransition(jobId, REPO_KEY, {
         kind: 'heartbeat', attempt: null, from: null, to: null,
         detail: { heartbeat_at: new Date(Date.now() - 600000).toISOString() },
       });
 
-      loadJobOrThrow({ store, repoKey: REPO_KEY, jobId });
-      assert.strictEqual(store.readStatus({ repoKey: REPO_KEY, jobId }).state, 'running',
-        'without proof the owner is gone, a read must not write a terminal state');
-      console.log('PASS: liveness 6m — no identity means no inferred terminal in the journal');
+      const { status } = loadJobOrThrow({ store, repoKey: REPO_KEY, jobId });
+      assert.strictEqual(status.state, 'interrupted',
+        'an identityless job past its own deadline must resolve to interrupted');
+      assert.strictEqual(status.failure_reason, 'worker_identity_missing',
+        'the terminal reason must name the missing launch identity');
+      assert.notStrictEqual(status.state, 'cancelled',
+        'identityless reconciliation must never claim cancellation');
+      assert.strictEqual(store.readStatus({ repoKey: REPO_KEY, jobId }).state, 'interrupted',
+        'the reconciled state must be durable');
+      console.log('PASS: liveness 6m — expired identityless job resolves to interrupted');
+    } finally {
+      clean(dir);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6n. The identityless recovery rule is bounded by the recorded deadline,
+  //     and does not replace the identity-backed liveness proof.
+  // ---------------------------------------------------------------------------
+  {
+    const dir = tmpDir();
+    try {
+      const store = new JobStore({ stateRoot: dir });
+      const jobId = 'liveness-20';
+      seedRunningJob(store, jobId, {
+        started_at: new Date(Date.now() - 1000).toISOString(),
+      }, { hardTimeoutSec: 60 });
+      store.journalTransition(jobId, REPO_KEY, {
+        kind: 'heartbeat', attempt: null, from: null, to: null,
+        detail: { heartbeat_at: new Date(Date.now() - 600000).toISOString() },
+      });
+
+      assert.strictEqual(loadJobOrThrow({ store, repoKey: REPO_KEY, jobId }).status.state, 'running',
+        'an identityless job inside its deadline must remain running');
+
+      const identityJobId = 'liveness-21';
+      seedRunningJob(store, identityJobId, {
+        started_at: new Date(Date.now() - 60000).toISOString(),
+        worker_pid: 999999,
+        worker_identity: '999999;os:2020-01-01T00:00:00.0000000Z',
+      }, { hardTimeoutSec: 1 });
+      store.journalTransition(identityJobId, REPO_KEY, {
+        kind: 'heartbeat', attempt: null, from: null, to: null,
+        detail: { heartbeat_at: new Date(Date.now() - 600000).toISOString() },
+      });
+
+      const identityStatus = loadJobOrThrow({ store, repoKey: REPO_KEY, jobId: identityJobId }).status;
+      assert.strictEqual(identityStatus.state, 'timed_out',
+        'a record with identity must use the identity-backed timeout path');
+      assert.notStrictEqual(identityStatus.failure_reason, 'worker_identity_missing',
+        'the identityless reason must not be used for identity-backed records');
+      console.log('PASS: liveness 6n — deadline and identity boundaries hold');
+    } finally {
+      clean(dir);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6o. Reconciliation preserves prior failure metadata while assigning the
+  //     missing-identity reason when no prior reason exists.
+  // ---------------------------------------------------------------------------
+  {
+    const dir = tmpDir();
+    try {
+      const store = new JobStore({ stateRoot: dir });
+      const jobId = 'liveness-22';
+      seedRunningJob(store, jobId, {
+        started_at: new Date(Date.now() - 60000).toISOString(),
+      }, { hardTimeoutSec: 1 });
+      store.journalTransition(jobId, REPO_KEY, {
+        kind: 'attempt_state_changed', attempt: 1, from: 'running', to: null,
+        detail: { failure_reason: 'previous_failure', backend_session_id: 'ses_keep' },
+      });
+      store.journalTransition(jobId, REPO_KEY, {
+        kind: 'heartbeat', attempt: null, from: null, to: null,
+        detail: { heartbeat_at: new Date(Date.now() - 600000).toISOString() },
+      });
+
+      const { status } = loadJobOrThrow({ store, repoKey: REPO_KEY, jobId });
+      assert.strictEqual(status.state, 'interrupted');
+      assert.strictEqual(status.failure_reason, 'previous_failure',
+        'reconciliation must preserve an existing failure reason');
+      assert.strictEqual(status.backend_session_id, 'ses_keep',
+        'reconciliation must preserve backend_session_id');
+      console.log('PASS: liveness 6o — reconciliation preserves failure metadata');
     } finally {
       clean(dir);
     }

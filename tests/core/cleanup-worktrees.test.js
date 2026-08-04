@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process');
 const { JobStore } = require('../../core/job-store');
 const { LockManager, LOCK_SCOPES } = require('../../core/locking');
 const { executeCleanup } = require('../../core/commands/cleanup');
+const { loadJobOrThrow } = require('../../core/commands/index');
 
 function git(args, cwd) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 30000 });
@@ -34,11 +35,15 @@ function createWorktree(repoRoot, worktreePath) {
 }
 
 function hasWorktree(repoRoot, worktreePath) {
-  const wanted = path.resolve(worktreePath).toLowerCase();
+  const normalize = (target) => {
+    try { return fs.realpathSync.native(target).toLowerCase(); } catch {}
+    return path.resolve(target).toLowerCase();
+  };
+  const wanted = normalize(worktreePath);
   return git(['worktree', 'list', '--porcelain'], repoRoot)
     .split(/\r?\n/)
     .filter(line => line.startsWith('worktree '))
-    .some(line => path.resolve(line.slice('worktree '.length)).toLowerCase() === wanted);
+    .some(line => normalize(line.slice('worktree '.length)) === wanted);
 }
 
 function createTerminalImplementJob(store, { repoKey, jobId, repoRoot, worktreePath, baseCommit }) {
@@ -63,6 +68,30 @@ function createTerminalImplementJob(store, { repoKey, jobId, repoRoot, worktreeP
       phase: 'terminal', worktree_path: worktreePath,
       worktree_base_commit: baseCommit, worktree_result_commit: baseCommit,
     },
+  });
+}
+
+function createExpiredIdentitylessJob(store, { repoKey, jobId, repoRoot, worktreePath, baseCommit }) {
+  store.createJob({
+    jobId, repoKey, repoRoot,
+    backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'implement', access: 'workspace', hardTimeoutSec: 1,
+  });
+  store.createAttemptDir({ repoKey, jobId, attemptNum: 1 });
+  store.journalTransition(jobId, repoKey, {
+    kind: 'attempt_created', attempt: 1, from: null, to: 'created',
+    detail: { attempt_id: 'a1', execution_token: `tok-${jobId}` },
+  });
+  store.journalTransition(jobId, repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'running',
+    detail: {
+      started_at: new Date(Date.now() - 60000).toISOString(), phase: 'agent_running',
+      worktree_path: worktreePath, worktree_base_commit: baseCommit,
+    },
+  });
+  store.journalTransition(jobId, repoKey, {
+    kind: 'heartbeat', attempt: null, from: null, to: null,
+    detail: { heartbeat_at: new Date(Date.now() - 600000).toISOString() },
   });
 }
 
@@ -103,6 +132,32 @@ async function main() {
     assert.ok(!fs.existsSync(worktreePath), 'cleanup must remove the worktree directory');
     assert.ok(!hasWorktree(repoRoot, worktreePath), 'cleanup must unregister the worktree');
     assert.ok(!fs.existsSync(store.getJobDir('repo-key', 'cleanup-job')), 'cleanup must remove the job record');
+  } finally {
+    cleanupTree(root, repoRoot, [worktreePath]);
+  }
+}
+
+// An identityless legacy job becomes terminal on read, then cleanup removes
+// its worktree with the job record.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-cleanup-identityless-'));
+  const stateRoot = path.join(root, 'state');
+  const repoRoot = createRepo(root);
+  const worktreePath = path.join(stateRoot, 'worktrees', 'identityless-cleanup');
+  const baseCommit = createWorktree(repoRoot, worktreePath);
+  const store = new JobStore({ stateRoot });
+  createExpiredIdentitylessJob(store, {
+    repoKey: 'repo-key', jobId: 'identityless-cleanup', repoRoot, worktreePath, baseCommit,
+  });
+
+  try {
+    const { status } = loadJobOrThrow({ store, repoKey: 'repo-key', jobId: 'identityless-cleanup' });
+    assert.strictEqual(status.state, 'interrupted');
+    const result = await executeCleanup({ store });
+    assert.strictEqual(result.removed, 1, 'resolved identityless jobs must be cleanup-eligible');
+    assert.ok(!fs.existsSync(worktreePath), 'cleanup must remove the resolved job worktree');
+    assert.ok(!fs.existsSync(store.getJobDir('repo-key', 'identityless-cleanup')),
+      'cleanup must remove the resolved job record');
   } finally {
     cleanupTree(root, repoRoot, [worktreePath]);
   }

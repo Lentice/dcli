@@ -325,6 +325,8 @@ async function main() {
       detail: {
         started_at: startedAt,
         phase: 'agent_running',
+        worker_pid: 99997,
+        worker_identity: '99997;os:2020-01-01T00:00:00.0000000Z',
       },
     });
 

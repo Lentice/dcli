@@ -286,7 +286,12 @@ alive. Callers must key off `state`, and `status` must surface a warning when
 **Reconciliation.** `status` must never report a job as permanently `running`. It reconciles to
 `failed` with `failure_reason: worker_lost` when: the worker identity is gone, the completion
 sentinel is absent, the heartbeat is stale, or the backend process no longer exists while result
-and event evidence indicate a terminal outcome. Heartbeat interval: 5 s.
+and event evidence indicate a terminal outcome. Heartbeat interval: 5 s. For legacy records with
+neither `worker_identity` nor `worker_pid`, no completion sentinel, and an absent or stale heartbeat,
+the reducer keeps the job `running` until that record's own `started_at + hard_timeout_sec` deadline
+has elapsed; then it derives `interrupted` with `failure_reason: worker_identity_missing`. This
+deadline-bound exception (added 2026-08-04, ticket 85) introduces no separate age setting and
+preserves any existing `failure_reason` and `backend_session_id`.
 
 **Launch identity.** A detached `submit` worker is recorded immediately after process creation, before
 the launcher waits for worker startup. The journal carries its `worker_pid`, `worker_identity` (pid plus
