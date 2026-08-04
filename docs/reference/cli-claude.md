@@ -206,6 +206,19 @@ adapter for this backend, not delegated as it can be for Codex.
 | native worktree | `-w/--worktree` — extension, unused |
 | native background jobs | `--bg` + `claude agents` — extension, bypassed |
 
+## dcli wrapper cleanup
+
+The wrapper command is:
+
+```text
+dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
+```
+
+For eligible terminal implement jobs it removes the job record, isolated
+worktree, and git registration together. It also discovers orphan worktrees
+under the dcli state root. `--dry-run` names each worktree and reports its
+bytes; worktrees held by `diff` or `apply` are named and skipped.
+
 ---
 
 ## Host quirk: Node cannot spawn `.cmd` directly

@@ -102,6 +102,10 @@ dcli-opencode resume <job-id> --kind retry_attempt --hard-timeout-sec 600 "Re-ru
 
 # resume — fork from a completed result
 dcli-opencode resume <job-id> --kind fork_from_artifacts --hard-timeout-sec 600 "Build on what you found"
+
+# preview and then remove aged jobs and their worktree artifacts
+dcli-codex cleanup --older-than 1d --dry-run
+dcli-codex cleanup --older-than 1d
 ```
 
 Every recipe carries an execution budget and a wait budget. That is not decoration — an unbounded wait once cost a
@@ -121,6 +125,10 @@ that are. Records are per repository, so read a job with the same `--repo` you s
   `unknown`-status lifecycle defect remains tracked in ticket 81.
 - **Nothing is applied automatically.** Delegated changes land in an isolated git worktree. You inspect the diff
   and decide. There is no automatic path to `apply`, at any policy checkpoint.
+- **Cleanup owns the whole artifact.** For eligible terminal implement jobs, `cleanup` removes the job record,
+  worktree directory, and its git registration together. It also reports and removes orphan worktrees under the
+  dcli state root. Use `cleanup --dry-run` first; it lists each worktree and its byte count, while busy artifacts
+  are named and skipped.
 - **Differences are stated, not hidden.** An option a backend cannot serve fails immediately, naming the
   alternative, before any job is created. Options whose *meaning* differs get backend-qualified names rather than
   one flag with three meanings.

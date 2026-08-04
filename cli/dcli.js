@@ -25,7 +25,7 @@ Commands:
   debug     Compact job diagnosis
   diff      Show diff of an implement-mode job
   apply     Apply changes from an implement-mode job to the main repository
-  cleanup   Remove aged terminal jobs
+  cleanup   Remove aged terminal jobs and worktree artifacts
   capabilities  Show effective capability manifest
   doctor    Run system and backend health checks
 
@@ -548,6 +548,7 @@ async function main() {
         dryRun: parsed.dryRun,
         scrubSessionIds: parsed.scrubSessionIds,
       });
+      const worktreeBytes = result.worktrees.reduce((sum, worktree) => sum + worktree.bytes, 0);
 
       if (result.errors.length > 0) {
         for (const err of result.errors) {
@@ -556,10 +557,16 @@ async function main() {
       }
 
       if (result.dryRun) {
-        console.log(`Dry-run: would remove ${result.removed} jobs`);
+        console.log(`Dry-run: would remove ${result.removed} jobs and ${result.worktrees.length} worktrees (${worktreeBytes} bytes)`);
         if (result.scrubbed > 0) console.log(`  would scrub ${result.scrubbed} session ids`);
       } else {
-        console.log(`Cleanup: ${result.removed} removed, ${result.skipped} skipped, ${result.scrubbed} scrubbed`);
+        console.log(`Cleanup: ${result.removed} removed, ${result.skipped} skipped, ${result.worktrees.length} worktrees removed (${worktreeBytes} bytes), ${result.scrubbed} scrubbed`);
+      }
+      for (const worktree of result.worktrees) {
+        console.log(`  worktree: ${worktree.path} (${worktree.bytes} bytes${worktree.orphan ? ', orphan' : ''})`);
+      }
+      for (const item of result.skippedItems) {
+        console.log(`  skipped: ${item.name}${item.path ? ` (${item.path})` : ''} — ${item.reason}`);
       }
       process.exit(0);
     }

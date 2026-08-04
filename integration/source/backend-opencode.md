@@ -86,6 +86,11 @@ dcli-opencode doctor [--json]
 dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
 
+Removes aged terminal job records and their isolated worktrees/git
+registrations, and removes orphan worktrees under the dcli state root. Use
+`--dry-run` first: it names each worktree and reports its bytes. Worktrees
+held by a reader or repository operation are named and skipped.
+
 ## Recipes
 
 ### Get a second opinion on a design (synchronous, with budgets)

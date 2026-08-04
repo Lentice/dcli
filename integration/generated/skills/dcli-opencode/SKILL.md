@@ -139,6 +139,11 @@ observed condition — not a theoretical one. So:
 - **Preview before deleting.** Run `cleanup --dry-run` first and read what it
   lists. Retention once removed a worktree mid-operation and destroyed the only
   artifact needed to retry the work.
+- Cleanup removes eligible terminal job records together with their isolated
+  worktree directories and git registrations. It also discovers orphan
+  worktree directories under dcli's state root. The preview names every
+  worktree and reports its bytes; artifacts held by `diff`/`apply` are named
+  and skipped under the repository lock and job lease.
 - **A cancel is not confirmed until the state says so.** Exit 21 means
   cancellation could not be confirmed — check `status` rather than assuming the
   job is dead.
@@ -306,6 +311,11 @@ dcli-opencode doctor [--json]
 ```
 dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
+
+Removes aged terminal job records and their isolated worktrees/git
+registrations, and removes orphan worktrees under the dcli state root. Use
+`--dry-run` first: it names each worktree and reports its bytes. Worktrees
+held by a reader or repository operation are named and skipped.
 
 ## Recipes
 

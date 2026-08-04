@@ -139,6 +139,55 @@ function removeWorktree(repoRoot, worktreePath, timeoutMs) {
   }
 }
 
+function getMainRepoRoot(worktreePath, timeoutMs) {
+  const result = _git(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+    cwd: worktreePath,
+    timeoutMs,
+  });
+  if (result.error || result.status !== 0) {
+    const message = (result.stderr || result.stdout || result.error?.message || '').trim();
+    const err = new Error(`Could not resolve main repository for worktree ${worktreePath}: ${message}`);
+    err.exitCode = 23;
+    throw err;
+  }
+  const commonDir = path.resolve(result.stdout.trim());
+  return path.basename(commonDir).toLowerCase() === '.git' ? path.dirname(commonDir) : commonDir;
+}
+
+function removeWorktreeChecked(repoRoot, worktreePath, timeoutMs = 30000) {
+  const result = _git(['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, timeoutMs });
+  if (result.error || result.status !== 0) {
+    const message = (result.stderr || result.stdout || result.error?.message || '').trim();
+    const err = new Error(`Failed to remove git worktree ${worktreePath}: ${message}`);
+    err.exitCode = 23;
+    throw err;
+  }
+
+  try {
+    if (fs.existsSync(worktreePath)) fs.rmSync(worktreePath, { recursive: true, force: true });
+  } catch (cause) {
+    const err = new Error(`Failed to remove worktree directory ${worktreePath}: ${cause.message}`);
+    err.exitCode = 23;
+    throw err;
+  }
+  if (fs.existsSync(worktreePath)) {
+    const err = new Error(`Worktree directory still exists after removal: ${worktreePath}`);
+    err.exitCode = 23;
+    throw err;
+  }
+
+  const listed = _gitOk(['worktree', 'list', '--porcelain'], { cwd: repoRoot, timeoutMs }).stdout
+    .split(/\r?\n/)
+    .filter(line => line.startsWith('worktree '))
+    .map(line => path.resolve(line.slice('worktree '.length)));
+  const normalizedTarget = path.resolve(worktreePath).toLowerCase();
+  if (listed.some(entry => entry.toLowerCase() === normalizedTarget)) {
+    const err = new Error(`Git worktree registration still exists: ${worktreePath}`);
+    err.exitCode = 23;
+    throw err;
+  }
+}
+
 function stageAll(worktreePath, timeoutMs) {
   _gitOk(['add', '-A'], { cwd: worktreePath, timeoutMs });
 }
@@ -314,6 +363,8 @@ module.exports = {
   validateTree,
   createDetachedWorktree,
   removeWorktree,
+  getMainRepoRoot,
+  removeWorktreeChecked,
   stageAll,
   snapshotCommit,
   finalizeSnapshot,

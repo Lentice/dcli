@@ -1,6 +1,6 @@
 # Ticket 82 — `cleanup` removes the job record and leaves the worktree behind
 
-**Status:** open (2026-08-04)
+**Status:** done (2026-08-04)
 **Tier:** data-loss-adjacent. The worktree is the artifact; once its job record is gone no dcli command
 can find it, name it, or delete it. Recovery is manual `git worktree remove` per repository.
 **Blocked by:** none — can start immediately.
@@ -65,18 +65,18 @@ name it.
 
 ## Acceptance criteria
 
-- [ ] **A.** Removing a terminal implement-mode job removes its worktree directory and unregisters it
+- [x] **A.** Removing a terminal implement-mode job removes its worktree directory and unregisters it
   from its main repository, verified by `git worktree list` in that repository afterwards.
-- [ ] **B.** `--dry-run` names the worktrees it would remove and the bytes they occupy, and removes
+- [x] **B.** `--dry-run` names the worktrees it would remove and the bytes they occupy, and removes
   nothing. The counts it prints match what a subsequent real run does.
-- [ ] **C.** A worktree directory whose job record no longer exists is reported (and removable) rather
+- [x] **C.** A worktree directory whose job record no longer exists is reported (and removable) rather
   than silently ignored. Reporting it is not optional — every installation predating this ticket has some.
-- [ ] **D.** Removal takes the per-main-repo lock, and a job whose artifacts are being read is skipped,
+- [x] **D.** Removal takes the per-main-repo lock, and a job whose artifacts are being read is skipped,
   counted as skipped, and named — never removed out from under a reader.
-- [ ] **E.** A failed removal does not increment the removed counter, and is surfaced.
-- [ ] **F.** A test exercises the real removal path against a real git worktree — not a fixture
+- [x] **E.** A failed removal does not increment the removed counter, and is surfaced.
+- [x] **F.** A test exercises the real removal path against a real git worktree — not a fixture
   directory shaped like one — and asserts both the filesystem and the git registration afterwards.
-- [ ] **G.** `npm run check` green; README, `docs/reference/*`, and `integration/source/*` updated in the
+- [x] **G.** `npm run check` green; README, `docs/reference/*`, and `integration/source/*` updated in the
   same commit, because retention behaviour is something an agent must know before it runs the command.
 
 ## Notes
@@ -84,3 +84,7 @@ name it.
 - 2026-08-04: recovered by hand with `git worktree remove --force` per registration plus
   `git worktree prune` in both repositories, then deleting the emptied state root. 371 MB, 7
   registrations, two repositories. No dcli command was able to participate in the recovery.
+- 2026-08-04: implemented cleanup ownership for job worktrees and orphan discovery. Removal holds the
+  per-job lock, job lease, and per-repository apply lock; dry-run reports worktree paths and byte counts.
+  Real git worktree tests cover registration removal, orphan cleanup, reader/repository lock skips, and
+  failed-removal accounting.

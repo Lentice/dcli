@@ -199,6 +199,19 @@ Note the asymmetry that ADR-004 exists to protect: Codex has **no** graceful can
 runtime permission reply, while opencode has both. A shared `--approval ask` or a shared
 "cancel means abort" promise would be a lie on this backend.
 
+## dcli wrapper cleanup
+
+The wrapper command is:
+
+```text
+dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
+```
+
+For eligible terminal implement jobs it removes the job record, isolated
+worktree, and git registration together. It also discovers orphan worktrees
+under the dcli state root. `--dry-run` names each worktree and reports its
+bytes; worktrees held by `diff` or `apply` are named and skipped.
+
 ---
 
 ## Host quirks (this development machine)
