@@ -107,10 +107,14 @@ empty result — the exact thing that teaches users to distrust the tool.
 - **2026-08-03 local verification:** the installed live backend reported opencode `1.18.11`,
   while onboarding still names `1.18.7`. The live P1–P4 opencode tests passed against the
   installed version; re-check the version pin and endpoint study before closing this ticket.
-- Separately observed and worth fixing wherever it belongs: `status.json.backend_pid` stays `null` even
-  after the adapter emits a `started` fact carrying a real pid (confirmed on a *successful* codex run).
-  Reconciliation cannot prove a worker's death without it — AGENTS.md mistake #5, "launch identity must
-  be persisted before it can be lost". Do not fold this into 81; file it.
-- `doctor` reports all-green here while the backend cannot complete a single request, because it never
-  starts one (`live_smoke_timeout_sec: null`). A doctor that never launches a backend cannot report that
-  launching one does not work. Also its own ticket.
+- **2026-08-04 version pin re-checked, as that condition required.** Installed is now `1.18.12` — the
+  backend moved twice during this ticket. The pin that governs behaviour is the adapter's
+  `supported_version_range` (`min 1.18.0`, `max 1.19.0`), which covers every version this was verified
+  against; no code change is needed. `docs/reference/cli-opencode.md` and the study keep saying "version
+  studied: 1.18.7" because that is a record of when the study happened, not a target — but onboarding's
+  backend table did read as a target, and now names the range. The study's `/session/status` finding is
+  annotated `[verified live, 1.18.10]` and still matches this machine.
+- **Both loose ends are now filed, which is what closing this ticket was waiting on:** the null
+  `status.json.backend_pid` observation is folded into ticket **84** (nothing in production writes any
+  launch identity at all — `backend_pid` is one field of a wider gap), and the all-green `doctor` that
+  never launches a backend is ticket **86**.
