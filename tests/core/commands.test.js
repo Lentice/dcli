@@ -556,7 +556,7 @@ console.log('PASS: unknown flags rejected');
   // For status/wait/read which take exactly one positional (job ID),
   // extra positionals should be rejected
   try {
-    parseArgs(['--backend', 'fake', 'status', 'job-1', 'extra-arg']);
+    parseArgs(['--backend', 'fake', 'status', '20260804T123456Z-a1b2c3d4', 'extra-arg']);
     assert.fail('Should have thrown for stray positionals');
   } catch (err) {
     assert.strictEqual(err.exitCode, 2, 'stray positionals must throw exit 2');
@@ -1045,7 +1045,8 @@ await withTempDir(async (dir) => {
   const stateRoot = path.join(dir, 'state');
   const { repoKey } = computeRepoKeyWithPath(dir);
   const store = new JobStore({ stateRoot });
-  const parentJobId = 'res-parent-cli-001';
+  // Must be a well-formed dcli job id: the CLI rejects foreign id shapes.
+  const parentJobId = '20260804T104800Z-resparnt';
 
   store.createJob({
     jobId: parentJobId, repoKey, repoRoot: dir,

@@ -22,6 +22,58 @@ durable job record, detached execution, wrapper findings contract, and isolated
 worktree are guarantees for that cross-backend boundary; they do not replace a
 same-backend native subagent.
 
+**A third-party plugin that calls a backend is not dcli.** Some plugins ship a
+subagent that forwards to their own runtime — a Codex-flavoured rescue subagent
+is the observed case. It looks like the native path to that backend and is not:
+it has its own job store, so `dcli status <its id>` cannot find the job,
+`dcli list` never shows it, and nothing dcli offers (durable state, bounded
+wait, cancellation, resume lineage) applies. A forwarder-shaped subagent that
+returns only a job id and cannot poll it is not a delegation you can audit.
+When you cross a backend boundary deliberately, invoke this skill's own shim.
+
+## Canonical recipe — send and wait for the report
+
+The shortest correct cross-backend delegation is one synchronous `run` carrying
+both budgets, with the outer tool's own timeout set longer than the hard budget:
+
+```
+<shim> run --repo <repo> --prompt-file <file> \
+  --hard-timeout-sec 900 --timeout-sec 900 --label <label>
+```
+
+(`<shim>` is this skill's shim command, shown in the examples below.)
+
+Reach for `submit` + `wait` only when the outer runner cannot set a timeout at
+all, or when the work should not hold the caller open.
+
+## Skill slash command -> CLI subcommand
+
+The slash-command names are not CLI subcommands — `jobs` is not a command:
+
+| Slash command | CLI subcommand |
+|---|---|
+| `:jobs` | `list` |
+| `:ask` | `run` (or `submit`) |
+| `:implement` | `run --mode implement` |
+| `:review` | `review` |
+| `:resume` | `resume` |
+| `:doctor` | `doctor` |
+| `:cleanup` | `cleanup` |
+
+A mistyped subcommand is rejected with a suggestion (`Unknown command: jobs —
+did you mean 'list'?`), not with usage text.
+
+## Job IDs
+
+A dcli job id is `<UTC compact timestamp>-<8 alphanumerics>`, e.g.
+`20260804T123456Z-a1b2c3d4`. An id in any other shape is rejected as a usage
+error (exit 2, `Not a dcli job ID`) before any lookup — it belongs to another
+runtime and no dcli command can act on it. `list` shows the ids that exist.
+
+Job records are namespaced per repository. Pass the same `--repo` you submitted
+with, or run from that repository; a correct id read from the wrong repository
+reports exit 3.
+
 ## When to delegate
 
 Delegate only bounded, worthwhile work:
@@ -104,8 +156,8 @@ adopt an unverified finding to close the loop.
 
 | Exit | Class | Reaction |
 |------|-------|----------|
-| 2 | Usage/validation error | Fix the invocation. No job was created. |
-| 3 | Job not found | Check the job ID. |
+| 2 | Usage/validation error | Fix the invocation. No job was created. Includes an id that is not a dcli job id at all. |
+| 3 | Job not found | Well-formed id, no such job here. Check the id and that `--repo` matches the submitting repository. |
 | 4 | Job not terminal | Wait longer or check status. |
 | 10 | Backend execution failed | Read `failure_reason` for details. |
 | 11 | No usable result | Preserve events; resume or retry. |

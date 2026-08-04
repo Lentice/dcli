@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { generateJobId } = require('../job-id');
+const { generateJobId, isJobId } = require('../job-id');
 const { resolveDeadline } = require('../deadlines');
 
 /**
@@ -86,6 +86,25 @@ const KNOWN_FLAGS = new Set([
   '--reset-author', '--message', '--allow-untracked',
   '--kind', '--resume',
 ]);
+
+// The skill slash commands (`:jobs`, `:ask`, `:implement`, ...) do not
+// map 1:1 onto CLI subcommands, and an agent reading the skill reaches for the
+// slash-command name. Point at the real subcommand instead of printing usage.
+const COMMAND_SUGGESTIONS = Object.freeze({
+  jobs: 'list',
+  ls: 'list',
+  ask: 'run',
+  implement: 'run --mode implement',
+  result: 'read',
+  results: 'read',
+  show: 'status',
+  state: 'status',
+  logs: 'tail',
+  kill: 'cancel',
+  stop: 'cancel',
+  health: 'doctor',
+  check: 'doctor',
+});
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'resume', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
 
@@ -390,6 +409,14 @@ function parseArgs(argv) {
         i++;
         continue;
       }
+      // The first non-flag token is the subcommand slot. Anything else there is
+      // a mistyped command, not a positional — printing usage made
+      // `dcli jobs` look like a missing-argument problem.
+      const suggestion = COMMAND_SUGGESTIONS[arg.toLowerCase()];
+      const err = new Error(`Unknown command: ${arg}`
+        + (suggestion ? ` — did you mean '${suggestion}'?` : `\nCommands: ${[...COMMANDS].join(', ')}`));
+      err.exitCode = 2;
+      throw err;
     }
 
     result.positionals.push(arg);
@@ -409,6 +436,18 @@ function validatePositionals(parsed) {
   const singlePos = new Set(['status', 'wait', 'read', 'tail', 'debug', 'diff', 'apply', 'cancel']);
   const zeroPos = new Set(['list', 'cleanup']);
 
+  // A job id in the wrong shape cannot name a dcli job at all. Reported as
+  // "Job not found: <repo_key>/<id>" it read as a dcli job that vanished, and
+  // the repo_key prefix means nothing to the caller — so an id minted by
+  // another runtime (an observed case: a short opaque id from a plugin runtime)
+  // sent the caller searching a job store that could never hold it.
+  // Checked here, at the argument boundary, because that is the only place a
+  // foreign id can enter; core lookups take ids the engine itself minted.
+  const jobIdPositional = (singlePos.has(cmd) || cmd === 'resume') ? parsed.positionals[0] : null;
+  for (const id of [jobIdPositional, parsed.resume]) {
+    if (id !== null && id !== undefined && !isJobId(id)) throw notAJobIdError(id);
+  }
+
   if (freeText.has(cmd)) return;
 
   if (zeroPos.has(cmd) && parsed.positionals.length > 0) {
@@ -422,6 +461,14 @@ function validatePositionals(parsed) {
     err.exitCode = 2;
     throw err;
   }
+}
+
+function notAJobIdError(id) {
+  const err = new Error(
+    `Not a dcli job ID: "${id}". dcli job IDs look like 20260804T123456Z-a1b2c3d4. ` +
+    'This id may belong to another runtime; run `list` to see this repository\'s dcli jobs.');
+  err.exitCode = 2;
+  return err;
 }
 
 async function resolvePrompt({ promptFile, stdinPipeActive, positionals }) {

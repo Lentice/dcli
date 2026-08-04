@@ -194,7 +194,7 @@ check();
   const VALUED_FLAGS = {
     '--mode': (v) => ['--backend', 'codex', 'run', '--mode', v, '--hard-timeout-sec', '60'],
     '--access': (v) => ['--backend', 'codex', 'run', '--access', v, '--hard-timeout-sec', '60'],
-    '--kind': (v) => ['--backend', 'codex', 'resume', 'job-1', '--kind', v, '--hard-timeout-sec', '60'],
+    '--kind': (v) => ['--backend', 'codex', 'resume', '20260804T123456Z-a1b2c3d4', '--kind', v, '--hard-timeout-sec', '60'],
   };
 
   // Guard against this test going green because it reached no validation:

@@ -31,6 +31,11 @@ Choose dcli only for an intentional different-backend boundary. Its durable
 jobs, bounded detached execution, findings protocol, and worktree isolation do
 not turn it into a same-backend subagent mechanism.
 
+For a different backend, the shim above is the route. A third-party plugin's
+forwarding subagent is not a substitute: it keeps its own job records, so its id
+is unknown to `status` and its work never appears in `list`, and none of the
+guarantees on this page apply to it.
+
 ## When to delegate
 
 - Independent second opinion on a design or plan

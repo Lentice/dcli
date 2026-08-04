@@ -71,6 +71,10 @@ For local development on this repo instead of a standalone install, use `npm lin
 ## What it does
 
 ```powershell
+# the canonical shape: one synchronous run, both budgets, prompt from a file
+dcli-codex run --repo D:\path\to\repo --prompt-file .\prompt.md `
+  --hard-timeout-sec 900 --timeout-sec 900 --label diagnose-cache
+
 # a second opinion, synchronously
 "Compare these two designs." | dcli-opencode run --hard-timeout-sec 900
 
@@ -104,6 +108,11 @@ Every recipe carries an execution budget and a wait budget. That is not decorati
 user eight hours. The job hard-timeout default is 1800 seconds; the caller-side `wait` default is 300 seconds.
 They are independent: exit 20 means only that this caller stopped waiting, while the job may still be running.
 Use `wait --json` and inspect `wait_timed_out` / `wait_timeout_sec` when automation must distinguish the two.
+The calling shell or tool needs its own finite timeout too, longer than `--hard-timeout-sec`.
+
+Job ids look like `20260804T123456Z-a1b2c3d4`. Anything else is rejected as a usage error rather than
+looked up — an id from another tool's runtime is not a dcli job, and `dcli list` is the list of ids
+that are. Records are per repository, so read a job with the same `--repo` you submitted it with.
 
 ## Design principles
 

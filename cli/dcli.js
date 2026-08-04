@@ -29,6 +29,20 @@ Commands:
   capabilities  Show effective capability manifest
   doctor    Run system and backend health checks
 
+Skill slash command -> CLI subcommand:
+  dcli-<b>:jobs       -> dcli --backend <b> list
+  dcli-<b>:ask        -> dcli --backend <b> run
+  dcli-<b>:implement  -> dcli --backend <b> run --mode implement
+  dcli-<b>:review     -> dcli --backend <b> review
+  dcli-<b>:resume     -> dcli --backend <b> resume
+  dcli-<b>:doctor     -> dcli --backend <b> doctor
+  dcli-<b>:cleanup    -> dcli --backend <b> cleanup
+
+Canonical recipe — one synchronous run, both budgets set:
+  dcli --backend <name> run --repo <path> --prompt-file <file> \\
+    --hard-timeout-sec 900 --timeout-sec 900 --label <label>
+The calling tool's own timeout must be longer than --hard-timeout-sec.
+
 Options:
   --help                    Show this message
   --backend <name>          Backend to use (opencode, codex, claude, fake)

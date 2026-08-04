@@ -305,7 +305,7 @@ async function main() {
   // ---------------------------------------------------------------------------
   {
     const { parseArgs } = require('../../core/commands/index');
-    const parsed = parseArgs(['node', 'test', 'resume', 'job-id-here', 'extra-positional']);
+    const parsed = parseArgs(['node', 'test', 'resume', '20260804T123456Z-a1b2c3d4', 'extra-positional']);
     assert.strictEqual(parsed.command, 'resume');
     assert.ok(parsed.positionals.length > 0);
   }
