@@ -2,8 +2,8 @@
 
 Date: 2026-07-28. Status: implemented: core commands, lifecycle/state contracts, worktree/review/apply,
 resume lineage, all three adapters, generated integration, installer, redaction, admission, and bounded test
-runner. Known blockers: opencode `unknown` status termination (ticket 81); containment is specified but not yet
-wired into production adapter launches (ticket 78).
+runner. Ticket 78 is closed by decision and remains an explicit limitation: containment is specified but not
+wired into production adapter launches.
 Companion documents: [CLI study](2026-07-28-opencode-cli-study.md) (cited *study §n*),
 [ADRs](2026-07-28-architecture-decisions.md) (cited *ADR-n*),
 [development guide](2026-07-28-development-guide.md).

@@ -1,6 +1,6 @@
 # Ticket 85 — records with no launch identity can never reach a terminal state
 
-**Status:** open (2026-08-04)
+**Status:** done (2026-08-04)
 **Tier:** cleanup of the wreckage 84 stops producing. Small, but without it every installation keeps a
 permanent `running` job that no command can retire.
 **Blocked by:** 84 (the identity must exist before "identity is absent" is a meaningful signal), and 82
@@ -47,16 +47,16 @@ claims the tool killed something, and it killed nothing. It must never be `done`
 
 ## Acceptance criteria
 
-- [ ] **A.** A record with no identity, a stale heartbeat, no sentinel, and an elapsed deadline resolves
+- [x] **A.** A record with no identity, a stale heartbeat, no sentinel, and an elapsed deadline resolves
   to `interrupted` with a `failure_reason` that names the missing identity, on the next read.
-- [ ] **B.** The same record **inside** its deadline stays `running`. A job that might still be working is
+- [x] **B.** The same record **inside** its deadline stays `running`. A job that might still be working is
   never retired by this rule.
-- [ ] **C.** A record with an identity is untouched by this path — it goes through 84's liveness proof.
-- [ ] **D.** Once resolved, the job is eligible for `cleanup`, and its worktree goes with it (82).
-- [ ] **E.** Reconciliation preserves `failure_reason` and `backend_session_id` across this transition —
+- [x] **C.** A record with an identity is untouched by this path — it goes through 84's liveness proof.
+- [x] **D.** Once resolved, the job is eligible for `cleanup`, and its worktree goes with it (82).
+- [x] **E.** Reconciliation preserves `failure_reason` and `backend_session_id` across this transition —
   a past bug dropped both.
-- [ ] **F.** No new environment knob or tunable constant is introduced for the age judgement.
-- [ ] **G.** `npm run check` green; the state-machine addition documented in the design spec in the same
+- [x] **F.** No new environment knob or tunable constant is introduced for the age judgement.
+- [x] **G.** `npm run check` green; the state-machine addition documented in the design spec in the same
   commit, since terminal-state derivation is a binding contract.
 
 ## Notes
@@ -64,3 +64,7 @@ claims the tool killed something, and it killed nothing. It must never be `done`
 - 2026-08-04: the two records that motivated this were from synchronous `run` invocations, so whatever 84
   decides about `run` journaling its own identity changes how often this path is reached — but not
   whether it is needed, since older records will exist regardless.
+- 2026-08-04 implementation: the reducer resolves identityless legacy records only after their recorded
+  hard-timeout deadline, preserves existing failure metadata, and cleanup removes their worktrees with the
+  job record. Regression coverage exercises the expired, in-budget, identity-backed, metadata-preserving,
+  and cleanup paths.

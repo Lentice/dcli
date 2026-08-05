@@ -31,7 +31,7 @@ $ErrorActionPreference = 'Stop'
 
 # --- Paths ---
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$GeneratedDir = Join-Path $RepoRoot 'integration' 'generated'
+$GeneratedDir = Join-Path (Join-Path $RepoRoot 'integration') 'generated'
 $StateRoot = "$env:LOCALAPPDATA\dcli"
 
 $DcliMarkerFile = '.dcli-installed'

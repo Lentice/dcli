@@ -1,7 +1,7 @@
-# Active tickets
+# Ticket archive
 
-The implementation work is complete except for the open tickets below. Historical implementation tickets were
-removed from this directory; the binding contracts live in the design spec, adapter contract, and tests.
+All tickets listed here are closed. Historical implementation tickets were removed from this directory; the
+binding contracts live in the design spec and tests.
 
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
@@ -11,12 +11,11 @@ removed from this directory; the binding contracts live in the design spec, adap
 | [82 — cleanup orphans worktrees](82-cleanup-orphans-worktrees.md) | **done** (2026-08-04) | — | Retention removes worktrees and git registrations, and reports existing orphans |
 | [83 — `--older-than` hours](83-older-than-hours-is-unusable.md) | **done** (2026-08-04) | — | Retention accepts positive day and hour values consistently across parser, cleanup, and docs |
 | [84 — launch identity](84-launch-identity-never-persisted.md) | **done** (2026-08-04) | — | Persist launch identity before worker startup so cancel and reconciliation can prove ownership |
-| [85 — identityless records](85-identityless-records-never-terminate.md) | open | 82, 84 | Resolve records that can never prove a worker, bounded by the job's own deadline |
+| [85 — identityless records](85-identityless-records-never-terminate.md) | **done** (2026-08-04) | 82, 84 | Resolve records that can never prove a worker, bounded by the job's own deadline |
 | [86 — doctor never launches a backend](86-doctor-never-launches-a-backend.md) | **done** (2026-08-04) | — | The live smoke is off by default, so `doctor` certifies a backend it never exercised |
 
-82, 83, 84 and 86 are each independent. 84 is the widest — `cancel` currently reports without effect — and 85 is only meaningful once
-84 has landed. Every change must update the canonical docs and pass `npm run check` in an environment that
-permits the test suite's temporary directories.
+All implementation tickets are closed. Every change must update the canonical docs and pass `npm run check` in
+an environment that permits the test suite's temporary directories.
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was closed
 because it was abandoned, with nothing built. The distinction is in the Status column and in each ticket's

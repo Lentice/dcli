@@ -3,9 +3,8 @@
 Delegate bounded work from Claude Code to a *different* coding-agent CLI, and get a durable, inspectable result
 back.
 
-**Status: core commands and all three adapters are implemented.** Codex and Claude pass live result paths;
-opencode has one open lifecycle blocker: repeated `unknown` session status can run until the hard timeout
-([ticket 81](docs/tickets/81-opencode-unknown-status-never-terminates.md)). Start at [`docs/tickets/`](docs/tickets/).
+**Status: core commands, all three adapters, and the current ticket set are complete.** The ticket records are
+archived in [`docs/tickets/`](docs/tickets/).
 
 ## Why
 
@@ -124,8 +123,7 @@ that are. Records are per repository, so read a job with the same `--repo` you s
 ## Design principles
 
 - **Every wait is bounded.** Every wait, read, lock, HTTP call, and drain has a finite default. A job blocked on a
-  permission decision is reported as *blocked*, with the permission named — not as a timeout. The known opencode
-  `unknown`-status lifecycle defect remains tracked in ticket 81.
+  permission decision is reported as *blocked*, with the permission named — not as a timeout.
 - **Nothing is applied automatically.** Delegated changes land in an isolated git worktree. You inspect the diff
   and decide. There is no automatic path to `apply`, at any policy checkpoint.
 - **Cleanup owns the whole artifact.** For eligible terminal implement jobs, `cleanup` removes the job record,
@@ -154,7 +152,7 @@ and every line of it was paid for by a real bug.
 
 | For | Read |
 |---|---|
-| Picking up one unit of work | [`docs/tickets/`](docs/tickets/) |
+| Historical ticket records | [`docs/tickets/`](docs/tickets/) |
 | Product intent and user stories | [`docs/2026-07-28-spec.md`](docs/2026-07-28-spec.md) |
 | Why the architecture is this way | [`docs/2026-07-28-architecture-decisions.md`](docs/2026-07-28-architecture-decisions.md) |
 | What was challenged, and what changed | [`docs/2026-07-28-architecture-review-record.md`](docs/2026-07-28-architecture-review-record.md) |

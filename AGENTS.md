@@ -16,7 +16,7 @@ and your ticket file. This file is the standing rules that apply to every ticket
 and get a durable, inspectable result back. Three backends behind three shim commands:
 `dcli-opencode` (opencode), `dcli-codex` (Codex CLI), `dcli-claude` (Claude Code), plus `dcli --backend <b>`.
 
-**Status:** design complete, no code written. Start at [`docs/tickets/`](docs/tickets/).
+**Status:** implementation complete. Historical ticket records remain in [`docs/tickets/`](docs/tickets/).
 
 ## Native subagent routing
 
