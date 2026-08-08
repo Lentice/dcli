@@ -2,9 +2,8 @@
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
-const { generate, check, BACKENDS, COMMANDS } = require('../../scripts/generate-integration');
+const { check, BACKENDS, COMMANDS } = require('../../scripts/generate-integration');
 
 const GENERATED_DIR = path.resolve(__dirname, '../../integration/generated');
 

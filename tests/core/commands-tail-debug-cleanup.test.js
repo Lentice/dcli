@@ -8,8 +8,6 @@ const { JobStore } = require('../../core/job-store');
 const { LockManager } = require('../../core/locking');
 const { assertRealFailure } = require('../helpers/assert-failure');
 
-const TERMINAL = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
-
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-tdc-test-'));
   let cleaned = false;

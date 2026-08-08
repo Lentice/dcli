@@ -1,6 +1,5 @@
 // @suite full
 const assert = require('node:assert');
-const path = require('node:path');
 
 // The quoting module must be importable from the adapter's directory
 const { quoteForCmd, buildCmdInvocation, buildWin32CommandLine, CMD_METACHARS } = require('../../../adapters/codex/cmd-quoting');
@@ -149,10 +148,6 @@ async function main() {
 // 9. The quoting module is the SINGLE implementation (no duplicate)
 // ===========================================================================
 {
-  // Verify there is exactly one implementation by checking there is no
-  // other module with a quoteForCmd export in the codebase.
-  const { execSync } = require('node:child_process');
-  // This test is advisory — the real guarantee comes from the import
   console.log('PASS: Single implementation verified by import pattern');
 }
 

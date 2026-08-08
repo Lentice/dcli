@@ -8,7 +8,6 @@ const { spawn } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const { JobStore } = require(path.join(ROOT, 'core', 'job-store'));
-const { isProcessAlive } = require(path.join(ROOT, 'core', 'process-identity'));
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-ht-test-'));

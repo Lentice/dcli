@@ -10,8 +10,8 @@ const { reduce } = require('../../core/reducer');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { cancelJob } = require('../../core/cancel');
 const {
-  makeBaseState, makeEvidence,
-  assertRecovery, assertJournalCoherent, assertNoLocks, assertIdempotent,
+  makeEvidence,
+  assertRecovery, assertJournalCoherent, assertIdempotent,
   assertAllInvariants,
   __setInjectHook, __resetInject,
 } = require('../helpers/fault-injection');
@@ -67,8 +67,6 @@ function transitionToRunning(store, jobId, attemptNum) {
     },
   });
 }
-
-const TERMINAL = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
 async function main() {
 

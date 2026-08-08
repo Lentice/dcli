@@ -5,7 +5,7 @@ const os = require('node:os');
 
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { executeRun } = require('../../core/commands/run');
-const { executeResume, VALID_KINDS } = require('../../core/commands/resume');
+const { executeResume } = require('../../core/commands/resume');
 const { executeSubmit } = require('../../core/commands/submit');
 const { JobStore } = require('../../core/job-store');
 const { generateJobId } = require('../../core/job-id');
@@ -155,7 +155,6 @@ await withTempDir(async (dir) => {
 // 2. run.js — implements mode writes prompt.md, command.json, result.md
 // =============================================================================
 await withTempDir(async (dir) => {
-  const { execFileSync } = require('child_process');
   const repoRoot = path.join(dir, 'repo');
   fs.mkdirSync(repoRoot, { recursive: true });
   const git = (args) => { const r = require('child_process').spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true }); return r; };

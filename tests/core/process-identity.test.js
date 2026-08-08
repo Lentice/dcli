@@ -1,7 +1,4 @@
 const assert = require('node:assert');
-const crypto = require('crypto');
-const path = require('path');
-const fs = require('fs');
 const os = require('os');
 
 let getOwnIdentity, generateExecutionToken, formatWorkerIdentity;

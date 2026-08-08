@@ -13,6 +13,7 @@ binding contracts live in the design spec and tests.
 | [84 — launch identity](84-launch-identity-never-persisted.md) | **done** (2026-08-04) | — | Persist launch identity before worker startup so cancel and reconciliation can prove ownership |
 | [85 — identityless records](85-identityless-records-never-terminate.md) | **done** (2026-08-04) | 82, 84 | Resolve records that can never prove a worker, bounded by the job's own deadline |
 | [86 — doctor never launches a backend](86-doctor-never-launches-a-backend.md) | **done** (2026-08-04) | — | The live smoke is off by default, so `doctor` certifies a backend it never exercised |
+| [88 — unused test imports](88-remove-unused-test-imports.md) | **done** (2026-08-09) | — | Remove the verified unused import bindings from fourteen test/helper files without changing behavior |
 
 All implementation tickets are closed. Every change must update the canonical docs and pass `npm run check` in
 an environment that permits the test suite's temporary directories.

@@ -1,6 +1,5 @@
 const assert = require('node:assert');
 const fs = require('fs');
-const path = require('path');
 
 const { reduce } = require('../../core/reducer');
 const { __setInjectHook, __resetInject } = require('../../core/inject-points');

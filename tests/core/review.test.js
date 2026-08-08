@@ -7,7 +7,7 @@ const { spawnSync } = require('child_process');
 
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { JobStore } = require('../../core/job-store');
-const { buildReviewPrompt, generateDiff, executeReview, getUntrackedFiles, getDroppedFilesFromDiff, sliceByBytes, DIFF_CAP_BYTES, UNTRACKED_SIZE_LIMIT } = require('../../core/commands/review');
+const { buildReviewPrompt, generateDiff, executeReview, getUntrackedFiles, getDroppedFilesFromDiff, sliceByBytes, DIFF_CAP_BYTES } = require('../../core/commands/review');
 const { parseFindings, APPENDIX_MARKER, KNOWN_SEVERITIES } = require('../../core/findings');
 const { createGitRepoTemplate } = require('../helpers/git-repo-template');
 let repoTemplate;

@@ -5,7 +5,7 @@ const os = require('node:os');
 
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { executeRun } = require('../../core/commands/run');
-const { executeResume, VALID_KINDS } = require('../../core/commands/resume');
+const { executeResume } = require('../../core/commands/resume');
 const { JobStore } = require('../../core/job-store');
 const { generateJobId } = require('../../core/job-id');
 const {

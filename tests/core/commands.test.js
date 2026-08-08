@@ -84,8 +84,6 @@ await withTempDir(async (dir) => {
 
   // We need to test the functions directly since CLI parsing for stdin
   // detection (isTTY) is environment-dependent.
-  // Test prompt resolution via the parsePrompt function
-  const { parsePrompt } = require('../../core/commands/index');
   const { executeRun } = require('../../core/commands/run');
 
   const store = new JobStore({ stateRoot: dir });
@@ -719,7 +717,6 @@ await withTempDir(async (dir) => {
 // not just the standalone worktree.js primitives.
 // ===========================================================================
 await withTempDir(async (dir) => {
-  const { execFileSync } = require('child_process');
   const repoRoot = path.join(dir, 'repo');
   fs.mkdirSync(repoRoot, { recursive: true });
   const git = (args) => spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true });

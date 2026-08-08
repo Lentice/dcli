@@ -4,7 +4,6 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { OpencodeAdapter, resolveOpencodePath } = require('../../../adapters/opencode/adapter');
-const { validateFact } = require('../../../core/fact-types');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
