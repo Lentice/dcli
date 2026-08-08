@@ -1,7 +1,6 @@
 const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 const { getDiff } = require('../worktree');
 
-const { TERMINAL } = require('../reducer');
 const { loadJobOrThrow } = require('./index');
 
 function executeDiff({ store, repoKey, jobId, stat, nameOnly }) {

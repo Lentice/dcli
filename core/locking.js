@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { getOwnIdentity, generateExecutionToken, isProcessAlive, isSameProcessAlive } = require('./process-identity');
+const { getOwnIdentity, generateExecutionToken, isSameProcessAlive } = require('./process-identity');
 
 // Only scopes with a real caller. Lock names are persisted as filenames, so a
 // scope is a contract the moment something takes it — add one when a caller

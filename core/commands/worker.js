@@ -46,7 +46,6 @@ async function main() {
   }
 
   const { JobStore } = require('../job-store');
-  const { buildEnvelope } = require('./index');
   const { AdmissionController } = require('../admission');
   const { getBackendLimits } = require('../../adapters/registry');
   const store = new JobStore({ stateRoot });

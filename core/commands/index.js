@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { generateJobId, isJobId } = require('../job-id');
+const { isJobId } = require('../job-id');
 const { resolveDeadline } = require('../deadlines');
 const { parseDuration } = require('./cleanup');
 
@@ -109,7 +109,7 @@ const COMMAND_SUGGESTIONS = Object.freeze({
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'resume', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
 
-const { KNOWN_BACKENDS, getBackendLimits } = require('../../adapters/registry');
+const { KNOWN_BACKENDS } = require('../../adapters/registry');
 
 // Threshold below which a non-zero-exit result is treated as "no usable
 // result produced" (the backend emitted only a few dozen bytes of

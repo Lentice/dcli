@@ -1,7 +1,6 @@
 const { spawn } = require('node:child_process');
 const fs = require('fs');
 const path = require('path');
-const { EventEmitter } = require('events');
 
 const HELPER_RELATIVE_PATH_DEBUG = path.resolve(__dirname, '..', 'native', 'windows-job-helper', 'bin', 'Debug', 'net10.0', 'contain.exe');
 const HELPER_RELATIVE_PATH_RELEASE = path.resolve(__dirname, '..', 'native', 'windows-job-helper', 'bin', 'Release', 'contain.exe');

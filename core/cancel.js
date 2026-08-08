@@ -1,4 +1,3 @@
-const fs = require('fs');
 const path = require('path');
 const { writeTextFileAtomic } = require('./fs-text');
 const { isProcessAlive } = require('./process-identity');
