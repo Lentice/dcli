@@ -1,7 +1,7 @@
 // @suite full
 // @serial  kills process trees; asserts descendant sets
 const assert = require('node:assert');
-const { spawn, execSync } = require('node:child_process');
+const { spawn, execSync, spawnSync } = require('node:child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -182,7 +182,7 @@ async function main() {
     console.log('PASS: fail-closed on missing helper');
   }
 
-  // 9. Visible-window test: no descendant owns a visible window
+  // 9. Visible-window invariant: no descendant owns a visible window
   {
     const ctx = new Containment.ContainmentContext(HELPER_PATH);
     const result = await ctx.spawn({
@@ -191,45 +191,96 @@ async function main() {
     });
     await sleep(500);
 
-    // Count all visible windows on the desktop to prove detector works
-    const desktopWindowCount = countVisibleWindows();
-    assert.ok(desktopWindowCount > 0, 'Desktop should have visible windows');
-
-    // Check that our process doesn't own any visible windows
-    const badPids = findDescendantWindows([result.pid]);
-    assert.strictEqual(badPids.length, 0,
-      `No descendant should own a visible window, found: ${JSON.stringify(badPids)}`);
+    // The external-desktop prerequisite: the detector must be able to see the
+    // desktop's own windows. A failed query is NOT a verified zero-window
+    // result, so it can never stand in for proof of safety.
+    const desktop = queryDesktopWindows();
+    if (!desktop.ok) {
+      console.log(`SKIP: GUI window coverage — desktop window query failed: ${desktop.error}`);
+      console.log('      no-visible-window invariant NOT verifiable this run (a failed query is not proof of safety).');
+    } else {
+      // This check runs in headless sessions too: a contained child that put a
+      // window on the desktop would show up here regardless of what the desktop
+      // started with.
+      const badPids = findDescendantWindows([result.pid]);
+      assert.ok(badPids !== null,
+        'descendant window query must not fail when the desktop query succeeded');
+      assert.strictEqual(badPids.length, 0,
+        `No descendant should own a visible window, found: ${JSON.stringify(badPids)}`);
+      console.log(`  Desktop windows: ${desktop.count}, descendant windows: 0`);
+      if (desktop.count > 0) {
+        console.log('PASS: no visible windows from contained process (desktop verified)');
+      } else {
+        console.log('SKIP: GUI detector proof — verified headless desktop (0 visible windows);');
+        console.log('      descendant-ownership check still ran and found none.');
+      }
+    }
 
     await ctx.terminate({ executionToken: result.executionToken, graceMs: 500 });
     ctx.close();
-    console.log(`  Desktop windows: ${desktopWindowCount}, descendant windows: 0`);
-    console.log('PASS: no visible windows from contained process');
+  }
+
+  // 10. GUI-enabled: the visible-window detector must catch a real violation.
+  //     Opt-in only (DCLI_GUI_SMOKE=1) so a normal run never flashes a window.
+  {
+    const guiSmoke = process.env.DCLI_GUI_SMOKE;
+    if (!guiSmoke || guiSmoke === '0') {
+      console.log('SKIP: GUI-enabled detector test — DCLI_GUI_SMOKE not set;');
+      console.log('      set DCLI_GUI_SMOKE=1 in an interactive desktop session to run it.');
+    } else {
+      const desktop = queryDesktopWindows();
+      if (!desktop.ok) {
+        console.log(`SKIP: GUI-enabled detector test — desktop window query failed: ${desktop.error}`);
+        console.log('      GUI path cannot run (a failed query is not proof of safety).');
+      } else if (desktop.count === 0) {
+        console.log('SKIP: GUI-enabled detector test — verified headless desktop (0 visible windows);');
+        console.log('      needs an interactive desktop session.');
+      } else {
+        const ctx = new Containment.ContainmentContext(HELPER_PATH);
+        const result = await ctx.spawn({ args: ['notepad'], stdio: 'null' });
+        await sleep(2500);
+
+        const badPids = findDescendantWindows([result.pid]);
+        assert.ok(badPids !== null, 'descendant window query must succeed in the GUI path');
+        assert.ok(badPids.length > 0,
+          `GUI path must detect the visible probe window it created; found none for descendant set of pid ${result.pid}`);
+        console.log(`  Detected visible probe window owned by descendant pid(s): ${badPids.join(', ')}`);
+
+        await ctx.terminate({ executionToken: result.executionToken, graceMs: 2000 });
+        ctx.close();
+        console.log('PASS: GUI detector caught a real visible descendant window');
+      }
+    }
   }
 
   console.log('\nAll containment tests passed.');
 }
 
-function countVisibleWindows() {
-  try {
-    const out = execSync(
-      `powershell -NoProfile -Command "(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Measure-Object).Count"`,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true }
-    );
-    return parseInt(out.trim(), 10);
-  } catch { return 0; }
+function queryDesktopWindows() {
+  const res = spawnSync(
+    'powershell', ['-NoProfile', '-Command',
+      '(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Measure-Object).Count'],
+    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+  );
+  if (res.error || res.status !== 0) {
+    const detail = (res.stderr || (res.error && res.error.message) || '').toString().trim();
+    return { ok: false, error: detail || 'window query failed' };
+  }
+  const errText = (res.stderr || '').trim();
+  if (errText) return { ok: false, error: errText };
+  const n = parseInt((res.stdout || '').trim(), 10);
+  if (Number.isNaN(n)) return { ok: false, error: `non-numeric count from query: ${JSON.stringify((res.stdout || '').trim())}` };
+  return { ok: true, count: n };
 }
 
 function findDescendantWindows(pids) {
-  try {
-    const psScript = `$$pids = @(${pids.join(',')}); (Get-Process | Where-Object { $$_.MainWindowHandle -ne 0 -and $$pids -contains $$_.Id } | Select-Object -ExpandProperty Id) -join ','`;
-    const out = execSync(
-      `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true }
-    );
-    const trimmed = out.trim();
-    if (!trimmed) return [];
-    return trimmed.split(',').map(Number).filter(n => !isNaN(n));
-  } catch { return []; }
+  const psScript = `$pids = @(${pids.join(',')}); (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $pids -contains $_.Id } | Select-Object -ExpandProperty Id) -join ','`;
+  const res = spawnSync('powershell', ['-NoProfile', '-Command', psScript],
+    { encoding: 'utf8', timeout: 5000, windowsHide: true });
+  if (res.error || res.status !== 0 || (res.stderr || '').trim()) return null;
+  const trimmed = (res.stdout || '').trim();
+  if (!trimmed) return [];
+  return trimmed.split(',').map(Number).filter(n => !isNaN(n));
 }
 
 main().catch(e => {
