@@ -167,21 +167,59 @@ function _rollbackOrReport(repoRoot, preHead, preStatusText, preUntracked, origi
     throw e;
   }
 
-  _hardReset(repoRoot, preHead, preUntracked);
-
-  if (hasResidualGitState(repoRoot)) {
-    clearResidualGitState(repoRoot);
-    if (hasResidualGitState(repoRoot)) {
-      const e = new Error('Apply failed, repo restored, but residual git state could not be cleared');
-      e.exitCode = 25; throw e;
-    }
-  }
+  _hardReset(repoRoot, preHead, preTrackedLines, originalError);
 }
 
-function _hardReset(repoRoot, preHead, preUntracked) {
-  spawnSync('git', ['reset', '--hard', preHead], { cwd: repoRoot, windowsHide: true, timeout: 30000 });
+function _hardReset(repoRoot, preHead, preTrackedLines, originalError) {
+  const reset = spawnSync('git', ['reset', '--hard', preHead], { cwd: repoRoot, encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  if (reset.error || reset.timedOut || reset.status !== 0) {
+    const reason = reset.timedOut
+      ? 'timed out'
+      : reset.error
+        ? reset.error.message
+        : `exited ${reset.status}: ${(reset.stderr || reset.stdout || '').trim()}`;
+    const e = new Error(
+      `Apply failed and repository NOT verified restored: git reset --hard failed (${reason}). ` +
+      `Manual inspection required.\n` +
+      `Original: ${originalError.message}`
+    );
+    e.exitCode = 25;
+    throw e;
+  }
   if (hasResidualGitState(repoRoot)) {
     clearResidualGitState(repoRoot);
+  }
+  _verifyRestored(repoRoot, preHead, preTrackedLines, originalError);
+}
+
+function _verifyRestored(repoRoot, preHead, preTrackedLines, originalError) {
+  const problems = [];
+
+  let head;
+  try { head = getHeadCommit(repoRoot); } catch { head = null; }
+  if (head !== preHead) {
+    problems.push(`HEAD is ${head}, expected ${preHead}`);
+  }
+
+  let postStatusText;
+  try { postStatusText = getStatusPorcelain(repoRoot); } catch { postStatusText = null; }
+  const postTracked = postStatusText === null ? null : _trackedChanges(postStatusText);
+  if (postTracked === null || postTracked.join('\n') !== preTrackedLines.join('\n')) {
+    problems.push('tracked files do not match the pre-apply state');
+  }
+
+  if (hasResidualGitState(repoRoot)) {
+    problems.push('residual git operation state remains');
+  }
+
+  if (problems.length > 0) {
+    const e = new Error(
+      `Apply failed and repository NOT verified restored: ${problems.join('; ')}. ` +
+      `Manual inspection required.\n` +
+      `Original: ${originalError.message}`
+    );
+    e.exitCode = 25;
+    throw e;
   }
 }
 
@@ -190,4 +228,4 @@ function _trackedChanges(statusText) {
   return statusText.split('\n').filter(Boolean).filter(l => !l.startsWith('?? '));
 }
 
-module.exports = { executeApply, _rollbackOrReport, _hardReset, _trackedChanges };
+module.exports = { executeApply, _rollbackOrReport, _hardReset, _verifyRestored, _trackedChanges };

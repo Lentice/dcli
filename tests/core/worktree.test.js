@@ -697,6 +697,52 @@ async function main() {
     }
   });
 
+  // ===========================================================================
+  // 27. Rollback fails closed when `git reset --hard` itself fails — regression
+  //     for the 2026-08-08 apply audit (ticket 89). A reset that does not
+  //     complete must NOT read as a successful rollback: _rollbackOrReport must
+  //     throw exit 25 naming that restoration was not verified, preserve the
+  //     original failure context, and leave the repository's unverified state
+  //     untouched.
+  // ===========================================================================
+  await testAsync('27. Rollback reports non-restoration when git reset --hard fails', async () => {
+    const { _rollbackOrReport } = require('../../core/commands/apply');
+    const { assertRealFailure } = require('../helpers/assert-failure');
+    await withTempDir(async (root) => {
+      const repoRoot = path.join(root, 'repo');
+      initRepo(repoRoot);
+      const preHead = getHeadCommit(repoRoot);
+      const preStatusText = getStatusPorcelain(repoRoot); // clean
+
+      // An unresolvable ref makes `git reset --hard <ref>` exit non-zero
+      // deterministically (git refuses an unknown revision before touching
+      // anything), so the only failing step is the reset itself.
+      const bogusRef = 'dcli-does-not-exist';
+
+      let threw = null;
+      try {
+        _rollbackOrReport(repoRoot, bogusRef, preStatusText, [], new Error('simulated apply failure'));
+      } catch (e) { threw = e; }
+
+      assertRealFailure(threw, {
+        exitCode: 25,
+        match: /NOT verified restored/i,
+      }, 'rollback with a failing git reset --hard');
+
+      assert.ok(/simulated apply failure/.test(threw.message),
+        'error must preserve the original failure context');
+      assert.ok(/git reset --hard failed/i.test(threw.message),
+        'error must name the reset failure');
+
+      // The unverified repository state must be preserved: nothing was reset,
+      // so HEAD is unchanged and the tree is still exactly as it was.
+      assert.strictEqual(getHeadCommit(repoRoot), preHead,
+        'a failed reset must not move HEAD');
+      assert.strictEqual(getStatusPorcelain(repoRoot).trim(), '',
+        'tree must be unchanged by a failed reset');
+    });
+  });
+
   console.log(`\nAll tests: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }
