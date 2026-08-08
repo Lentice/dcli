@@ -1,10 +1,10 @@
 const crypto = require('crypto');
 const path = require('path');
 const { generateJobId } = require('../job-id');
-const { runAttempt, prepareBackend } = require('./attempt');
+const { runAttempt, prepareBackend, releaseSetupResources } = require('./attempt');
 const { loadJobOrThrow } = require('./index');
 const { resolveHardTimeoutMs } = require('../deadlines');
-const { createDetachedWorktree, removeWorktree } = require('../worktree');
+const { createDetachedWorktree } = require('../worktree');
 const { persistInitFiles } = require('../result-artifact');
 const { workerIdentityDetail } = require('../process-identity');
 
@@ -74,6 +74,7 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
   let canonicalDir = repoRoot;
   let worktreePath = null;
   let worktreeBaseCommit = null;
+  let worktreeCreated = false;
   let parentSnapshotCommit = null;
 
   if (parentStatus.worktree && parentStatus.worktree.result_commit) {
@@ -89,6 +90,7 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
     worktreePath = path.join(stateRoot, 'worktrees', jobId);
     const seedCommit = kind === 'fork_from_artifacts' && parentSnapshotCommit ? parentSnapshotCommit : undefined;
     const wt = createDetachedWorktree(repoRoot, worktreePath, undefined, stateRoot, seedCommit);
+    worktreeCreated = true;
     worktreeBaseCommit = wt.baseCommit;
     canonicalDir = worktreePath;
   }
@@ -104,81 +106,81 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
     model, canonicalDir, reasoningEffort, variant, effort, access: inheritedAccess,
     ...(kind === 'continue_backend_session' ? { resumeSessionId: parentBackendSessionId } : {}),
   };
-  let prepared;
+
+  // Setup ownership boundary: same contract as run.js — the worktree and the
+  // admission slot acquired below are either handed to runAttempt() or
+  // released here before rethrowing. A failure in createJob/createAttemptDir/
+  // persistInitFiles used to strand both.
   try {
-    prepared = prepareBackend({ adapter, request });
+    const { manifest, backend, backendVersion, adapterVersion } = prepareBackend({ adapter, request });
+
+    if (admission) {
+      const result = admission.acquireSlot(backend);
+      if (!result.acquired) {
+        const err = new Error(`System at capacity (global: ${result.active}/${result.limit}). Try again later.`);
+        err.exitCode = 14;
+        throw err;
+      }
+      acquiredSlotId = result.slotId;
+    }
+
+    store.createJob({
+      jobId, repoKey, repoRoot,
+      backend,
+      backendVersion,
+      adapterVersion,
+      mode: inheritedMode,
+      access: inheritedAccess,
+      group, label, model,
+      hardTimeoutSec,
+      capabilitiesSnapshot: manifest,
+      parentJobId,
+      rootJobId: parentRootJobId,
+      sessionStrategy: kind,
+    });
+
+    const attemptNum = 1;
+    store.createAttemptDir({ repoKey, jobId, attemptNum });
+    persistInitFiles({
+      store, repoKey, jobId, attemptNum, prompt,
+      commandParams: {
+        model,
+        access: inheritedAccess,
+        mode: inheritedMode,
+        hardTimeoutMs: resolveHardTimeoutMs(hardTimeoutSec),
+        reasoningEffort,
+        variant,
+        effort,
+      },
+    });
+    store.journalTransition(jobId, repoKey, {
+      kind: 'attempt_created',
+      attempt: attemptNum,
+      from: null,
+      to: 'created',
+      detail: { attempt_id: `attempt-${attemptNum}`, execution_token: 'tok-' + crypto.randomBytes(16).toString('hex') },
+    });
+
+    store.journalTransition(jobId, repoKey, {
+      kind: 'attempt_state_changed',
+      attempt: attemptNum,
+      from: 'created',
+      to: 'running',
+      detail: {
+        started_at: isoNow,
+        phase: 'agent_running',
+        session_strategy: kind,
+        ...workerIdentityDetail({ durable: false }),
+        ...(worktreePath ? { worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit } : {}),
+      },
+    });
   } catch (err) {
-    if (worktreePath) removeWorktree(repoRoot, worktreePath);
+    releaseSetupResources({ repoRoot, worktreePath, worktreeCreated, admission, acquiredSlotId });
     throw err;
   }
-  const { manifest, backend, backendVersion, adapterVersion } = prepared;
-
-  const capabilitiesSnapshot = manifest;
-
-  if (admission) {
-    const result = admission.acquireSlot(backend);
-    if (!result.acquired) {
-      if (worktreePath) removeWorktree(repoRoot, worktreePath);
-      const err = new Error(`System at capacity (global: ${result.active}/${result.limit}). Try again later.`);
-      err.exitCode = 14;
-      throw err;
-    }
-    acquiredSlotId = result.slotId;
-  }
-
-  store.createJob({
-    jobId, repoKey, repoRoot,
-    backend,
-    backendVersion,
-    adapterVersion,
-    mode: inheritedMode,
-    access: inheritedAccess,
-    group, label, model,
-    hardTimeoutSec,
-    capabilitiesSnapshot,
-    parentJobId,
-    rootJobId: parentRootJobId,
-    sessionStrategy: kind,
-  });
-
-  const attemptNum = 1;
-  store.createAttemptDir({ repoKey, jobId, attemptNum });
-  persistInitFiles({
-    store, repoKey, jobId, attemptNum, prompt,
-    commandParams: {
-      model,
-      access: inheritedAccess,
-      mode: inheritedMode,
-      hardTimeoutMs: resolveHardTimeoutMs(hardTimeoutSec),
-      reasoningEffort,
-      variant,
-      effort,
-    },
-  });
-  store.journalTransition(jobId, repoKey, {
-    kind: 'attempt_created',
-    attempt: attemptNum,
-    from: null,
-    to: 'created',
-    detail: { attempt_id: `attempt-${attemptNum}`, execution_token: 'tok-' + crypto.randomBytes(16).toString('hex') },
-  });
-
-  store.journalTransition(jobId, repoKey, {
-    kind: 'attempt_state_changed',
-    attempt: attemptNum,
-    from: 'created',
-    to: 'running',
-    detail: {
-      started_at: isoNow,
-      phase: 'agent_running',
-      session_strategy: kind,
-      ...workerIdentityDetail({ durable: false }),
-      ...(worktreePath ? { worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit } : {}),
-    },
-  });
 
   return runAttempt({
-    store, adapter, repoKey, repoRoot, jobId, attemptNum, prompt, request,
+    store, adapter, repoKey, repoRoot, jobId, attemptNum: 1, prompt, request,
     worktreePath, worktreeBaseCommit, hardTimeoutSec, admission, acquiredSlotId,
     onStarted: kind === 'continue_backend_session'
       ? (attempt) => adapter.Resume(attempt, kind, prompt)

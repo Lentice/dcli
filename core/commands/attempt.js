@@ -328,7 +328,27 @@ async function runAttempt({
   };
 }
 
-module.exports = { runAttempt, prepareBackend, persistStartedFact };
+/**
+ * Release the resources a run/resume command acquired before the handoff to
+ * runAttempt(). Called only on setup failure: after a successful handoff,
+ * runAttempt owns the worktree and slot and finalizes both itself. Track
+ * worktreeCreated rather than worktreePath alone: createDetachedWorktree
+ * throws "path already exists" for a pre-existing directory, and calling
+ * removeWorktree for it would delete a directory setup never created.
+ *
+ * @param {Object}   a
+ * @param {string}   a.repoRoot
+ * @param {string|null} a.worktreePath
+ * @param {boolean}  a.worktreeCreated
+ * @param {Object|null} a.admission
+ * @param {string|null} a.acquiredSlotId
+ */
+function releaseSetupResources({ repoRoot, worktreePath = null, worktreeCreated = false, admission = null, acquiredSlotId = null }) {
+  if (worktreeCreated && worktreePath) removeWorktree(repoRoot, worktreePath);
+  if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
+}
+
+module.exports = { runAttempt, prepareBackend, persistStartedFact, releaseSetupResources };
 
 function persistStartedFact(store, repoKey, jobId, attemptNum, fact) {
   if (!fact || fact.type !== 'started') return;
