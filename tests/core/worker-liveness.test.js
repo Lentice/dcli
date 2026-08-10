@@ -419,8 +419,15 @@ async function main() {
       assert.strictEqual(listed.jobs[0].job_id, 'liveness-11');
 
       // A corrupt projection is the same situation: replayable from the journal.
+      // The store only replays when the journal is at least as new as the
+      // projection (mtime comparison), so writing the corrupt status.json
+      // after the journal left the verdict to the wall clock's mtime tick.
+      // Bump the journal's mtime to make the stale branch deterministic.
       seedRunningJob(store, 'liveness-12', {});
-      fs.writeFileSync(path.join(store.getJobDir(REPO_KEY, 'liveness-12'), 'status.json'), '{ not json', 'utf8');
+      const liveness12Dir = store.getJobDir(REPO_KEY, 'liveness-12');
+      fs.writeFileSync(path.join(liveness12Dir, 'status.json'), '{ not json', 'utf8');
+      const bump = new Date(Date.now() + 1000);
+      fs.utimesSync(path.join(liveness12Dir, 'journal.jsonl'), bump, bump);
       const relisted = await executeList({ store });
       const row = relisted.jobs.find(j => j.job_id === 'liveness-12');
       assert.ok(row, 'a corrupt projection must be regenerated, not reported as an unreadable job');

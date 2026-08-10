@@ -1,6 +1,6 @@
 # 106 — worker-liveness §6g is flaky: corrupt-projection regeneration depends on file mtime ticks
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Test reliability — the suite's green/red verdict is a coin flip on the wall clock; a
 regression in the corrupt-projection path could be masked or, more likely, the suite fails spuriously
@@ -89,4 +89,28 @@ for i in 1 2 3 4 5; do node tests/core/worker-liveness.test.js || exit 1; done
 
 ## Notes
 
-(Left empty by the author.)
+**Decision: option 1** — test-side fix. In §6g, after writing the corrupt `status.json`, bump the
+journal's mtime (`fs.utimesSync`, target `Date.now() + 1000`) so `journal.mtimeMs >= status.mtimeMs`
+is guaranteed and the store's stale branch (replay) is taken deterministically. The store's mtime
+comparison stays the behavior under test.
+
+Why not option 2 (store-side: treat an unparseable `status.json` as stale before the mtime
+comparison and fall back to replay):
+- The ticket orders option 1 as the cheapest diff and it keeps the store's comparison as the
+  behavior under test.
+- Option 2 is a behavior change in `core/job-store.js`: a corrupt-but-fresh projection flips from
+  the exit-17 `errors` path to self-healing replay. The ticket itself flags that this needs its own
+  judgment and possibly a design-spec note, and the non-goal bars touching exit-17 semantics for
+  unreadable records — this ticket is scoped as test reliability.
+- In real operation the journal is appended before `status.json` is regenerated, so the projection
+  is normally the newer file; the flake was purely a fixture artifact (the corrupt write landing
+  after the journal).
+
+Evidence:
+- Before: a 10-run probe reproduced the §6g failure 4 times (runs 2, 7, 8, 10), consistent with the
+  ticket's observed 11/20.
+- After: acceptance criterion A — 20 consecutive runs, zero failures. Agent checks — 5 consecutive
+  runs, "All worker liveness tests passed." every run. `npm run lint` clean.
+- Criterion Z (`npm run check` full green) is deferred to the integration verification phase per the
+  runner's instruction; this change is confined to `tests/core/worker-liveness.test.js` (no
+  `core/` change), so the rest of the suite is not affected.

@@ -50,7 +50,6 @@ recommended order.
 | [100 — opencode transport seam](100-opencode-adapter-transport-seam.md) | ready | — | Twenty-one `_testMode` branches, and tests that reach into private methods; supply a transport and an SSE source |
 | [102 — unix process-group containment](102-unix-process-group-containment.md) | ready | — | Rung 1 of ADR-010. Backends are spawned without `detached` and killed by pid, so descendants survive; on Unix this is a full guarantee costing one spawn option |
 | [103 — windows degraded tree kill](103-windows-declared-degraded-tree-termination.md) | blocked | 102 | Rung 2 of ADR-010. Verified descendant enumeration + `taskkill /T /F`, `degraded: true`, survivors named and exit `21` — never a kill it did not confirm |
-| [106 — worker-liveness §6g is flaky: corrupt-projection regeneration depends on file mtime ticks](106-liveness-6g-corrupt-projection-flake.md) | ready | — | The `status.json`-corruption check in liveness §6g only passes when the corrupt write shares an mtime tick with the journal — measured coin flip |
 <!-- /GENERATED: ticket table -->
 
 ## Closed
@@ -81,6 +80,7 @@ recommended order.
 | [96 — job-store owns scanning](96-job-store-owns-record-scanning.md) | done | — | Four commands reach into `store._stateRoot`; three rebuild the jobs walk and disagree on what exit `17` means |
 | [101 — reducer decides publishability](101-reducer-decides-publishability.md) | done | — | `JobStore` re-derives half the reducer's decision by matching a `failure.reason` string literal |
 | [98 — split `commands/index.js`](98-split-the-commands-index-grab-bag.md) | done | — | Five unrelated subjects in one 576-line file that every module imports; also deletes the dead `KNOWN_FLAGS` export |
+| [106 — worker-liveness §6g is flaky: corrupt-projection regeneration depends on file mtime ticks](106-liveness-6g-corrupt-projection-flake.md) | done | — | The `status.json`-corruption check in liveness §6g only passes when the corrupt write shares an mtime tick with the journal — measured coin flip |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was
