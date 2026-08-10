@@ -1,6 +1,6 @@
 # 97 — One worker spawn path; the queued relaunch and the initial submit are two copies with different environments
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Correctness. Launch identity is what lets cancellation and reconciliation prove ownership —
 ticket 84 exists because it was once not persisted. That code now exists twice, and the two copies pass
@@ -176,3 +176,61 @@ ticket 97: one worker spawn path for submit and queued relaunch
 ## Notes
 
 (Left empty by the author.)
+
+## Notes — 2026-08-10 implementation
+
+**env-diff evidence (criterion C, "fails today").** The env-diff test targets `core/worker-spawn.js`
+directly, so today it failed at module load: `Cannot find module '../../core/worker-spawn'`
+(`MODULE_NOT_FOUND`, tests/core/worker-spawn.test.js). The two existing spawn bodies' envs were
+already byte-identical except `DCLI_QUEUE_CLAIM_PATH` — as the handoff suspected after tickets 92/95,
+so no env *value* diverged; the divergence was structural: the worker path always set
+`DCLI_QUEUE_CLAIM_PATH` (to `''` when the claim was absent — never exercised, since admission only
+invokes the callback with a real claim path), the submit path never set it. The module now sets it
+only when `queueClaimPath !== null`, and `tests/core/worker-spawn.test.js` asserts the captured child
+envs (via NODE_OPTIONS preload) differ by nothing but that key, with `DCLI_JOB_ID` excluded from the
+diff as a per-job key, not a per-call-site one.
+
+**stdio/ordering decision (ticket handoff step 5).** Took `submit.js`'s ordering verbatim, as
+directed: spawn → `recordWorkerLaunch` (identity persisted before the child can begin work, ticket 84)
+→ wait for the `spawn` event (bounded 1 s) with `error` journaling `worker_spawn_failed` → `unref`.
+This is also the ordering the queued path now inherits. Two consequences worth recording:
+
+- The queued relaunch previously attached **no** `error` listener to its child — an asynchronous spawn
+  failure would have surfaced as an unhandled `error` event and crashed the hosting worker process.
+  The module's handler now covers both call sites (queued-path spawn failures journal
+  `worker_spawn_failed`; the `from: 'created'` in that journal entry is submit's original body,
+  carried verbatim — for a queued job the reducer ignores it, since reconciliation only decides for
+  `running`/`created` states, reducer.js:148).
+- `recordWorkerLaunch`'s `from` field follows the call site: `queueClaimPath !== null` → `'queued'`,
+  else `'created'`. Derived from the parameter rather than carried as a second param; asserted by test
+  (journal line contains `"from":"queued"` on the queued path).
+
+**hardTimeoutSec round-trip.** The queued callback passes `entry.hardTimeoutMs / 1000`; the module
+recomputes `× 1000` and stringifies. For integer millisecond values (the only ones enqueued —
+`parseInt` of the env var) the round trip is exact in IEEE-754 for all values < 2^53, so
+`DCLI_WORKER_HARD_TIMEOUT_MS` is byte-identical between paths.
+
+**Spawn options copied verbatim** from submit.js: `detached: true`, `windowsHide: true`,
+`stdio: ['ignore', workerLog, workerLog]`, argument array `[workerScript]`, never `shell: true`.
+Criterion E rests on the verbatim copy plus the Agent-check greps (`spawn(` absent from both
+commands, no `shell: true`/`cmd.exe /c` in the module) — no window-visibility detector is run here;
+none existed for the previous spawn sites either.
+
+**Return shape.** `{ child, launched }`. submit awaits `launched`; the worker.js callback is
+synchronous (admission does not await it), so it calls the module fire-and-forget — the module owns
+`unref`, the failure journaling, and the log handle (opened once, closed in `finally` after spawn,
+failure or not — no leaked handle to lock worker.log on Windows).
+
+**Discovery.** Journal entries are compact JSON (`"from":"queued"`, no space after the colon);
+an early assertion with spaced keys failed. Also: `getProcessStartTime` on a pid that has just exited
+prints a pwsh "null-valued expression" error to the test's stderr — pre-existing production noise from
+`workerIdentityDetail`, not a failure (tests pass with exit 0; the first capture variant held the child
+alive 300 ms before exit to avoid it where practical).
+
+**Tests.** `tests/core/worker-spawn.test.js` (new, `@suite full`/`@serial`): (1) module env-diff,
+criterion C; (2) queued-path identity-before-work ordering with a blocked child, criterion D; (3) real
+end-to-end queued relaunch — a live worker finishes, `releaseSlot` dequeues a seeded queue entry, the
+`setSpawnWorker` callback spawns the replacement through the module, and that child receives
+`DCLI_QUEUE_CLAIM_PATH` pointing at a `.launching-*` claim and runs the queued job to `done`.
+`tests/core/submit-launch-identity.test.js` (submit-path e2e, unchanged) and
+`tests/core/admission.test.js` stay green; `npm run check` green.

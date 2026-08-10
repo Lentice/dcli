@@ -1,10 +1,9 @@
 const path = require('path');
-const { spawn } = require('child_process');
-const fs = require('fs');
 const { loadJobOrThrow } = require('./index');
 const { openAttempt } = require('../job-setup');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { generateExecutionToken } = require('../process-identity');
+const { spawnWorker } = require('../worker-spawn');
 
 async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, stateRoot, backend }) {
   stateRoot = stateRoot || store._stateRoot;
@@ -66,83 +65,15 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     _adapterScript: adapter.script || null,
   });
 
-  // Spawn detached worker (admission slot acquired by the worker itself)
+  // Spawn detached worker (admission slot acquired by the worker itself).
+  // The initial submit has no queue claim; core/worker-spawn.js owns the
+  // spawn and the launch-identity persistence.
   await spawnWorker({
     store, stateRoot, backend: backend || attempt.backend, jobId, repoKey, repoRoot, hardTimeoutSec,
-    executionToken,
-  });
+    executionToken, queueClaimPath: null,
+  }).launched;
 
   return { jobId };
-}
-
-function spawnWorker({ store, stateRoot, backend, jobId, repoKey, repoRoot, hardTimeoutSec, executionToken }) {
-  const workerScript = path.resolve(__dirname, 'worker.js');
-  const workerLog = fs.openSync(path.join(stateRoot, 'jobs', repoKey, jobId, 'attempts', '1', 'worker.log'), 'a');
-  const hardTimeoutMs = hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0;
-
-  let child;
-  try {
-    child = spawn(process.execPath, [workerScript], {
-      detached: true,
-      windowsHide: true,
-      // The caller exits independently; redirect instead of creating an
-      // undrained pipe, while keeping worker diagnostics durable.
-      stdio: ['ignore', workerLog, workerLog],
-      env: {
-        ...process.env,
-        DCLI_WORKER: '1',
-        DCLI_STATE_ROOT: stateRoot,
-        DCLI_BACKEND: backend,
-        DCLI_JOB_ID: jobId,
-        DCLI_REPO_KEY: repoKey,
-        DCLI_REPO_ROOT: repoRoot,
-        DCLI_WORKER_HARD_TIMEOUT_MS: String(hardTimeoutMs),
-      },
-    });
-  } finally {
-    fs.closeSync(workerLog);
-  }
-
-  try {
-    store.recordWorkerLaunch({ jobId, repoKey, attempt: 1, from: 'created', pid: child.pid, executionToken });
-  } catch (err) {
-    try { child.kill(); } catch {}
-    throw err;
-  }
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve();
-    };
-    const journalSpawnFailure = (err) => {
-      try {
-        const { JobStore } = require('../job-store');
-        const store = new JobStore({ stateRoot });
-        store.journalTransition(jobId, repoKey, {
-          kind: 'attempt_state_changed',
-          attempt: 1,
-          from: 'created',
-          to: 'failed',
-          detail: {
-            finished_at: new Date().toISOString(),
-            phase: 'terminal',
-            failure_reason: 'worker_spawn_failed',
-            failure: err.message,
-          },
-        });
-      } catch {}
-      settle();
-    };
-    const timer = setTimeout(settle, 1000);
-    child.once('spawn', settle);
-    child.once('error', journalSpawnFailure);
-    // Allow parent to exit independently after the creation result is known.
-    child.unref();
-  });
 }
 
 module.exports = { executeSubmit };

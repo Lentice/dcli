@@ -20,6 +20,7 @@ const { writeJsonFileAtomic } = require('../fs-text');
 const { persistInitFiles } = require('../result-artifact');
 const { driveAttempt, createCancelSignal } = require('./attempt-driver');
 const { generateExecutionToken, workerIdentityDetail } = require('../process-identity');
+const { spawnWorker } = require('../worker-spawn');
 
 async function main() {
   const stateRoot = process.env.DCLI_STATE_ROOT;
@@ -64,42 +65,19 @@ async function main() {
   const admission = new AdmissionController({ stateRoot, backendLimits: getBackendLimits() });
   admission.reconcile();
   admission.setSpawnWorker((entry) => {
-    const { spawn } = require('child_process');
-    const workerPath = path.resolve(__dirname, 'worker.js');
-    const repoKey = entry.repoKey || 'unknown';
-    const workerLogPath = path.join(stateRoot, 'jobs', repoKey, entry.jobId, 'attempts', '1', 'worker.log');
-    const workerLog = fs.openSync(workerLogPath, 'a');
-    const queuedExecutionToken = entry.executionToken || executionToken;
-    let child;
-    try {
-      child = spawn(process.execPath, [workerPath], {
-        detached: true, windowsHide: true,
-        stdio: ['ignore', workerLog, workerLog],
-        env: {
-          ...process.env,
-          DCLI_WORKER: '1',
-          DCLI_STATE_ROOT: stateRoot,
-          DCLI_BACKEND: entry.backend,
-          DCLI_JOB_ID: entry.jobId,
-          DCLI_REPO_KEY: repoKey,
-          DCLI_REPO_ROOT: entry.repoRoot || stateRoot,
-          DCLI_WORKER_HARD_TIMEOUT_MS: String(entry.hardTimeoutMs || 0),
-          DCLI_QUEUE_CLAIM_PATH: entry.queueClaimPath || '',
-        },
-      });
-    } finally {
-      fs.closeSync(workerLog);
-    }
-    try {
-      store.recordWorkerLaunch({
-        jobId: entry.jobId, repoKey, attempt: 1, from: 'queued', pid: child.pid,
-        executionToken: queuedExecutionToken,
-      });
-    } catch (err) {
-      try { child.kill(); } catch {}
-      throw err;
-    }
-    child.unref();
+    // The queued relaunch goes through the same spawn path as the initial
+    // submit (core/worker-spawn.js); the queue claim is a parameter.
+    spawnWorker({
+      store,
+      stateRoot,
+      backend: entry.backend,
+      jobId: entry.jobId,
+      repoKey: entry.repoKey || 'unknown',
+      repoRoot: entry.repoRoot || stateRoot,
+      hardTimeoutSec: entry.hardTimeoutMs && entry.hardTimeoutMs > 0 ? entry.hardTimeoutMs / 1000 : null,
+      executionToken: entry.executionToken || executionToken,
+      queueClaimPath: entry.queueClaimPath,
+    });
   });
 
   const slotResult = admission.acquireSlot(backendName);
