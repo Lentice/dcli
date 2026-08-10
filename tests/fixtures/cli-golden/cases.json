@@ -1,0 +1,202 @@
+{
+  "_comment": "Byte-exact CLI output captured BEFORE ticket 98 (split core/commands/index.js). stdout/stderr are base64 of raw child-process buffers; exitCode is the raw status. Only the job-not-found case substitutes {{REPO_KEY}} (sha256 of the machine temp path). Regenerate: run the same invocations with DCLI_STATE_ROOT pointing at an empty dir.",
+  "capturedBefore": "ticket 98 refactor",
+  "cases": [
+    {
+      "name": "help",
+      "args": [
+        "--help"
+      ],
+      "stdoutB64": "ZGNsaSDigJQgZGVsZWdhdGUgd29yayB0byBhIGNvZGluZy1hZ2VudCBDTEkKClVzYWdlOgogIGRjbGkgLS1iYWNrZW5kIDxuYW1lPiA8Y29tbWFuZD4gW29wdGlvbnNdCgpDb21tYW5kczoKICBydW4gICAgICAgUnVuIGEgcHJvbXB0IHN5bmNocm9ub3VzbHkKICBzdWJtaXQgICAgU3VibWl0IGEgYmFja2dyb3VuZCBqb2IKICBzdGF0dXMgICAgU2hvdyBqb2Igc3RhdHVzCiAgd2FpdCAgICAgIFdhaXQgZm9yIGEgam9iIHRvIGNvbXBsZXRlCiAgcmVhZCAgICAgIFJlYWQgYSB0ZXJtaW5hbCBqb2IncyByZXN1bHQKICBsaXN0ICAgICAgTGlzdCBqb2JzCiAgcmVzdW1lICAgIFJlc3VtZSBhIGNvbXBsZXRlZCBqb2IgKC0ta2luZDogY29udGludWVfYmFja2VuZF9zZXNzaW9uIHwgZm9ya19mcm9tX2FydGlmYWN0cyB8IHJldHJ5X2F0dGVtcHQpCiAgY2FuY2VsICAgIENhbmNlbCBhIGpvYgogIHJldmlldyAgICBSdW4gYSBjb2RlIHJldmlldwogIHRhaWwgICAgICBTaG93IHRhaWwgb2Ygam9iIGxvZ3MKICBkZWJ1ZyAgICAgQ29tcGFjdCBqb2IgZGlhZ25vc2lzCiAgZGlmZiAgICAgIFNob3cgZGlmZiBvZiBhbiBpbXBsZW1lbnQtbW9kZSBqb2IKICBhcHBseSAgICAgQXBwbHkgY2hhbmdlcyBmcm9tIGFuIGltcGxlbWVudC1tb2RlIGpvYiB0byB0aGUgbWFpbiByZXBvc2l0b3J5CiAgY2xlYW51cCAgIFJlbW92ZSBhZ2VkIHRlcm1pbmFsIGpvYnMgYW5kIHdvcmt0cmVlIGFydGlmYWN0cwogIGNhcGFiaWxpdGllcyAgU2hvdyBlZmZlY3RpdmUgY2FwYWJpbGl0eSBtYW5pZmVzdAogIGRvY3RvciAgICBSdW4gc3lzdGVtIGFuZCBiYWNrZW5kIGhlYWx0aCBjaGVja3MKClNraWxsIHNsYXNoIGNvbW1hbmQgLT4gQ0xJIHN1YmNvbW1hbmQ6CiAgZGNsaS08Yj46am9icyAgICAgICAtPiBkY2xpIC0tYmFja2VuZCA8Yj4gbGlzdAogIGRjbGktPGI+OmFzayAgICAgICAgLT4gZGNsaSAtLWJhY2tlbmQgPGI+IHJ1bgogIGRjbGktPGI+OmltcGxlbWVudCAgLT4gZGNsaSAtLWJhY2tlbmQgPGI+IHJ1biAtLW1vZGUgaW1wbGVtZW50CiAgZGNsaS08Yj46cmV2aWV3ICAgICAtPiBkY2xpIC0tYmFja2VuZCA8Yj4gcmV2aWV3CiAgZGNsaS08Yj46cmVzdW1lICAgICAtPiBkY2xpIC0tYmFja2VuZCA8Yj4gcmVzdW1lCiAgZGNsaS08Yj46ZG9jdG9yICAgICAtPiBkY2xpIC0tYmFja2VuZCA8Yj4gZG9jdG9yCiAgZGNsaS08Yj46Y2xlYW51cCAgICAtPiBkY2xpIC0tYmFja2VuZCA8Yj4gY2xlYW51cAoKQ2Fub25pY2FsIHJlY2lwZSDigJQgb25lIHN5bmNocm9ub3VzIHJ1biwgYm90aCBidWRnZXRzIHNldDoKICBkY2xpIC0tYmFja2VuZCA8bmFtZT4gcnVuIC0tcmVwbyA8cGF0aD4gLS1wcm9tcHQtZmlsZSA8ZmlsZT4gXAogICAgLS1oYXJkLXRpbWVvdXQtc2VjIDkwMCAtLXRpbWVvdXQtc2VjIDkwMCAtLWxhYmVsIDxsYWJlbD4KVGhlIGNhbGxpbmcgdG9vbCdzIG93biB0aW1lb3V0IG11c3QgYmUgbG9uZ2VyIHRoYW4gLS1oYXJkLXRpbWVvdXQtc2VjLgoKT3B0aW9uczoKICAtLWhlbHAgICAgICAgICAgICAgICAgICAgIFNob3cgdGhpcyBtZXNzYWdlCiAgLS1iYWNrZW5kIDxuYW1lPiAgICAgICAgICBCYWNrZW5kIHRvIHVzZSAob3BlbmNvZGUsIGNvZGV4LCBjbGF1ZGUsIGZha2UpCiAgLS1yZXBvIDxwYXRoPiAgICAgICAgICAgICBSZXBvc2l0b3J5IHBhdGgKICAtLXByb21wdC1maWxlIDxwYXRoPiAgICAgIFJlYWQgcHJvbXB0IGZyb20gZmlsZSAoY2Fub25pY2FsIHdheSB0byBzdXBwbHkgYSBmb2xsb3ctdXAgcHJvbXB0IGZvciByZXN1bWUpCiAgLS1oYXJkLXRpbWVvdXQtc2VjIDxuPiAgICBKb2IgaGFyZCB0aW1lb3V0IGluIHNlY29uZHMgKGRlZmF1bHQ6IDE4MDApCiAgLS1ncm91cCA8Zz4gICAgICAgICAgICAgICBKb2IgZ3JvdXAgbGFiZWwKICAtLWxhYmVsIDxsPiAgICAgICAgICAgICAgIEpvYiBsYWJlbAogIC0tbW9kZWwgPGlkPiAgICAgICAgICAgICAgTW9kZWwgaWRlbnRpZmllcgogIC0tanNvbiAgICAgICAgICAgICAgICAgICAgSlNPTiBvdXRwdXQgZW52ZWxvcGUKICAtLXRpbWVvdXQtc2VjIDxuPiAgICAgICAgIFdhaXQgdGltZW91dCBpbiBzZWNvbmRzIChkZWZhdWx0OiAzMDApCiAgLS1hbGwgICAgICAgICAgICAgICAgICAgICBXYWl0IGZvciBhbGwgbWF0Y2hpbmcgam9icwogIC0tb2xkZXItdGhhbiA8TmR8Tmg+ICAgICAgUmV0ZW50aW9uIHRocmVzaG9sZCAocG9zaXRpdmUgZGF5cyBvciBob3VycykKICAtLWRyeS1ydW4gICAgICAgICAgICAgICAgIFByZXZpZXcgY2xlYW51cCB3aXRob3V0IGRlbGV0aW5nCiAgLS1zY3J1Yi1zZXNzaW9uLWlkcyAgICAgICBCbGFuayByZWNvcmRlZCBiYWNrZW5kIHNlc3Npb24gaWRzCiAgLS1tYXgtYnl0ZXMgPG4+ICAgICAgICAgICBNYXhpbXVtIGJ5dGVzIGZvciB0YWlsIChkZWZhdWx0OiA0MDk2KQogIC0ta2luZCA8cz4gICAgICAgICAgICAgICAgUmVzdW1lIGtpbmQ6IGNvbnRpbnVlX2JhY2tlbmRfc2Vzc2lvbiwgZm9ya19mcm9tX2FydGlmYWN0cywgcmV0cnlfYXR0ZW1wdAogIC0tcmVhc29uaW5nLWVmZm9ydCA8cz4gICAgUmVhc29uaW5nIGVmZm9ydCBsZXZlbCAoYmFja2VuZC1zcGVjaWZpYykKICAtLXZhcmlhbnQgPHM+ICAgICAgICAgICAgIG9wZW5jb2RlLXNwZWNpZmljIHJlYXNvbmluZyB2YXJpYW50CiAgLS1lZmZvcnQgPHM+ICAgICAgICAgICAgICBDb2RleC9DbGF1ZGUgZWZmb3J0IGxldmVsCiAgLS1hY2Nlc3MgPHM+ICAgICAgICAgICAgICBBY2Nlc3MgbW9kZTogcmVhZC1vbmx5IChkZWZhdWx0KSwgd29ya3NwYWNlLCBmdWxsCiAgLS1tb2RlIDxzPiAgICAgICAgICAgICAgICBydW4gbW9kZTogcnVuIChkZWZhdWx0KSwgaW1wbGVtZW50ICh3b3JrdHJlZS1pc29sYXRlZCkKICAtLWxpdmUtc21va2UtdGltZW91dC1zZWMgPG4+ICBEb2N0b3IgbGl2ZSBzbW9rZSB0aW1lb3V0IGluIHNlY29uZHMgKGRlZmF1bHQ6IDEyMDsgMCA9IHN0YXRpYy1vbmx5KQogIC0tc3RhZ2VkICAgICAgICAgICAgICAgICAgICAgIFJldmlldyBzdGFnZWQgY2hhbmdlcyAoZ2l0IGRpZmYgLS1zdGFnZWQpCiAgLS13b3JraW5nICAgICAgICAgICAgICAgICAgICAgUmV2aWV3IHdvcmtpbmcgdHJlZSBjaGFuZ2VzIChkZWZhdWx0KQogIC0tcmFuZ2UgPGJhc2U+Li48aGVhZD4gICAgICAgIFJldmlldyBjaGFuZ2VzIGJldHdlZW4gYmFzZSBhbmQgaGVhZAogIC0tcGF0aCA8cD4gICAgICAgICAgICAgICAgICAgIExpbWl0IHRvIHNwZWNpZmljIHBhdGgocykgKHJlcGVhdGFibGUpCiAgLS1pbmNsdWRlLXVudHJhY2tlZCAgICAgICAgICAgSW5jbHVkZSB1bnRyYWNrZWQgZmlsZXMgaW4gcmV2aWV3CiAgLS1lbWJlZC1kaWZmICAgICAgICAgICAgICAgICAgRW1iZWQgdGhlIGRpZmYgaW4gdGhlIHByb21wdCAoZGVmYXVsdCkKICAtLWludGVudCA8cz4gICAgICAgICAgICAgICAgICBPbmUtbGluZSBkZXNjcmlwdGlvbiBvZiByZXZpZXcgaW50ZW50CiAgLS1mb2N1cyA8cz4gICAgICAgICAgICAgICAgICAgU3BlY2lmaWMgYXNwZWN0IHRvIGZvY3VzIG9uCiAgLS1zdGF0ICAgICAgICAgICAgICAgICAgICAgICAgU2hvdyBkaWZmc3RhdCAoZGlmZiBjb21tYW5kKQogIC0tbmFtZS1vbmx5ICAgICAgICAgICAgICAgICAgIFNob3cgZmlsZW5hbWVzIG9ubHkgKGRpZmYgY29tbWFuZCkKICAtLXJlc2V0LWF1dGhvciAgICAgICAgICAgICAgICBSZWF1dGhvciB0aGUgbGFuZGVkIGNvbW1pdCAoYXBwbHkgY29tbWFuZCkKICAtLW1lc3NhZ2UgPHM+ICAgICAgICAgICAgICAgICBSZXRpdGxlIHRoZSBsYW5kZWQgY29tbWl0IChhcHBseSBjb21tYW5kKQogIC0tYWxsb3ctdW50cmFja2VkICAgICAgICAgICAgIEFsbG93IHVucmVsYXRlZCB1bnRyYWNrZWQgZmlsZXMgaW4gd29ya2luZyB0cmVlIChhcHBseSBjb21tYW5kKQoKRXZlcnkgcmVjaXBlIHdpdGggYSB3YWl0IHNob3VsZCBzZXQgYm90aCAtLXRpbWVvdXQtc2VjIGFuZCAtLWhhcmQtdGltZW91dC1zZWMuCldoZW4gLS10aW1lb3V0LXNlYyBpcyBvbWl0dGVkLCB3YWl0IHVzZXMgMzAwcyBmb3IgdGhlIGNhbGxlci1zaWRlIGJ1ZGdldDsKdGhpcyBuZXZlciBjaGFuZ2VzIHRoZSBqb2IgaGFyZCB0aW1lb3V0LiBKU09OIHdhaXQgb3V0cHV0IGluY2x1ZGVzIHdhaXRfdGltZWRfb3V0IGFuZAp3YWl0X3RpbWVvdXRfc2VjIHNvIGEgY2FsbGVyIGNhbiBkaXN0aW5ndWlzaCBpdHMgb3duIGRlYWRsaW5lIGZyb20gdGhlIGpvYiBzdGF0ZS4KCkJhY2tlbmRzOgogIGZha2UgICAgICBUZXN0IGRvdWJsZSAodXNlZCBmb3IgZGV2ZWxvcG1lbnQgYW5kIHRlc3RpbmcgZGNsaSBpdHNlbGYpCiAgb3BlbmNvZGUgIG9wZW5jb2RlIHNlcnZlIHBlciBqb2Igb3ZlciBIVFRQCiAgY29kZXggICAgIGNvZGV4IGV4ZWMgLS1qc29uLCBwcm9tcHQgb24gc3RkaW4KICBjbGF1ZGUgICAgY2xhdWRlIC1wIC0tb3V0cHV0LWZvcm1hdCBzdHJlYW0tanNvbgoKRWFjaCBiYWNrZW5kIGhhcyBpdHMgb3duIHNoaW06IGRjbGktb3BlbmNvZGUsIGRjbGktY29kZXgsIGRjbGktY2xhdWRlLgoK",
+      "stderrB64": "",
+      "exitCode": 0
+    },
+    {
+      "name": "capabilities-fake-json",
+      "args": [
+        "--backend",
+        "fake",
+        "capabilities",
+        "--json"
+      ],
+      "stdoutB64": "ewogICJzY2hlbWFfdmVyc2lvbiI6IDEsCiAgImJhY2tlbmQiOiAiZmFrZSIsCiAgImJhY2tlbmRfdmVyc2lvbiI6ICIxLjAuMCIsCiAgImNvcmUiOiB7CiAgICAicnVuIjogdHJ1ZSwKICAgICJzdWJtaXQiOiB0cnVlLAogICAgInJlc3VtZSI6IHRydWUsCiAgICAiY2FuY2VsIjogdHJ1ZSwKICAgICJ3cmFwcGVyX3dvcmt0cmVlIjogdHJ1ZQogIH0sCiAgImV4dGVuc2lvbnMiOiB7fQp9Cg==",
+      "stderrB64": "",
+      "exitCode": 0
+    },
+    {
+      "name": "no-args",
+      "args": [],
+      "stdoutB64": "",
+      "stderrB64": "VXNhZ2U6IGRjbGkgLS1iYWNrZW5kIDxuYW1lPiA8Y29tbWFuZD4gW29wdGlvbnNdClJ1biBkY2xpIC0taGVscCBmb3IgZGV0YWlscy4K",
+      "exitCode": 2
+    },
+    {
+      "name": "unknown-command",
+      "args": [
+        "frobnicate"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "VW5rbm93biBjb21tYW5kOiBmcm9ibmljYXRlCkNvbW1hbmRzOiBydW4sIHN1Ym1pdCwgc3RhdHVzLCB3YWl0LCByZWFkLCBsaXN0LCBjYW5jZWwsIHJldmlldywgcmVzdW1lLCB0YWlsLCBkZWJ1ZywgY2xlYW51cCwgY2FwYWJpbGl0aWVzLCBkb2N0b3IsIGRpZmYsIGFwcGx5Cg==",
+      "exitCode": 2
+    },
+    {
+      "name": "command-suggestion",
+      "args": [
+        "jobs"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "VW5rbm93biBjb21tYW5kOiBqb2JzIOKAlCBkaWQgeW91IG1lYW4gJ2xpc3QnPwo=",
+      "exitCode": 2
+    },
+    {
+      "name": "unknown-flag",
+      "args": [
+        "run",
+        "--bogus-flag",
+        "x"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "VW5rbm93biBmbGFnOiAtLWJvZ3VzLWZsYWcK",
+      "exitCode": 2
+    },
+    {
+      "name": "valueless-flag",
+      "args": [
+        "run",
+        "--group"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "RmxhZyAtLWdyb3VwIHJlcXVpcmVzIGEgdmFsdWUK",
+      "exitCode": 2
+    },
+    {
+      "name": "unknown-backend",
+      "args": [
+        "--backend",
+        "nonesuch",
+        "run",
+        "x"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "VW5rbm93biBiYWNrZW5kICJub25lc3VjaCIuIE11c3QgYmUgb25lIG9mOiBvcGVuY29kZSwgY29kZXgsIGNsYXVkZSwgZmFrZQo=",
+      "exitCode": 2
+    },
+    {
+      "name": "bad-mode",
+      "args": [
+        "--backend",
+        "fake",
+        "run",
+        "--mode",
+        "bogus",
+        "x"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "SW52YWxpZCAtLW1vZGUgImJvZ3VzIjogbXVzdCBiZSAicnVuIiBvciAiaW1wbGVtZW50Igo=",
+      "exitCode": 2
+    },
+    {
+      "name": "bad-access",
+      "args": [
+        "--backend",
+        "fake",
+        "run",
+        "--access",
+        "nope",
+        "x"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "SW52YWxpZCAtLWFjY2VzcyAibm9wZSI6IG11c3QgYmUgInJlYWQtb25seSIsICJ3b3Jrc3BhY2UiLCBvciAiZnVsbCIK",
+      "exitCode": 2
+    },
+    {
+      "name": "bad-hard-timeout",
+      "args": [
+        "--backend",
+        "fake",
+        "run",
+        "--hard-timeout-sec",
+        "0",
+        "x"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "SW52YWxpZCAtLWhhcmQtdGltZW91dC1zZWM6ICIwIiBtdXN0IGJlIGEgcG9zaXRpdmUgaW50ZWdlcgo=",
+      "exitCode": 2
+    },
+    {
+      "name": "stray-positional",
+      "args": [
+        "list",
+        "extra"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "Imxpc3QiIGRvZXMgbm90IGFjY2VwdCBwb3NpdGlvbmFsIGFyZ3VtZW50cwo=",
+      "exitCode": 2
+    },
+    {
+      "name": "malformed-job-id",
+      "args": [
+        "status",
+        "123"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "Tm90IGEgZGNsaSBqb2IgSUQ6ICIxMjMiLiBkY2xpIGpvYiBJRHMgbG9vayBsaWtlIDIwMjYwODA0VDEyMzQ1NlotYTFiMmMzZDQuIFRoaXMgaWQgbWF5IGJlbG9uZyB0byBhbm90aGVyIHJ1bnRpbWU7IHJ1biBgbGlzdGAgdG8gc2VlIHRoaXMgcmVwb3NpdG9yeSdzIGRjbGkgam9icy4K",
+      "exitCode": 2
+    },
+    {
+      "name": "missing-job-id",
+      "args": [
+        "status"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "c3RhdHVzIHJlcXVpcmVzIGEgam9iIElECg==",
+      "exitCode": 2
+    },
+    {
+      "name": "job-not-found",
+      "args": [
+        "--repo",
+        "C:\\Users\\lenticetsai\\AppData\\Local\\Temp\\dcli-golden-repo",
+        "status",
+        "20260804T123456Z-a1b2c3d4"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "Sm9iIG5vdCBmb3VuZDoge3tSRVBPX0tFWX19LzIwMjYwODA0VDEyMzQ1NlotYTFiMmMzZDQK",
+      "exitCode": 3
+    },
+    {
+      "name": "json-malformed-job-id",
+      "args": [
+        "--json",
+        "status",
+        "123"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "Tm90IGEgZGNsaSBqb2IgSUQ6ICIxMjMiLiBkY2xpIGpvYiBJRHMgbG9vayBsaWtlIDIwMjYwODA0VDEyMzQ1NlotYTFiMmMzZDQuIFRoaXMgaWQgbWF5IGJlbG9uZyB0byBhbm90aGVyIHJ1bnRpbWU7IHJ1biBgbGlzdGAgdG8gc2VlIHRoaXMgcmVwb3NpdG9yeSdzIGRjbGkgam9icy4K",
+      "exitCode": 2
+    },
+    {
+      "name": "bad-kind",
+      "args": [
+        "resume",
+        "--kind",
+        "bogus",
+        "20260804T123456Z-a1b2c3d4"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "SW52YWxpZCAtLWtpbmQgImJvZ3VzIjogbXVzdCBiZSAiY29udGludWVfYmFja2VuZF9zZXNzaW9uIiwgImZvcmtfZnJvbV9hcnRpZmFjdHMiLCBvciAicmV0cnlfYXR0ZW1wdCIK",
+      "exitCode": 2
+    },
+    {
+      "name": "bad-range",
+      "args": [
+        "review",
+        "--range",
+        "nope"
+      ],
+      "stdoutB64": "",
+      "stderrB64": "LS1yYW5nZSBtdXN0IGJlIGluIGZvcm1hdCA8YmFzZT4uLjxoZWFkPgo=",
+      "exitCode": 2
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 const path = require('path');
-const { loadJobOrThrow } = require('./index');
+const { loadJobOrThrow } = require('../job-lookup');
 const { openAttempt } = require('../job-setup');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { generateExecutionToken } = require('../process-identity');

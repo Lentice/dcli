@@ -113,46 +113,6 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 3. Positional prompt works (lowest precedence)
-// ===========================================================================
-{
-  const { resolvePrompt } = require('../../core/commands/index');
-  // Simulate: no --prompt-file, stdin not piped (isTTY), positional = "hello"
-  const prompt = await resolvePrompt({ promptFile: null, stdinPipeActive: false, positionals: ['hello'] });
-  assert.strictEqual(prompt, 'hello', 'positional text must be used when no other source');
-}
-console.log('PASS: run test 3 — positional prompt');
-
-// ===========================================================================
-// 4. --prompt-file has highest precedence
-// ===========================================================================
-{
-  const { resolvePrompt } = require('../../core/commands/index');
-  const pFile = path.join(os.tmpdir(), 'dcli-test-prompt-' + Date.now());
-  fs.writeFileSync(pFile, 'file-content', 'utf8');
-  try {
-    const prompt = await resolvePrompt({ promptFile: pFile, stdinPipeActive: false, positionals: ['pos'] });
-    assert.strictEqual(prompt, 'file-content', '--prompt-file must have highest precedence');
-  } finally {
-    try { fs.unlinkSync(pFile); } catch {}
-  }
-}
-console.log('PASS: run test 4 — --prompt-file precedence');
-
-// ===========================================================================
-// 5. Present-but-unusable --prompt-file is an error
-// ===========================================================================
-{
-  const { resolvePrompt } = require('../../core/commands/index');
-  await assert.rejects(
-    resolvePrompt({ promptFile: '/nonexistent/file.md', stdinPipeActive: false, positionals: [] }),
-    /prompt-file/i,
-    'unreadable --prompt-file must throw'
-  );
-}
-console.log('PASS: run test 5 — unusable --prompt-file is error');
-
-// ===========================================================================
 // 5b. --hard-timeout-sec 0 is rejected with exit 2 at the CLI level
 // ===========================================================================
 await withTempDir(async (dir) => {
@@ -474,116 +434,6 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
-// 17. --json envelope has schema_version, all fields present, null when unset
-// ===========================================================================
-{
-  const { buildEnvelope } = require('../../core/commands/index');
-
-  const envelope = buildEnvelope({
-    job_id: 'test-job',
-    backend: 'fake',
-    state: 'done',
-    phase: 'terminal',
-    attempt: 1,
-    command_exit_code: 0,
-    backend_exit_code: null,
-    failure_reason: null,
-    failure: null,
-    findings_status: null,
-  });
-
-  assert.strictEqual(envelope.schema_version, 1, 'envelope must have schema_version');
-  assert.strictEqual(envelope.job_id, 'test-job');
-  assert.strictEqual(envelope.state, 'done');
-  assert.strictEqual(envelope.command_exit_code, 0);
-  assert.strictEqual(envelope.backend_exit_code, null);
-  assert.strictEqual(envelope.findings, null);
-  assert.strictEqual(envelope.findings_status, null);
-  // All fields present
-  const required = ['schema_version', 'job_id', 'backend', 'state', 'phase', 'attempt',
-    'command_exit_code', 'backend_exit_code', 'failure_reason', 'failure', 'findings', 'findings_status'];
-  for (const f of required) {
-    assert.ok(f in envelope, `envelope must have field "${f}"`);
-  }
-}
-console.log('PASS: --json envelope test');
-
-// ===========================================================================
-// 18. Valueless flags rejected with exit 2
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-
-  // --group without value
-  try {
-    parseArgs(['--backend', 'fake', 'run', '--group']);
-    assert.fail('Should have thrown for valueless --group');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'valueless flag must throw exit 2');
-    assert.ok(err.message.toLowerCase().includes('group') ||
-              err.message.toLowerCase().includes('value'),
-      `Error must mention the flag: ${err.message}`);
-  }
-
-  // --hard-timeout-sec without value
-  try {
-    parseArgs(['--backend', 'fake', 'run', '--hard-timeout-sec']);
-    assert.fail('Should have thrown for valueless --hard-timeout-sec');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2);
-  }
-}
-console.log('PASS: valueless flags rejected');
-
-// ===========================================================================
-// 19. Unknown flags rejected with exit 2
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-  try {
-    parseArgs(['--backend', 'fake', 'run', '--bogus-flag']);
-    assert.fail('Should have thrown for unknown flag');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2);
-    assert.ok(err.message.includes('bogus') || err.message.includes('unknown'),
-      `Error must mention unknown flag: ${err.message}`);
-  }
-}
-console.log('PASS: unknown flags rejected');
-
-// ===========================================================================
-// 20. Stray positionals rejected
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-  // For status/wait/read which take exactly one positional (job ID),
-  // extra positionals should be rejected
-  try {
-    parseArgs(['--backend', 'fake', 'status', '20260804T123456Z-a1b2c3d4', 'extra-arg']);
-    assert.fail('Should have thrown for stray positionals');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'stray positionals must throw exit 2');
-  }
-}
-console.log('PASS: stray positionals rejected');
-
-// ===========================================================================
-// 21. Range validation precedes conversion
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-  // Negative timeout must be rejected BEFORE any side effect
-  // (the store or adapter should not be touched)
-  try {
-    parseArgs(['--backend', 'fake', 'run', '--hard-timeout-sec', '-5']);
-    assert.fail('Should have thrown for negative timeout');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'negative timeout must exit 2');
-  }
-}
-console.log('PASS: range validation precedes conversion');
-
-// ===========================================================================
 // 22. --help dispatches quickly before heavyweight imports
 // ===========================================================================
 {
@@ -663,33 +513,6 @@ await withTempDir(async (dir) => {
   console.log('PASS: submit test 2 — job persists in store');
 });
 
-// ===========================================================================
-// 25. status --json emits envelope
-// ===========================================================================
-{
-  const { buildEnvelope } = require('../../core/commands/index');
-  const envelope = buildEnvelope({
-    job_id: 'json-test',
-    backend: 'fake',
-    state: 'running',
-    phase: 'agent_running',
-    attempt: 2,
-    command_exit_code: null,
-    backend_exit_code: null,
-    failure_reason: null,
-    failure: null,
-    findings_status: null,
-  });
-
-  assert.strictEqual(envelope.schema_version, 1);
-  assert.strictEqual(envelope.state, 'running');
-  assert.strictEqual(envelope.attempt, 2);
-  assert.strictEqual(envelope.command_exit_code, null);
-  assert.strictEqual(envelope.backend_exit_code, null);
-}
-console.log('PASS: status --json envelope');
-
-// ===========================================================================
 // 26. list cross-repository listing
 // ===========================================================================
 await withTempDir(async (dir) => {
@@ -780,39 +603,6 @@ await withTempDir(async (dir) => {
   console.log('PASS: implement mode — real run -> diff -> apply through executeRun (not just worktree.js primitives)');
 });
 
-// ===========================================================================
-// 25. --hard-timeout-sec 0 is rejected with exit 2
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-
-  try {
-    parseArgs(['--backend', 'fake', 'run', '--hard-timeout-sec', '0']);
-    assert.fail('Should have thrown for --hard-timeout-sec 0');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, '--hard-timeout-sec 0 must exit 2');
-    assert.ok(err.message.includes('positive integer'),
-      `Error must mention "positive integer": ${err.message}`);
-  }
-
-  try {
-    parseArgs(['--backend', 'fake', 'resume', '--hard-timeout-sec', '0',
-      '--kind', 'continue_backend_session', 'parent-job-id']);
-    assert.fail('Should have thrown for --hard-timeout-sec 0 on resume');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'resume with --hard-timeout-sec 0 must exit 2');
-  }
-
-  try {
-    parseArgs(['--backend', 'fake', 'submit', '--hard-timeout-sec', '0', 'background job']);
-    assert.fail('Should have thrown for --hard-timeout-sec 0 on submit');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'submit with --hard-timeout-sec 0 must exit 2');
-  }
-}
-console.log('PASS: --hard-timeout-sec 0 rejected');
-
-// ===========================================================================
 // 26. Default hard timeout is applied when --hard-timeout-sec is omitted
 // ===========================================================================
 await withTempDir(async (dir) => {
@@ -1076,52 +866,6 @@ await withTempDir(async (dir) => {
   console.log('PASS: resume via CLI with piped stdin succeeds');
 });
 
-// ===========================================================================
-// 32. --backend enum validation (unknown backend rejected)
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-  try {
-    parseArgs(['node', 'dcli', '--backend', 'nonesuch', 'run', '--hard-timeout-sec', '60', 'prompt']);
-    assert.fail('Should have thrown for unknown backend');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'unknown backend must exit 2');
-    assert.ok(err.message.includes('nonesuch'), `Error must name the backend: ${err.message}`);
-    assert.ok(err.message.includes('opencode'), `Error must list valid backends: ${err.message}`);
-  }
-}
-console.log('PASS: unknown backend rejected');
-
-// ===========================================================================
-// 33. --backend with path traversal rejected
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-  try {
-    parseArgs(['node', 'dcli', '--backend', '..\\..\\foo', 'run', '--hard-timeout-sec', '60', 'prompt']);
-    assert.fail('Should have thrown for path-traversal backend');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'path-traversal backend must exit 2');
-  }
-}
-console.log('PASS: path-traversal backend rejected');
-
-// ===========================================================================
-// 34. --backend set twice is rejected
-// ===========================================================================
-{
-  const { parseArgs } = require('../../core/commands/index');
-  try {
-    parseArgs(['node', 'dcli', '--backend', 'codex', '--backend', 'claude', 'run', '--hard-timeout-sec', '60', 'prompt']);
-    assert.fail('Should have thrown for double --backend');
-  } catch (err) {
-    assert.strictEqual(err.exitCode, 2, 'double --backend must exit 2');
-    assert.ok(err.message.includes('twice'), `Error must mention duplicate: ${err.message}`);
-  }
-}
-console.log('PASS: double --backend rejected');
-
-// ===========================================================================
 // 35. Observe ending without process_exited → interrupted (stream_closed, no error)
 // ===========================================================================
 await withTempDir(async (dir) => {

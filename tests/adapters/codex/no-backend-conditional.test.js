@@ -27,7 +27,6 @@ async function main() {
     'fact-types.js',       // defines the fact vocabulary (some backend names in comments/docs)
     'interaction-outcome.js', // shared enum
     'admission.js',        // admission controller references backends as slot keys
-    'commands/index.js',   // CLI arg parsing references all backends
     'reducer.js',          // reducer works with facts and is backend-agnostic
   ]);
 

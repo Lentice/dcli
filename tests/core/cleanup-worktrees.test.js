@@ -10,7 +10,7 @@ const { DEFAULT_TIMEOUT } = require('../run-tests');
 const { JobStore } = require('../../core/job-store');
 const { LockManager, LOCK_SCOPES } = require('../../core/locking');
 const { executeCleanup } = require('../../core/commands/cleanup');
-const { loadJobOrThrow } = require('../../core/commands/index');
+const { loadJobOrThrow } = require('../../core/job-lookup');
 
 function git(args, cwd) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: DEFAULT_TIMEOUT });

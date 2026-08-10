@@ -280,7 +280,7 @@ await withTempDir(async (dir) => {
 
 // 9. Hours are accepted by both argument parsing and cleanup conversion
 {
-  const { parseArgs } = require('../../core/commands/index');
+  const { parseArgs } = require('../../core/cli-args');
   const { parseDuration } = require('../../core/commands/cleanup');
   const parsed = parseArgs(['--backend', 'fake', 'cleanup', '--older-than', '12h']);
   assert.strictEqual(parsed.olderThan, '12h', '12h must be accepted by argument parsing');
@@ -291,7 +291,7 @@ await withTempDir(async (dir) => {
 
 // 10. Invalid --older-than values carry an identifiable validation failure
 {
-  const { parseArgs } = require('../../core/commands/index');
+  const { parseArgs } = require('../../core/cli-args');
 
   try {
     parseArgs(['--backend', 'fake', 'cleanup', '--older-than', 'invalid']);

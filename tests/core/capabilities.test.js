@@ -272,7 +272,7 @@ console.log('PASS: capabilities test 7 — --json distinguishes failure classes'
 // 8. No option is ever silently ignored — unknown flags are rejected
 // ===========================================================================
 {
-  const { parseArgs } = require('../../core/commands/index');
+  const { parseArgs } = require('../../core/cli-args');
 
   assert.throws(
     () => parseArgs(['--backend', 'fake', 'run', '--bogus-unknown-flag']),

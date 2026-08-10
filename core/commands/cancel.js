@@ -1,5 +1,6 @@
 const { cancelJob } = require('../cancel');
-const { buildEnvelope, loadJobOrThrow } = require('./index');
+const { buildEnvelope } = require('../envelope');
+const { loadJobOrThrow } = require('../job-lookup');
 const { isProcessAlive, isSameProcessAlive, parseWorkerIdentity } = require('../process-identity');
 
 async function executeCancel({ store, adapter, repoKey, jobId, json }) {

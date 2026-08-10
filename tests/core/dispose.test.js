@@ -6,7 +6,7 @@ const { JobStore } = require('../../core/job-store');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { executeRun } = require('../../core/commands/run');
 const { executeResume } = require('../../core/commands/resume');
-const { tryDisposeAdapter } = require('../../core/commands/index');
+const { tryDisposeAdapter } = require('../../core/commands/attempt-driver');
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-dispose-test-'));

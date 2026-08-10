@@ -152,7 +152,7 @@ console.log(`All three adapters passed the same ${results[0].passed} assertions.
   const backendNames = ['opencode', 'codex', 'claude'];
 
   // Registry allowlist: files whose only job is mapping a name to an adapter.
-  const allowlist = new Set(['commands/worker.js', 'commands/index.js']);
+  const allowlist = new Set(['commands/worker.js']);
 
   function scanDir(dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });

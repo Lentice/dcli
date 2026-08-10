@@ -10,9 +10,8 @@ const { JobStore } = require('../../core/job-store');
 const { generateJobId } = require('../../core/job-id');
 const {
   classifyTerminalFailure,
-  maybeAccessHint,
   NO_RESULT_BYTE_THRESHOLD,
-} = require('../../core/commands/index');
+} = require('../../core/failure-class');
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-fail-reason-'));
@@ -226,51 +225,6 @@ await withTempDir(async (dir) => {
   assert.strictEqual(timedOut.terminalState, undefined,
     'timeout state must remain timeout when no result artifact exists');
   console.log('PASS: result-missing heuristic preserves text and timeout states');
-}
-
-// =============================================================================
-// 6. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
-//    access, does NOT fire on plain questions or non-read-only access, and
-//    the JSON envelope path is unaffected (hint is a separate emit).
-// =============================================================================
-{
-  const dispatchHint = maybeAccessHint({
-    access: null,  // null means default (read-only)
-    prompt: 'Please dispatch a subagent to verify the tickets.',
-  });
-  assert.ok(dispatchHint, 'hint must fire for "dispatch a subagent" with default access');
-  assert.ok(/--access workspace/.test(dispatchHint), 'hint must point at --access workspace');
-
-  const taskHint = maybeAccessHint({
-    access: 'read-only',
-    prompt: 'Use the Task tool to spawn two agents.',
-  });
-  assert.ok(taskHint, 'hint must fire for "Task tool" + read-only');
-
-  const writeHint = maybeAccessHint({
-    access: 'read-only',
-    prompt: 'write a file containing the result.',
-  });
-  assert.ok(writeHint, 'hint must fire for "write file" + read-only');
-
-  const noFireWorkspace = maybeAccessHint({
-    access: 'workspace',
-    prompt: 'Please dispatch a subagent.',
-  });
-  assert.strictEqual(noFireWorkspace, null, 'must not hint when access is already elevated');
-
-  const noFirePlain = maybeAccessHint({
-    access: 'read-only',
-    prompt: 'What is 2+2?',
-  });
-  assert.strictEqual(noFirePlain, null, 'must not hint on plain questions');
-
-  const noFireNullPrompt = maybeAccessHint({
-    access: 'read-only', prompt: null,
-  });
-  assert.strictEqual(noFireNullPrompt, null, 'must not hint when prompt is null');
-
-  console.log('PASS: maybeAccessHint unit cases');
 }
 
 // Classified provider failures must preserve the stable caller-facing exit code.

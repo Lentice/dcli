@@ -1,7 +1,7 @@
 const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 const { getDiff } = require('../worktree');
 
-const { loadJobOrThrow } = require('./index');
+const { loadJobOrThrow } = require('../job-lookup');
 
 function executeDiff({ store, repoKey, jobId, stat, nameOnly }) {
   // Shared loader: absence is the job directory's, and an unreadable record is

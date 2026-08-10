@@ -172,7 +172,7 @@ check();
 // hand-copied list of legal values — means the docs cannot drift from the CLI.
 // ---------------------------------------------------------------------------
 {
-  const { parseArgs } = require('../../core/commands/index');
+  const { parseArgs } = require('../../core/cli-args');
 
   const docFiles = [];
   const collect = (dir) => {

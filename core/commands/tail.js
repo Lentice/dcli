@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { readTail } = require('../bounded-tail');
-const { loadJobOrThrow } = require('./index');
+const { loadJobOrThrow } = require('../job-lookup');
 
 const DEFAULT_MAX_BYTES = 4096;
 

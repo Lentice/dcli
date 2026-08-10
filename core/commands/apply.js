@@ -1,6 +1,6 @@
 const { spawnSync } = require('child_process');
 const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
-const { loadJobOrThrow } = require('./index');
+const { loadJobOrThrow } = require('../job-lookup');
 const {
   getHeadCommit,
   getStatusPorcelain,

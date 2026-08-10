@@ -1,93 +1,7 @@
-const fs = require('fs');
-const path = require('path');
-const { isJobId } = require('../job-id');
-const { resolveDeadline } = require('../deadlines');
-const { parseDuration } = require('./cleanup');
-const { classifyTerminalFailure, terminalExitCode, NO_RESULT_BYTE_THRESHOLD } = require('../failure-class');
-
-/**
- * Load a job's status, or throw the canonical exit-3 "not found" error.
- * Every read-side command routes through here so the message and the exit
- * code cannot drift between them.
- *
- * @param {{ store:Object, repoKey:string, jobId:string, regenerate?:boolean }} args
- * @returns {{ status:Object, attemptNum:number, jobDir:string, attemptDir:string }}
- */
-function loadJobOrThrow({ store, repoKey, jobId, regenerate = true }) {
-  const jobDir = store.getJobDir(repoKey, jobId);
-
-  // Existence is checked on disk, not inferred from regenerateStatus(). An
-  // absent journal regenerates to the DEFAULT status — job_id null, state
-  // "created" — so every caller that trusted the try/catch reported a
-  // non-existent job as a freshly created one, exit 0. An agent polling that
-  // waits forever for a job that was never there.
-  // Absence must be proven, not inferred from a failed stat. fs.existsSync()
-  // returns false for *any* stat error, including the EPERM/EBUSY Windows hands
-  // out on a tree that is being written or scanned — so it cannot distinguish
-  // "no such job" from "could not look". Exit 3 tells an agent to stop looking,
-  // which is the wrong instruction for a job that is sitting right there.
-  try {
-    fs.statSync(jobDir);
-  } catch (cause) {
-    if (cause && (cause.code === 'ENOENT' || cause.code === 'ENOTDIR')) {
-      const err = new Error(`Job not found: ${repoKey}/${jobId}`);
-      err.exitCode = 3;
-      throw err;
-    }
-    const err = new Error(`Job directory could not be read: ${repoKey}/${jobId}: ${cause && cause.message}`);
-    err.exitCode = 17;
-    err.cause = cause;
-    throw err;
-  }
-
-  // The directory exists, so from here the job is NOT absent. An unreadable or
-  // unprojectable record is a corrupt-state failure (17) and must say so: the
-  // previous catch-all turned every read error into "Job not found", which
-  // tells an agent to stop looking for a job that is sitting right there.
-  let status;
-  try {
-    // reconcileStatus() regenerates from the journal and, when the worker is
-    // provably gone, journals the terminal transition the worker never got to
-    // write. Without it a crashed or killed worker leaves the job `running`
-    // forever: `wait` polls to its budget and `status` reports a job that
-    // nothing is executing. It is a no-op (one journal read) for terminal jobs
-    // and for jobs whose worker is alive.
-    status = regenerate
-      ? store.reconcileStatus({ repoKey, jobId })
-      : store.readStatus({ repoKey, jobId });
-  } catch (cause) {
-    const err = new Error(`Job record could not be read: ${repoKey}/${jobId}: ${cause && cause.message}`);
-    err.exitCode = 17;
-    err.cause = cause;
-    throw err;
-  }
-  if (!status) {
-    const err = new Error(`Job record could not be read: ${repoKey}/${jobId}`);
-    err.exitCode = 17;
-    throw err;
-  }
-
-  const attemptNum = status.attempt || 1;
-  return {
-    status,
-    attemptNum,
-    jobDir,
-    attemptDir: path.join(jobDir, 'attempts', String(attemptNum)),
-  };
-}
-
-const KNOWN_FLAGS = new Set([
-  '--backend', '--repo', '--prompt-file', '--hard-timeout-sec', '--group', '--label',
-  '--model', '--json', '--timeout-sec', '--all', '--help',
-  '--older-than', '--dry-run', '--scrub-session-ids', '--max-bytes',
-  '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
-  '--access', '--mode',
-  '--staged', '--working', '--range', '--path', '--include-untracked',
-  '--embed-diff', '--intent', '--focus',
-  '--stat', '--name-only',
-  '--reset-author', '--message', '--allow-untracked',
-  '--kind', '--resume',
-]);
+const { isJobId } = require('./job-id');
+const { resolveDeadline } = require('./deadlines');
+const { parseDuration } = require('./commands/cleanup');
+const { KNOWN_BACKENDS } = require('../adapters/registry');
 
 // The skill slash commands (`:jobs`, `:ask`, `:implement`, ...) do not
 // map 1:1 onto CLI subcommands, and an agent reading the skill reaches for the
@@ -109,8 +23,6 @@ const COMMAND_SUGGESTIONS = Object.freeze({
 });
 
 const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'cancel', 'review', 'resume', 'tail', 'debug', 'cleanup', 'capabilities', 'doctor', 'diff', 'apply']);
-
-const { KNOWN_BACKENDS } = require('../../adapters/registry');
 
 // Advisory patterns for prompts that ask for tool dispatch a read-only job
 // cannot satisfy (subagent / Task tool / file writes). Conservative — only
@@ -141,25 +53,6 @@ function maybeAccessHint({ access, prompt }) {
     }
   }
   return null;
-}
-
-function buildEnvelope(status) {
-  return {
-    schema_version: 1,
-    job_id: status.job_id || null,
-    backend: status.backend || null,
-    state: status.state || 'created',
-    phase: status.phase || null,
-    attempt: status.attempt !== undefined && status.attempt !== null ? status.attempt : null,
-    command_exit_code: status.command_exit_code !== undefined ? status.command_exit_code : null,
-    backend_exit_code: status.backend_exit_code !== undefined ? status.backend_exit_code : null,
-    failure_reason: status.failure_reason || null,
-    failure: status.failure || null,
-    findings: null,
-    findings_status: status.findings_status || null,
-    truncation_info: null,
-    untracked_warning: null,
-  };
 }
 
 // Valueless flags: token -> result key set to true.
@@ -473,46 +366,4 @@ function readStdinBounded() {
   });
 }
 
-// Simple numeric semver-style comparison: returns -1, 0, or 1.
-function compareVersions(a, b) {
-  const aParts = a.split('.').map(Number);
-  const bParts = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-    const aVal = aParts[i] || 0;
-    const bVal = bParts[i] || 0;
-    if (aVal < bVal) return -1;
-    if (aVal > bVal) return 1;
-  }
-  return 0;
-}
-
-function isVersionInRange(version, range) {
-  if (range.min && compareVersions(version, range.min) < 0) return false;
-  if (range.max && compareVersions(version, range.max) >= 0) return false;
-  return true;
-}
-
-async function tryDisposeAdapter(adapter, attempt) {
-  if (!adapter || typeof adapter.Dispose !== 'function') return { disposed: false, reason: 'no_adapter' };
-  const ms = resolveDeadline('ADAPTER_DISPOSE_MS');
-  try {
-    const disposeWork = adapter.Dispose(attempt);
-    let timer;
-    let completed;
-    try {
-      completed = await Promise.race([
-        (async () => { await disposeWork; return true; })(),
-        new Promise(resolve => {
-          timer = setTimeout(() => resolve(false), ms);
-        }),
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-    return { disposed: true, exceeded: !completed };
-  } catch (err) {
-    return { disposed: false, reason: err.message || 'dispose_error' };
-  }
-}
-
-module.exports = { buildEnvelope, loadJobOrThrow, parseArgs, resolvePrompt, KNOWN_FLAGS, COMMANDS, compareVersions, isVersionInRange, tryDisposeAdapter, classifyTerminalFailure, terminalExitCode, maybeAccessHint, NO_RESULT_BYTE_THRESHOLD };
+module.exports = { parseArgs, resolvePrompt, maybeAccessHint };

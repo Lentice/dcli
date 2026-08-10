@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { isProcessAlive, parseWorkerIdentity } = require('../process-identity');
-const { loadJobOrThrow } = require('./index');
+const { loadJobOrThrow } = require('../job-lookup');
 
 const STDER_TAIL_BYTES = 4096;
 

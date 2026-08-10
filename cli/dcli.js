@@ -99,7 +99,8 @@ if (process.argv.includes('--help')) {
   process.exit(0);
 }
 
-const { parseArgs, buildEnvelope, resolvePrompt, maybeAccessHint } = require('../core/commands/index');
+const { parseArgs, resolvePrompt, maybeAccessHint } = require('../core/cli-args');
+const { buildEnvelope } = require('../core/envelope');
 const { JobStore } = require('../core/job-store');
 const { getStateRoot, ensureStateRoot } = require('../core/state-root');
 const { computeRepoKeyWithPath } = require('../core/repo-key');

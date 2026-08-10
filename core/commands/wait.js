@@ -1,4 +1,5 @@
-const { buildEnvelope, loadJobOrThrow } = require('./index');
+const { buildEnvelope } = require('../envelope');
+const { loadJobOrThrow } = require('../job-lookup');
 
 const { TERMINAL } = require('../reducer');
 const { resolveWaitTimeoutMs } = require('../deadlines');

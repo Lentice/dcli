@@ -67,8 +67,8 @@ check();
 {
   const readme = fs.readFileSync(README, 'utf8');
   const handEdited = readme.replace(
-    '| [98 — split `commands/index.js`](98-split-the-commands-index-grab-bag.md) | blocked | 93 |',
-    '| [98 — split `commands/index.js`](98-split-the-commands-index-grab-bag.md) | ready | 93 |'
+    '| [98 — split `commands/index.js`](98-split-the-commands-index-grab-bag.md) | done |',
+    '| [98 — split `commands/index.js`](98-split-the-commands-index-grab-bag.md) | ready |'
   );
   const report = diffReport(handEdited, regenerate(readme));
   assert.ok(
@@ -102,9 +102,9 @@ check();
     const fileStatus = statusInFile(id);
     assert.ok(fileStatus, `ticket ${id} must carry a status field`);
     const vocab = fileStatus.split(/\s+\(/)[0];
-    if (id === '92') {
+    if (id === '92' || id === '94' || id === '96' || id === '98') {
       assert.ok(row.includes(`| done |`), `row for ${id} must render "done": ${row}`);
-    } else if (id === '98' || id === '103') {
+    } else if (id === '103') {
       assert.ok(row.includes(`| blocked |`), `row for ${id} must render "blocked": ${row}`);
     } else {
       assert.ok(row.includes(`| ready |`), `row for ${id} must render "ready": ${row}`);

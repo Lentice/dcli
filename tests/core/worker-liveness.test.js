@@ -13,7 +13,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 
 const { JobStore } = require('../../core/job-store');
-const { loadJobOrThrow } = require('../../core/commands/index');
+const { loadJobOrThrow } = require('../../core/job-lookup');
 const { reduce } = require('../../core/reducer');
 const { cancelJob } = require('../../core/cancel');
 const { isSameProcessAlive } = require('../../core/process-identity');
@@ -263,7 +263,7 @@ async function main() {
       'a non-zero exit must not swallow the reported failure class');
     assert.strictEqual(reduced.failure.class, 'quota_or_rate_limit');
 
-    const { terminalExitCode } = require('../../core/commands/index');
+    const { terminalExitCode } = require('../../core/failure-class');
     assert.strictEqual(terminalExitCode(reduced.state, reduced.failure, reduced.failure_reason), 14,
       'quota exhaustion must surface as exit 14, not 1');
     assert.notStrictEqual(terminalExitCode('failed', null, null), 0,

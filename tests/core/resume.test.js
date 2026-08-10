@@ -304,7 +304,7 @@ async function main() {
   // 9. Stray positionals handling
   // ---------------------------------------------------------------------------
   {
-    const { parseArgs } = require('../../core/commands/index');
+    const { parseArgs } = require('../../core/cli-args');
     const parsed = parseArgs(['node', 'test', 'resume', '20260804T123456Z-a1b2c3d4', 'extra-positional']);
     assert.strictEqual(parsed.command, 'resume');
     assert.ok(parsed.positionals.length > 0);

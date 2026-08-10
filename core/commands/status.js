@@ -1,4 +1,5 @@
-const { buildEnvelope, loadJobOrThrow } = require('./index');
+const { buildEnvelope } = require('../envelope');
+const { loadJobOrThrow } = require('../job-lookup');
 
 async function executeStatus({ store, repoKey, jobId }) {
   const { status } = loadJobOrThrow({ store, repoKey, jobId });

@@ -16,7 +16,8 @@
 // No backend name may appear in this module (invariant 1).
 const fs = require('fs');
 const path = require('path');
-const { buildEnvelope, tryDisposeAdapter, classifyTerminalFailure, terminalExitCode } = require('./index');
+const { buildEnvelope } = require('../envelope');
+const { classifyTerminalFailure, terminalExitCode } = require('../failure-class');
 const { reduce, TERMINAL } = require('../reducer');
 const { resolveDeadline, resolveHardTimeoutMs } = require('../deadlines');
 const { finalizeSnapshot, removeWorktree } = require('../worktree');
@@ -24,6 +25,29 @@ const { persistCollectedResult, persistBackendEvents, persistFindings } = requir
 
 const CANCEL_WATCH_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 5000;
+
+async function tryDisposeAdapter(adapter, attempt) {
+  if (!adapter || typeof adapter.Dispose !== 'function') return { disposed: false, reason: 'no_adapter' };
+  const ms = resolveDeadline('ADAPTER_DISPOSE_MS');
+  try {
+    const disposeWork = adapter.Dispose(attempt);
+    let timer;
+    let completed;
+    try {
+      completed = await Promise.race([
+        (async () => { await disposeWork; return true; })(),
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(false), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    return { disposed: true, exceeded: !completed };
+  } catch (err) {
+    return { disposed: false, reason: err.message || 'dispose_error' };
+  }
+}
 
 /**
  * A cancel signal the attempt driver can poll without knowing where it came
@@ -494,4 +518,4 @@ function raceObserve(iterator, deadline) {
   };
 }
 
-module.exports = { driveAttempt, createCancelSignal, persistStartedFact, raceObserve, HARD_TIMEOUT_ERROR };
+module.exports = { driveAttempt, createCancelSignal, persistStartedFact, raceObserve, HARD_TIMEOUT_ERROR, tryDisposeAdapter };

@@ -1,7 +1,7 @@
 # 98 — Split `core/commands/index.js`: five unrelated subjects in one file every module imports
 
-**Status:** blocked
-**Blocked by:** 93
+**Status:** done
+**Blocked by:** —
 **Tier:** AI-navigability and testability. The file has no subject, so every change anywhere lands in
 it — it is one of the repository's three hottest files. An agent looking for the exit-code contract has
 to scroll past three flag tables to find it.
@@ -199,4 +199,69 @@ ticket 98: split core/commands/index.js by subject
 
 ## Notes
 
-(Left empty by the author.)
+Implemented 2026-08-11 as a pure move; commit message per the Handoff section.
+
+**Resulting layout.** `core/commands/index.js` is deleted (not reduced to a barrel — every importer was
+updated to its subject module, so no file still routes through the old name). New modules, all in
+`core/` per the naming-contracts note that these names are not persisted:
+
+- `core/cli-args.js` — `parseArgs`, `validatePositionals`, `notAJobIdError`, `resolvePrompt`,
+  `readStdinBounded`, `maybeAccessHint`, `COMMANDS`, `COMMAND_SUGGESTIONS`, `BOOL_FLAGS`, `VALUE_FLAGS`,
+  `ACCESS_HINT_PATTERNS`.
+- `core/job-lookup.js` — `loadJobOrThrow`, body and exit-3/17 comment verbatim. All ten callers
+  (`apply`, `cancel`, `debug`, `diff`, `read`, `resume`, `status`, `submit`, `tail`, `wait`) updated;
+  `resume`, `submit --resume`, `diff` and `apply` still go through the single shared function (design-spec §7).
+- `core/envelope.js` — `buildEnvelope` only.
+- `compareVersions`/`isVersionInRange` are now private to `core/commands/attempt.js` (its only consumer).
+- `tryDisposeAdapter` moved to `core/commands/attempt-driver.js`, its only consumer; still exported from
+  there because `tests/core/dispose.test.js` exercises it directly. The
+  `grep "compareVersions\|tryDisposeAdapter" core/ cli/` check now finds each in exactly one file.
+
+**`NO_RESULT_BYTE_THRESHOLD` placement decision.** It stays in `core/failure-class.js`, where ticket 93
+put it; `core/envelope.js` exports only `buildEnvelope`. `classifyTerminalFailure`/`terminalExitCode`
+were already re-exported from `failure-class.js` by ticket 93 and are now imported from there directly.
+
+**`KNOWN_FLAGS` deletion.** Deleted; every relevant suite passed without it, so it was dead as claimed —
+it was never the parser's validation set (`parseArgs` rejects unknown flags purely by `BOOL_FLAGS` /
+`VALUE_FLAGS` membership). No follow-up filed; the parser's own suites cover unknown-flag rejection.
+
+**Golden fixture (criterion E).** `tests/fixtures/cli-golden/cases.json` — 18 invocations (2 valid,
+16 invalid: unknown command, suggestion, unknown flag, valueless flag, unknown backend, bad `--mode`,
+bad `--access`, bad `--hard-timeout-sec`, stray positional, malformed job id, missing job id, bad
+`--kind`, bad `--range`, `--json` variant, and job-not-found exit 3), captured **before** the change as
+raw child buffers (base64) with exit codes. `tests/core/cli-golden.test.js` re-runs each and compares
+byte-for-byte. The only normalization: the job-not-found case embeds the repo key (sha256 of the
+machine temp path) as `{{REPO_KEY}}`, recomputed by the test — everything else is compared verbatim.
+All 18 cases pass post-change, proving criterion E.
+
+**Bug found while moving (not fixed, per the Handoff traps).** `tests/core/worker-liveness.test.js`
+§6g ("missing or corrupt projection does not erase the job") is flaky: it seeds a running job, then
+overwrites `status.json` with garbage, and `listJobRecords()` only replays the journal when
+`journal.mtimeMs >= status.mtimeMs` (`core/job-store.js:145`). When the corrupt write lands in a
+later mtime tick than the journal, the record is reported unreadable (exit 17 material) instead of
+regenerated, and the test fails. A 20-iteration probe reproduced the failure 11 times (passes only when
+the two writes share an mtime tick). Pre-existing — unrelated to this ticket's moves; the import
+rewiring only shifted timing phase. Follow-up: ticket 106.
+
+**Test split (criterion D).** New `tests/core/cli-args.test.js` (parse/validate/prompt/hint suites),
+`tests/core/envelope.test.js`; `tests/core/job-lookup-errors.test.js` already covered
+`loadJobOrThrow` and now imports it from `core/job-lookup.js`, so it is that module's suite.
+`tests/core/commands.test.js` shrank from 1334 to 1150 lines, keeping only genuinely cross-command
+behavior. The `maybeAccessHint` units moved from `tests/core/backend-failure-reason.test.js` into
+`cli-args.test.js`.
+
+**Gate-test updates.** The deleted barrel's allowlist entries were removed from
+`tests/contract/parity-gate.test.js` and `tests/adapters/codex/no-backend-conditional.test.js`;
+`tests/integration/generate-tickets-table.test.js` now expects ticket 98 to render `done`, and its
+stale expectations for tickets 94 and 96 (their files say `done`, the test still expected `ready` —
+pre-existing failures at HEAD, unrelated to this ticket) were corrected in the same pass.
+`scripts/generate-integration.js` imports nothing from the barrel (it owns its own command list), so
+the generated-skills gate was untouched.
+
+**Verification run.** `tests/core/commands.test.js`, `tests/core/cli-golden.test.js`,
+`tests/integration/generate.test.js` (generated-skills gate), `tests/integration/generate-tickets-table.test.js`,
+and every directly affected suite (`cli-args`, `envelope`, `job-lookup-errors`, `dispose`,
+`backend-failure-reason`, `worker-liveness`, `cleanup-worktrees`, `capabilities`,
+`commands-tail-debug-cleanup`, `resume`, `parity-gate`, `no-backend-conditional`) all green, plus
+`npm run lint`. The full suite (`npm run check`) was not run per implementer instruction; the one known
+pre-existing flake (106) is unrelated.

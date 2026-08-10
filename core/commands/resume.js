@@ -1,6 +1,6 @@
 const { openAttempt } = require('../job-setup');
 const { driveAttempt, createCancelSignal } = require('./attempt-driver');
-const { loadJobOrThrow } = require('./index');
+const { loadJobOrThrow } = require('../job-lookup');
 
 const VALID_KINDS = new Set(['continue_backend_session', 'fork_from_artifacts', 'retry_attempt']);
 

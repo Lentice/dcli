@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loadJobOrThrow } = require('../../core/commands/index');
+const { loadJobOrThrow } = require('../../core/job-lookup');
 const { JobStore } = require('../../core/job-store');
 
 function tempRoot() {
