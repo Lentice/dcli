@@ -59,6 +59,7 @@ recommended order.
 | [102 — unix process-group containment](102-unix-process-group-containment.md) | ready | — | Rung 1 of ADR-010. Backends are spawned without `detached` and killed by pid, so descendants survive; on Unix this is a full guarantee costing one spawn option |
 | [103 — windows degraded tree kill](103-windows-declared-degraded-tree-termination.md) | blocked | 102 | Rung 2 of ADR-010. Verified descendant enumeration + `taskkill /T /F`, `degraded: true`, survivors named and exit `21` — never a kill it did not confirm |
 | [104 — generate this table](104-generate-the-ticket-tracker.md) | ready | — | The tracker's own documented trigger fired at more than ten open tickets; ticket files become the source of status, with a regenerate-and-compare gate in `npm run check` |
+| [105 — the suite is not reliably green](105-full-suite-is-not-reliably-green.md) | ready | — | Two runs of `npm run check` on one unchanged tree failed with different file sets; four `core` suites hit the 120 s cap at the default concurrency and all pass at `--concurrency 4` |
 
 ## Closed
 
