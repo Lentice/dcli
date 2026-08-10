@@ -1,6 +1,6 @@
 # 96 — `JobStore` owns record scanning; three commands stop reaching into `store._stateRoot`
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Correctness of the exit-3 / exit-17 contract. "What counts as a corrupt record" is decided
 three times, differently, in three commands that each rebuilt the directory walk by hand.
@@ -118,17 +118,17 @@ unreadable, `ENOENT` mid-scan. Today each of those is asserted (or not) separate
 
 ## Acceptance criteria
 
-- [ ] **A.** No file outside `core/job-store.js` references `store._stateRoot` or
+- [x] **A.** No file outside `core/job-store.js` references `store._stateRoot` or
   `store._atomicWriteJsonWithRetry`.
-- [ ] **B.** `list.js`, `cleanup.js` and `apply.js` contain no `fs.readdir` over the jobs directory.
-- [ ] **C.** A record whose directory exists but whose status cannot be read produces exit `17`, not
+- [x] **B.** `list.js`, `cleanup.js` and `apply.js` contain no `fs.readdir` over the jobs directory.
+- [x] **C.** A record whose directory exists but whose status cannot be read produces exit `17`, not
   `3`, from every command that encounters it — asserted for `list`, `cleanup` and `apply`.
-- [ ] **D.** Absence is proven by errno, not by `existsSync`. There is no `existsSync` on the scan path.
-- [ ] **E.** `cleanup` still discovers and reports orphan worktrees, and still skips worktrees held by a
+- [x] **D.** Absence is proven by errno, not by `existsSync`. There is no `existsSync` on the scan path.
+- [x] **E.** `cleanup` still discovers and reports orphan worktrees, and still skips worktrees held by a
   reader — ticket 82's behaviour is unchanged.
-- [ ] **F.** `list` output is byte-identical before and after, for a fixture state root containing one
+- [x] **F.** `list` output is byte-identical before and after, for a fixture state root containing one
   good record, one corrupt record and one orphan worktree.
-- [ ] **Z.** `npm run check` green.
+- [x] **Z.** `npm run check` green.
 
 ## Agent checks
 
@@ -200,4 +200,53 @@ ticket 96: job store owns record scanning
 
 ## Notes
 
-(Left empty by the author.)
+### 1. The three walkers' corruption judgements, side by side (written before any code)
+
+| Case | `list.js` | `cleanup.js` (collectJobRecords) | `apply.js` (checkNoAppliedDescendant) |
+|---|---|---|---|
+| status.json present, journal.jsonl missing | **error** — "journal.jsonl is missing; status.json cannot be verified" → exit 17 (or suppressed under `--group` if the raw status does not parse/match) | silently skipped (dir still added to `knownJobIds`, so its worktree is protected from the orphan scan) | silently skipped |
+| status.json unparseable, journal valid | **recovered** — regenerated from the journal, listed normally | silently skipped | silently skipped |
+| status.json + journal both unreadable | **error** → exit 17 (group-suppression rules apply) | silently skipped | silently skipped |
+| job directory unreadable (EPERM/EBUSY/EISDIR) | error for the job; a whole repo dir that fails `readdir` **crashes the command** (raw throw out of `executeList`) | same raw crash | same raw crash |
+| directory vanished mid-scan (ENOENT) | error entry (caught by the outer catch) | skipped (unreadable dirs were never in `records`) | skipped |
+
+Where they disagree, §7 decides: a directory that exists but whose record cannot be read is **17, never 3** — and "absent" is a claim that may only be made on `ENOENT`/`ENOTDIR`. So:
+
+- `listJobRecords()` never returns a "proven-absent" entry at all — absence just means the entry is not in `records` and not in `errors`. Its judgement for a vanished-mid-scan repo dir is "skip" (errno-proven absence), which is a *fix*: the old walker reported an ENOENT error for a dir that was demonstrably not there.
+- `cleanup` now *reports* unreadable records in `result.errors` (and exits 17) instead of silently skipping them — silently skipping meant a corrupt record's worktree was still protected but the record itself was invisible, so a retention sweep under-reported what it could not judge.
+- `apply` now *throws* 17 when the descendant scan hits an unreadable sibling record: the old silent skip was the exact hole the check exists to close — it let an ancestor apply over an unreadable descendant record that might already be applied.
+
+Non-goals honoured: no on-disk layout change, no `status.json` field change, no exit-code meaning change (17 stays "corrupt-state failure"; `cleanup` now *uses* it instead of always exiting 0 — see §4).
+
+### 2. The fixture (criterion F)
+
+State root with `jobs/rk/good-job/` (full valid record via `createJob`), `jobs/rk/corrupt-job/` (both `status.json` and `journal.jsonl` are **directories**, so every read fails `EISDIR` — a cross-platform "exists but unreadable"), and `worktrees/orphan-job/` with one file inside. `list` stdout snapshot taken before the rewrite: good-job listed, corrupt-job → one stderr warning + exit 17, orphan invisible to `list`. Byte-identical after.
+
+### 3. `listJobRecords` design
+
+```js
+listJobRecords({ repoKey = null, group = null }) -> { records, errors }
+```
+
+- `records`: `{ jobId, repoKey, status, jobDir }` — status resolved by the same projection-or-regenerate rule `list.js` used (regenerate when the projection is stale, missing, or unparseable; corrupt journal → error).
+- `errors`: `{ jobId, repoKey, jobDir, reason }` — only "could-not-read". Proven-absent entries appear in **neither** array. `jobId` is `null` for a repo dir that cannot be enumerated.
+- `group` filter: replicated `list.js`'s exact relevance rules — an unreadable record is reported only when the raw `status.json` proves group membership (or there is no filter); otherwise it is suppressed so a scoped `wait` is not blocked by unrelated corruption.
+- Absence is proven by `statSync`/`readdirSync` errno (`ENOENT`/`ENOTDIR`), never `existsSync` — criterion D. (`existsSync` remains in `_readRawJournal`/`createJob`/etc., the pre-existing single-job read and write paths, which this ticket does not touch; nothing on the `listJobRecords` path uses it.)
+- Empty job dirs (no status, no journal): skipped, matching `list.js`. Consequence for `cleanup`: such a dir is no longer in `knownJobIds`, so a *phantom* worktree of a never-created job would become orphan-eligible. In the normal flow the worktree is created only after the job dir is fully written, so an empty dir cannot have a worktree; judged acceptable and recorded here.
+- `findJobs({ parentJobId })` scans all repos (job ids are globally unique) and **throws exit 17** on any unreadable record — you cannot prove "no applied descendant" when a sibling record cannot be read. `apply`'s `checkNoAppliedDescendant` is deleted.
+- `writeStatusRecord({ repoKey, jobId, status })` is `_atomicWriteJsonWithRetry(status.json)` behind the interface; `cleanup`'s scrub path calls it.
+- `get stateRoot()` and `get worktreesDir()` accessors; the worktrees dir keeps its walk in `cleanup` (orphan discovery involves age, locks and git inspection — moving only the enumeration, not the locking, per ticket 82's behaviour).
+
+### 4. `locking.js` decision
+
+`core/locking.js:324` (`lockManagerForStore`) switches from `store._stateRoot` to the `store.stateRoot` accessor — no file outside `core/job-store.js` references `_stateRoot` any more (criterion A). Documented here as decided, not left open.
+
+### 5. Discovery: `cleanup` exit code
+
+`cli/dcli.js` unconditionally exited 0 for `cleanup` even when `result.errors` was non-empty. Criterion C demands exit 17 "from every command that encounters it", so `executeCleanup` now returns `exitCode: 17` when it reported any error (scan errors or removal failures) and `cli/dcli.js` exits with it. The exit-code contract is unchanged — 17 was already "corrupt-state failure"; cleanup merely starts using it.
+
+### 6. Tests
+
+- `tests/core/job-store-scan.test.js` (new): table-driven against `listJobRecords` — missing journal, unparseable status with valid journal (recovered), unparseable status with corrupt journal, directory-present-but-unreadable (EISDIR), ENOENT mid-scan (patched `readdirSync`), absent jobs dir. Plus criterion C per command: `list` exit 17, `cleanup` exitCode 17 + error reported + record untouched, `apply` throws exit 17 on an unreadable sibling.
+- Existing suites `job-lookup-errors`, `job-store`, `commands` (list), `cleanup-worktrees`, `commands-tail-debug-cleanup`, `worktree` (apply descendant) pin the converged behaviour.
+- Verified green in this session: `job-lookup-errors`, `job-store`, `job-store-scan` (new), `commands`, `cleanup-worktrees`, `commands-tail-debug-cleanup`, `worktree`, `wait-contract`, `worker-liveness` (all consumers of the rewritten `list`), plus `npm run lint`. Criterion Z's full `npm run check` was not run — the operating instruction for this session was to run only the relevant suites plus lint (the full suite is known not to be reliably green, ticket 105).

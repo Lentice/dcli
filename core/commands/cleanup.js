@@ -155,36 +155,6 @@ function releaseArtifactLocks(lockManager, locks) {
   lockManager.release(locks.perJobLock);
 }
 
-function collectJobRecords(jobsDir) {
-  const records = [];
-  const knownJobIds = new Set();
-  if (!fs.existsSync(jobsDir)) return { records, knownJobIds };
-
-  for (const repoDir of fs.readdirSync(jobsDir, { withFileTypes: true })) {
-    if (!repoDir.isDirectory()) continue;
-    const repoFull = path.join(jobsDir, repoDir.name);
-    for (const jobDir of fs.readdirSync(repoFull, { withFileTypes: true })) {
-      if (!jobDir.isDirectory()) continue;
-      knownJobIds.add(jobDir.name);
-      const jobFullPath = path.join(repoFull, jobDir.name);
-      const statusPath = path.join(jobFullPath, 'status.json');
-      if (!fs.existsSync(statusPath)) continue;
-      try {
-        records.push({
-          repoKey: repoDir.name,
-          jobId: jobDir.name,
-          jobFullPath,
-          statusPath,
-          status: JSON.parse(fs.readFileSync(statusPath, 'utf8')),
-        });
-      } catch {
-        // Corrupt records are left for the state/corruption diagnostics path.
-      }
-    }
-  }
-  return { records, knownJobIds };
-}
-
 function eligible(status, ageThresholdMs) {
   return TERMINAL.has(status.state) &&
     (ageThresholdMs === 0 || jobAgeMs(status) >= ageThresholdMs);
@@ -199,11 +169,11 @@ function worktreeInfo(status, stateRoot) {
 
 async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
   const lockManager = lockManagerForStore(store, { timeoutMs: 100 });
-  const jobsDir = path.join(store._stateRoot, 'jobs');
-  const worktreesDir = path.join(store._stateRoot, 'worktrees');
+  const worktreesDir = store.worktreesDir;
   const ageThresholdMs = olderThan ? parseDuration(olderThan) : 0;
   const result = {
     dryRun: !!dryRun,
+    exitCode: 0,
     removed: 0,
     skipped: 0,
     scrubbed: 0,
@@ -212,18 +182,31 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
     skippedItems: [],
   };
 
-  const { records, knownJobIds } = collectJobRecords(jobsDir);
+  // The corruption judgement lives in the store: readable records, plus
+  // existing-but-unreadable entries that must be reported, never silently
+  // skipped as if they were absent.
+  const { records, errors: scanErrors } = store.listJobRecords({});
+  for (const scanErr of scanErrors) {
+    const who = scanErr.jobId ? `${scanErr.repoKey}/${scanErr.jobId}` : scanErr.repoKey;
+    result.errors.push(`Could not read job record ${who}: ${scanErr.reason}`);
+  }
+  // Unreadable records still name their worktree slot: a worktree of an
+  // unjudgeable job is not an orphan to sweep.
+  const knownJobIds = new Set([
+    ...records.map(r => r.jobId),
+    ...scanErrors.filter(e => e.jobId).map(e => e.jobId),
+  ]);
 
   for (const record of records) {
-    const { repoKey, jobId, jobFullPath, statusPath } = record;
+    const { repoKey, jobId, status, jobDir } = record;
     const name = `${repoKey}/${jobId}`;
 
     // --scrub-session-ids mode: blank backend_session_id on terminal jobs
     if (scrubSessionIds) {
-      if (TERMINAL.has(record.status.state) && record.status.backend_session_id && !dryRun) {
-        record.status.backend_session_id = null;
+      if (TERMINAL.has(status.state) && status.backend_session_id && !dryRun) {
+        status.backend_session_id = null;
         try {
-          store._atomicWriteJsonWithRetry(statusPath, record.status);
+          store.writeStatusRecord({ repoKey, jobId, status });
           result.scrubbed++;
         } catch (err) {
           result.errors.push(`Failed to scrub session id for ${name}: ${err.message}`);
@@ -232,11 +215,11 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
       continue;
     }
 
-    if (!eligible(record.status, ageThresholdMs)) continue;
+    if (!eligible(status, ageThresholdMs)) continue;
 
     let info;
     try {
-      info = worktreeInfo(record.status, store._stateRoot);
+      info = worktreeInfo(status, store.stateRoot);
     } catch (err) {
       result.errors.push(`Failed to inspect ${name}: ${err.message}`);
       continue;
@@ -250,7 +233,7 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
     try {
       let recheckedStatus;
       try {
-        recheckedStatus = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+        recheckedStatus = JSON.parse(fs.readFileSync(path.join(jobDir, 'status.json'), 'utf8'));
       } catch (err) {
         result.errors.push(`Failed to recheck ${name}: ${err.message}`);
         continue;
@@ -260,7 +243,7 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
         continue;
       }
 
-      info = worktreeInfo(recheckedStatus, store._stateRoot);
+      info = worktreeInfo(recheckedStatus, store.stateRoot);
       if (info) {
         if (!recheckedStatus.repo_root) {
           throw new Error(`Job ${jobId} has no repo_root for worktree cleanup`);
@@ -274,8 +257,8 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
         continue;
       }
 
-      fs.rmSync(jobFullPath, { recursive: true, force: true });
-      if (fs.existsSync(jobFullPath)) throw new Error(`Job directory still exists after removal: ${jobFullPath}`);
+      fs.rmSync(jobDir, { recursive: true, force: true });
+      if (fs.existsSync(jobDir)) throw new Error(`Job directory still exists after removal: ${jobDir}`);
       if (info) addWorktree(result, info.path, info.bytes, jobId, false);
       result.removed++;
     } catch (err) {
@@ -285,7 +268,10 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
     }
   }
 
-  if (scrubSessionIds || !fs.existsSync(worktreesDir)) return result;
+  if (scrubSessionIds || !fs.existsSync(worktreesDir)) {
+    result.exitCode = result.errors.length > 0 ? 17 : 0;
+    return result;
+  }
 
   for (const entry of fs.readdirSync(worktreesDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || knownJobIds.has(entry.name)) continue;
@@ -316,6 +302,10 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
     }
   }
 
+  // Any reported error means the sweep could not fully judge the state root:
+  // corrupt-state failure, exit 17 (design-spec §7). Previously cleanup
+  // always exited 0 even while printing errors.
+  result.exitCode = result.errors.length > 0 ? 17 : 0;
   return result;
 }
 

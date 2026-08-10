@@ -6,7 +6,7 @@ const { generateExecutionToken } = require('../process-identity');
 const { spawnWorker } = require('../worker-spawn');
 
 async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, mode, stateRoot, backend }) {
-  stateRoot = stateRoot || store._stateRoot;
+  stateRoot = stateRoot || store.stateRoot;
   repoRoot = repoRoot || process.cwd();
 
   // The job record keeps 'submit' for run-mode submits (its historical value)

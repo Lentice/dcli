@@ -1,5 +1,3 @@
-const path = require('path');
-const fs = require('fs');
 const { spawnSync } = require('child_process');
 const { LOCK_SCOPES, lockManagerForStore } = require('../locking');
 const { loadJobOrThrow } = require('./index');
@@ -18,32 +16,18 @@ const {
 } = require('../worktree');
 
 /**
- * Scan sibling jobs under repoKey to find any descendant job that has already
- * been applied (terminal implement-mode job whose parent_job_id matches the
- * given jobId). If one exists, refuse to apply an ancestor.
+ * Refuse to apply an ancestor when a descendant job (parent_job_id matches)
+ * has already been applied. The descendant scan is the store's: findJobs
+ * throws exit 17 on an unreadable sibling record, because "no applied
+ * descendant" may not be claimed over a record that cannot be read.
  */
-function checkNoAppliedDescendant(store, repoKey, jobId) {
-  const jobsDir = path.join(store._stateRoot, 'jobs', repoKey);
-  if (!fs.existsSync(jobsDir)) return;
-
-  const entries = fs.readdirSync(jobsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name === jobId) continue;
-
-    let s;
-    try {
-      const statusPath = path.join(jobsDir, entry.name, 'status.json');
-      if (!fs.existsSync(statusPath)) continue;
-      s = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
-    } catch {
-      continue;
-    }
-    if (s.parent_job_id === jobId &&
-        s.worktree && s.worktree.result_commit &&
+function checkNoAppliedDescendant(store, jobId) {
+  for (const record of store.findJobs({ parentJobId: jobId })) {
+    const s = record.status;
+    if (s.worktree && s.worktree.result_commit &&
         (s.state === 'done' || s.state === 'failed')) {
       const err = new Error(
-        `Cannot apply ancestor job ${jobId}: descendant job ${entry.name} ` +
+        `Cannot apply ancestor job ${jobId}: descendant job ${record.jobId} ` +
         `(${s.state}) already exists and must be applied instead. ` +
         `Apply the newest descendant in the chain.`
       );
@@ -73,7 +57,7 @@ function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntrac
   }
 
   // Refuse to apply an ancestor if a descendant has already been applied
-  checkNoAppliedDescendant(store, repoKey, jobId);
+  checkNoAppliedDescendant(store, jobId);
 
   const repoRoot = status.repo_root;
   if (!repoRoot) { const e = new Error(`Job ${jobId} has no repo_root`); e.exitCode = 11; throw e; }

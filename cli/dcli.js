@@ -569,7 +569,7 @@ async function main() {
       for (const item of result.skippedItems) {
         console.log(`  skipped: ${item.name}${item.path ? ` (${item.path})` : ''} — ${item.reason}`);
       }
-      process.exit(0);
+      process.exit(result.exitCode || 0);
     }
 
     case 'capabilities': {

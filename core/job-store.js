@@ -16,12 +16,212 @@ class JobStore {
     this._jobLocks = new LockManager({ lockDir: path.join(stateRoot, 'locks') });
   }
 
+  get stateRoot() {
+    return this._stateRoot;
+  }
+
+  get worktreesDir() {
+    return path.join(this._stateRoot, 'worktrees');
+  }
+
   _jobDir(repoKey, jobId) {
     return path.join(this._jobsDir, repoKey, jobId);
   }
 
   getJobDir(repoKey, jobId) {
     return this._jobDir(repoKey, jobId);
+  }
+
+  /**
+   * Enumerate the job records under the state root. The corruption judgement
+   * — what counts as "a record that exists but cannot be read" — lives here,
+   * once, instead of in every command that walks the jobs directory.
+   *
+   * Absence must be PROVEN by errno (`ENOENT`/`ENOTDIR`), never inferred from
+   * a failed stat: `fs.existsSync()` returns false for any stat error,
+   * including the `EPERM`/`EBUSY` Windows hands out on a tree being written or
+   * scanned. A directory that exists but whose record cannot be read is exit
+   * 17 material — it appears in `errors`; a provably absent entry appears in
+   * NEITHER array. See docs/design-spec.md §7.
+   *
+   * @param {{ repoKey?: string|null, group?: string|null }} filters
+   * @returns {{ records: Array<{jobId:string, repoKey:string, status:Object, jobDir:string}>,
+   *            errors: Array<{jobId:string|null, repoKey:string, jobDir:string, reason:string}> }}
+   */
+  listJobRecords({ repoKey = null, group = null } = {}) {
+    const records = [];
+    const errors = [];
+
+    let repoDirs;
+    try {
+      repoDirs = fs.readdirSync(this._jobsDir, { withFileTypes: true });
+    } catch (cause) {
+      if (cause && (cause.code === 'ENOENT' || cause.code === 'ENOTDIR')) {
+        return { records, errors };
+      }
+      const err = new Error(`Jobs directory could not be read: ${this._jobsDir}: ${cause && cause.message}`);
+      err.exitCode = 17;
+      throw err;
+    }
+
+    for (const repoDir of repoDirs) {
+      if (!repoDir.isDirectory()) continue;
+      if (repoKey && repoDir.name !== repoKey) continue;
+
+      let jobDirs;
+      try {
+        jobDirs = fs.readdirSync(path.join(this._jobsDir, repoDir.name), { withFileTypes: true });
+      } catch (cause) {
+        // ENOENT mid-scan proves the repo dir is gone; it is not corruption.
+        if (cause && (cause.code === 'ENOENT' || cause.code === 'ENOTDIR')) continue;
+        errors.push({
+          jobId: null,
+          repoKey: repoDir.name,
+          jobDir: path.join(this._jobsDir, repoDir.name),
+          reason: `job directory could not be read: ${cause && cause.message}`,
+        });
+        continue;
+      }
+
+      for (const jobDirEntry of jobDirs) {
+        if (!jobDirEntry.isDirectory()) continue;
+        const jobDir = path.join(this._jobsDir, repoDir.name, jobDirEntry.name);
+        const jobId = jobDirEntry.name;
+        const statusPath = path.join(jobDir, 'status.json');
+        const journalPath = path.join(jobDir, 'journal.jsonl');
+
+        // Existence judged by errno, not existsSync: only ENOENT/ENOTDIR may
+        // prove a file absent.
+        let hasStatus = false;
+        let hasJournal = false;
+        try {
+          fs.statSync(statusPath);
+          hasStatus = true;
+        } catch (cause) {
+          if (!cause || (cause.code !== 'ENOENT' && cause.code !== 'ENOTDIR')) {
+            errors.push({
+              jobId, repoKey: repoDir.name, jobDir,
+              reason: `status.json could not be inspected: ${cause && cause.message}`,
+            });
+            continue;
+          }
+        }
+        try {
+          fs.statSync(journalPath);
+          hasJournal = true;
+        } catch (cause) {
+          if (!cause || (cause.code !== 'ENOENT' && cause.code !== 'ENOTDIR')) {
+            errors.push({
+              jobId, repoKey: repoDir.name, jobDir,
+              reason: `journal.jsonl could not be inspected: ${cause && cause.message}`,
+            });
+            continue;
+          }
+        }
+
+        // A projection without its journal cannot be replayed or verified —
+        // that is corruption (a half-deleted job directory), not a healthy job.
+        if (hasStatus && !hasJournal) {
+          if (this._isRelevantToGroup(statusPath, hasStatus, group)) {
+            errors.push({
+              jobId, repoKey: repoDir.name, jobDir,
+              reason: 'journal.jsonl is missing; status.json cannot be verified',
+            });
+          }
+          continue;
+        }
+        // Neither file: a directory mid-creation, not a record. Do not report
+        // it and do not list it.
+        if (!hasStatus && !hasJournal) continue;
+
+        // status.json is a projection of the journal, so its absence does not
+        // mean the job is absent. Replay the journal when the projection is
+        // stale, missing, or unparseable; a corrupt journal is an error.
+        let status = null;
+        let projectionStale = false;
+        if (hasStatus) {
+          try {
+            // `>=`, not `>`: equal mtimes do not prove equal content.
+            projectionStale = fs.statSync(journalPath).mtimeMs >= fs.statSync(statusPath).mtimeMs;
+          } catch (cause) {
+            // Stat failed — ENOENT means the file vanished mid-scan; fall back
+            // to replaying. Anything else is a could-not-read.
+            if (!cause || (cause.code !== 'ENOENT' && cause.code !== 'ENOTDIR')) {
+              errors.push({
+                jobId, repoKey: repoDir.name, jobDir,
+                reason: `status.json could not be inspected: ${cause && cause.message}`,
+              });
+              continue;
+            }
+            projectionStale = true;
+          }
+        }
+        try {
+          status = hasStatus && !projectionStale
+            ? JSON.parse(fs.readFileSync(statusPath, 'utf8'))
+            : this.regenerateStatus({ repoKey: repoDir.name, jobId });
+        } catch (cause) {
+          if (!this._isRelevantToGroup(statusPath, hasStatus, group)) continue;
+          errors.push({
+            jobId, repoKey: repoDir.name, jobDir,
+            reason: cause && cause.message ? cause.message : String(cause),
+          });
+          continue;
+        }
+
+        if (group && status.group !== group) continue;
+        records.push({ jobId, repoKey: repoDir.name, status, jobDir });
+      }
+    }
+
+    return { records, errors };
+  }
+
+  /**
+   * Whether an unreadable record is relevant to a group-filtered scan. A
+   * scoped wait cannot be blocked by corruption that does not prove itself a
+   * member of the requested group: the raw status.json is the only place
+   * group membership can be read from an otherwise unreadable record.
+   */
+  _isRelevantToGroup(statusPath, hasStatus, group) {
+    if (!group) return true;
+    if (!hasStatus) return false;
+    try {
+      return JSON.parse(fs.readFileSync(statusPath, 'utf8')).group === group;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * All records whose status.parent_job_id matches — apply's descendant
+   * check. An unreadable record throws exit 17: "no applied descendant" may
+   * not be claimed when a sibling record cannot be read.
+   * @param {{ parentJobId: string }} args
+   * @returns {Array<{jobId:string, repoKey:string, status:Object, jobDir:string}>}
+   */
+  findJobs({ parentJobId }) {
+    const { records, errors } = this.listJobRecords({});
+    if (errors.length > 0) {
+      const first = errors[0];
+      const who = first.jobId ? `${first.repoKey}/${first.jobId}` : first.repoKey;
+      const err = new Error(
+        `Job records could not be read while scanning for descendants of ${parentJobId}: ${who}: ${first.reason}`
+      );
+      err.exitCode = 17;
+      throw err;
+    }
+    return records.filter(r => r.status.parent_job_id === parentJobId);
+  }
+
+  /**
+   * The supported path for rewriting a status projection (cleanup's
+   * --scrub-session-ids). Same atomic write with bounded retry the store uses
+   * for its own writes.
+   * @param {{ repoKey:string, jobId:string, status:Object }} args
+   */
+  writeStatusRecord({ repoKey, jobId, status }) {
+    this._atomicWriteJsonWithRetry(path.join(this._jobDir(repoKey, jobId), 'status.json'), status);
   }
 
   _defaultStatus() {
