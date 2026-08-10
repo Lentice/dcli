@@ -1,4 +1,7 @@
 // @suite quick
+// Windows server tree cleanup, now against the per-job server module
+// (ticket 100): kill() must terminate the whole tree via taskkill, with the
+// root kill as fallback.
 const assert = require('node:assert');
 const childProcess = require('node:child_process');
 
@@ -14,18 +17,18 @@ if (process.platform !== 'win32') {
   };
 
   try {
-    delete require.cache[require.resolve('../../../adapters/opencode/adapter')];
-    const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
-    const adapter = new OpencodeAdapter();
+    delete require.cache[require.resolve('../../../adapters/opencode/server')];
+    const { OpencodeServer } = require('../../../adapters/opencode/server');
+    const server = new OpencodeServer({});
     let fallbackKillCalled = false;
-    adapter._serverProcess = {
+    server._process = {
       pid: 12345,
       killed: false,
       exitCode: null,
       kill: () => { fallbackKillCalled = true; },
     };
 
-    adapter._killServer();
+    server.kill();
 
     assert.deepStrictEqual(calls, [{
       command: 'taskkill',

@@ -122,7 +122,7 @@ for (const ext of ['cmd', 'bat']) {
 for (const rel of [
   'adapters/codex/adapter.js',
   'adapters/claude/adapter.js',
-  'adapters/opencode/adapter.js',
+  'adapters/opencode/server.js', // the opencode spawn site lives in the per-job server module (ticket 100)
 ]) {
   const src = fs.readFileSync(path.resolve(__dirname, '..', '..', rel), 'utf8');
   assert.ok(/windowsVerbatimArguments:\s*invocation\.windowsVerbatimArguments/.test(src),

@@ -327,28 +327,42 @@ runContractSuite(() => new FakeAdapter({
 }
 
 // ---------------------------------------------------------------------------
-// Run contract suite against the opencode adapter (test mode)
+// Run contract suite against the opencode adapter (injected transport seam)
 // ---------------------------------------------------------------------------
 
 {
   const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
-  runContractSuite(() => new OpencodeAdapter({
-    _testMode: true,
-    _mockVersion: '1.18.8',
-    _mockFacts: [
-      { type: 'started', backend_pid: 42, backend_session_id: 'ses_contract' },
-      { type: 'assistant_text', message_id: 'msg_1', text: 'Contract test result from opencode' },
-      { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-      { type: 'process_exited', code: 0 },
-    ],
-    _mockExitCode: 0,
-  }), 'opencode');
+  const { FakeTransport } = require('../../tests/fixtures/fake-transport');
+
+  // DetectVersion runs the backend's --version probe for real; point
+  // OPENCODE_PATH at a version-printing fixture so the contract suite needs
+  // no live opencode (same pattern as the codex adapter below).
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-contract-opencode-'));
+  const shim = writeVersionShim(tmpDir, '1.18.8');
+  const savedOpencodePath = process.env.OPENCODE_PATH;
+  process.env.OPENCODE_PATH = shim;
+
+  const makeOpencode = () => new OpencodeAdapter({
+    transport: new FakeTransport({
+      script: {
+        '/permission/test-id/reply': true,
+      },
+    }),
+  });
+
+  try {
+    runContractSuite(makeOpencode, 'opencode');
+  } finally {
+    if (savedOpencodePath === undefined) delete process.env.OPENCODE_PATH;
+    else process.env.OPENCODE_PATH = savedOpencodePath;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
 }
 
 // Also test opencode-specific contract: DeclareCancelRungs returns 3 rungs
 {
   const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
-  const adapter = new OpencodeAdapter({ _testMode: true, _mockVersion: '1.18.8', _mockFacts: [], _mockExitCode: 0 });
+  const adapter = new OpencodeAdapter();
   const rungs = adapter.DeclareCancelRungs();
   assert.strictEqual(rungs.length, 3);
   assert.strictEqual(rungs[0], 'session_abort');

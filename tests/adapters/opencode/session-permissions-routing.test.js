@@ -1,14 +1,20 @@
 // @suite full
+// Permission rulesets, URL/directory routing, session bodies and project
+// identity — exercised through the ticket-100 seams. Rulesets are asserted on
+// the POST /session body the adapter actually sends; project identity runs
+// against the real HttpTransport and an in-process fake server.
 const assert = require('node:assert');
 const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 
 const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
+const { HttpTransport } = require('../../../adapters/opencode/transport');
+const { FakeTransport } = require('../../fixtures/fake-transport');
 const ownedTmpDirs = new Set();
 
 function makeBaseAdapter() {
-  return new OpencodeAdapter({ _testMode: true, _mockVersion: '1.18.8', _mockFacts: [], _mockExitCode: 0 });
+  return new OpencodeAdapter({ transport: new FakeTransport({}) });
 }
 
 function tmpDir() {
@@ -22,15 +28,36 @@ function clean(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
+/**
+ * Run SendPrompt with a scripted transport and return the POST /session body
+ * the adapter sent — the production path of the permission ruleset.
+ */
+async function captureSessionBody(request) {
+  let capturedBody = null;
+  const transport = new FakeTransport({
+    script: {
+      '/project/current': { directory: request.canonicalDir },
+      '/session': (req) => { capturedBody = req.body; return { id: 'ses_captured' }; },
+      '/session/ses_captured/prompt_async': { status: 204 },
+    },
+  });
+  const adapter = new OpencodeAdapter({ transport });
+  adapter.PrepareInvocation({}, request);
+  await adapter.SendPrompt({}, 'test prompt');
+  return capturedBody;
+}
+
 async function main() {
 
 // ===========================================================================
-// 1. _buildPermissionRuleset('read-only') denies mutating permissions
+// 1. The read-only ruleset sent to the server denies mutating permissions
 // ===========================================================================
 {
-  const adapter = makeBaseAdapter();
-  const rules = adapter._buildPermissionRuleset('read-only');
+  const dir = tmpDir();
+  const body = await captureSessionBody({ canonicalDir: dir, access: 'read-only' });
+  clean(dir);
 
+  const rules = body.permission;
   assert.ok(Array.isArray(rules), 'ruleset must be an array');
   assert.ok(rules.length > 0, 'ruleset must not be empty');
 
@@ -58,16 +85,18 @@ async function main() {
   assert.ok(webfetch, 'webfetch permission must be present');
   assert.strictEqual(webfetch.action, 'deny', 'webfetch must be denied');
 
-  console.log('PASS: _buildPermissionRuleset(read-only) denies mutating permissions');
+  console.log('PASS: read-only ruleset sent to the server denies mutating permissions');
 }
 
 // ===========================================================================
-// 2. _buildPermissionRuleset('workspace') allows mutation, denies external_directory
+// 2. Workspace ruleset allows mutation, denies external_directory
 // ===========================================================================
 {
-  const adapter = makeBaseAdapter();
-  const rules = adapter._buildPermissionRuleset('workspace');
+  const dir = tmpDir();
+  const body = await captureSessionBody({ canonicalDir: dir, access: 'workspace' });
+  clean(dir);
 
+  const rules = body.permission;
   assert.ok(Array.isArray(rules), 'ruleset must be an array');
   assert.ok(rules.length > 0, 'ruleset must not be empty');
 
@@ -84,23 +113,25 @@ async function main() {
   const edit = rules.find(r => r.permission === 'edit');
   assert.strictEqual(edit, undefined, 'edit must not be explicitly present (covered by wildcard)');
 
-  console.log('PASS: _buildPermissionRuleset(workspace) allows mutation, denies external');
+  console.log('PASS: workspace ruleset allows mutation, denies external');
 }
 
 // ===========================================================================
-// 3. _buildPermissionRuleset('full') is broad allow (*, *, allow)
+// 3. Full access is broad allow (*, *, allow)
 // ===========================================================================
 {
-  const adapter = makeBaseAdapter();
-  const rules = adapter._buildPermissionRuleset('full');
+  const dir = tmpDir();
+  const body = await captureSessionBody({ canonicalDir: dir, access: 'full' });
+  clean(dir);
 
+  const rules = body.permission;
   assert.ok(Array.isArray(rules), 'ruleset must be an array');
   assert.strictEqual(rules.length, 1, 'full ruleset must have exactly 1 rule');
   assert.strictEqual(rules[0].permission, '*', 'full must have wildcard permission');
   assert.strictEqual(rules[0].pattern, '*', 'full must have wildcard pattern');
   assert.strictEqual(rules[0].action, 'allow', 'full must allow all');
 
-  console.log('PASS: _buildPermissionRuleset(full) is broad allow');
+  console.log('PASS: full ruleset is broad allow');
 }
 
 // ===========================================================================
@@ -108,7 +139,8 @@ async function main() {
 // ===========================================================================
 {
   const adapter = makeBaseAdapter();
-  adapter.PrepareInvocation({}, { canonicalDir: __dirname, access: undefined });
+  const dir = tmpDir();
+  adapter.PrepareInvocation({}, { canonicalDir: dir, access: undefined });
   // When access is undefined, the adapter should default to read-only
   const ruleset = adapter._lastPermissionRuleset;
   assert.ok(ruleset, 'ruleset must be set after PrepareInvocation');
@@ -116,27 +148,28 @@ async function main() {
   assert.ok(!star, 'default must NOT have broad allow (*, *, allow)');
   const edit = ruleset.find(r => r.permission === 'edit');
   assert.ok(edit && edit.action === 'deny', 'edit must be denied in default mode');
+  clean(dir);
   console.log('PASS: default access is read-only, not broad allow');
 }
 
 // ===========================================================================
-// 5. _buildSessionUrl appends directory query parameter
+// 5. Request paths append the directory query parameter
 // ===========================================================================
 {
   const adapter = makeBaseAdapter();
   const dir = 'C:\\myproject';
   adapter._canonicalDir = dir;
 
-  const url = adapter._buildUrl('/session');
-  assert.ok(url.includes('directory='), 'URL must include directory parameter');
-  assert.ok(url.includes(encodeURIComponent(dir)) || url.includes(dir.replace(/\\/g, '/')),
-    'URL must include the canonical directory');
+  const p = adapter._buildPath('/session');
+  assert.ok(p.includes('directory='), 'path must include directory parameter');
+  assert.ok(p.includes(encodeURIComponent(dir)) || p.includes(dir.replace(/\\/g, '/')),
+    'path must include the canonical directory');
 
-  console.log('PASS: _buildUrl appends directory query parameter');
+  console.log('PASS: _buildPath appends directory query parameter');
 }
 
 // ===========================================================================
-// 6. _buildUrl appends directory to endpoint paths that accept it
+// 6. Directory is appended to endpoint paths that accept it
 // ===========================================================================
 {
   const adapter = makeBaseAdapter();
@@ -145,18 +178,18 @@ async function main() {
   const endpoints = ['/session', '/session/ses_123/message', '/session/ses_123/abort',
     '/permission', '/question', '/project/current'];
   for (const ep of endpoints) {
-    const url = adapter._buildUrl(ep);
-    assert.ok(url.includes('directory='), `Endpoint ${ep} must include directory`);
+    const p = adapter._buildPath(ep);
+    assert.ok(p.includes('directory='), `Endpoint ${ep} must include directory`);
   }
 
   // /global/health and /global/dispose should NOT need directory
-  const healthUrl = adapter._buildUrl('/global/health');
-  assert.ok(!healthUrl.includes('directory='), '/global/health must NOT include directory');
+  const healthPath = adapter._buildPath('/global/health');
+  assert.ok(!healthPath.includes('directory='), '/global/health must NOT include directory');
 
-  const disposeUrl = adapter._buildUrl('/global/dispose');
-  assert.ok(!disposeUrl.includes('directory='), '/global/dispose must NOT include directory');
+  const disposePath = adapter._buildPath('/global/dispose');
+  assert.ok(!disposePath.includes('directory='), '/global/dispose must NOT include directory');
 
-  console.log('PASS: _buildUrl appends directory only where appropriate');
+  console.log('PASS: _buildPath appends directory only where appropriate');
 }
 
 // ===========================================================================
@@ -202,33 +235,37 @@ async function main() {
 }
 
 // ===========================================================================
-// 9. _checkProjectIdentity detects directory mismatch (test mode)
+// 9. Project identity check accepts the matching directory
 // ===========================================================================
 {
-  const adapter = makeBaseAdapter();
-  adapter._serverBaseUrl = 'http://127.0.0.1:1'; // won't be used in test mode
-  adapter._password = 'test-pw';
-
-  // In test mode, _checkProjectIdentity is a no-op (returns true)
-  // We test the logic by making a non-test-mode adapter and injecting
-  // The real check is in the live smoke test
-  console.log('PASS: _checkProjectIdentity interface exists');
+  const dir = tmpDir();
+  const transport = new FakeTransport({
+    script: {
+      '/project/current': { directory: dir },
+      '/session': { id: 'ses_match' },
+      '/session/ses_match/prompt_async': { status: 204 },
+    },
+  });
+  const adapter = new OpencodeAdapter({ transport });
+  adapter.PrepareInvocation({}, { canonicalDir: dir, access: 'read-only' });
+  await adapter.SendPrompt({}, 'probe');
+  clean(dir);
+  console.log('PASS: project identity check accepts the matching directory');
 }
 
 // ===========================================================================
-// 10. SendPrompt builds session body with permission ruleset and directory
+// 10. SendPrompt builds session body with permission ruleset and model
 // ===========================================================================
 {
-  // In test mode, SendPrompt is a no-op that just returns.
-  // We verify the session body would be correct by testing _buildSessionBody directly.
-  const adapter = makeBaseAdapter();
-  adapter._canonicalDir = 'C:\\test\\repo';
-  adapter._accessMode = 'read-only';
-  adapter._lastPermissionRuleset = adapter._buildPermissionRuleset('read-only');
-  adapter._modelObj = { providerID: 'opencode-go', id: 'deepseek-v4-flash' };
-  adapter._variant = 'high';
+  const dir = tmpDir();
+  const body = await captureSessionBody({
+    canonicalDir: dir,
+    access: 'read-only',
+    model: 'opencode-go/deepseek-v4-flash',
+    variant: 'high',
+  });
+  clean(dir);
 
-  const body = adapter._buildSessionBody('Test prompt');
   assert.ok(body, 'session body must be an object');
   assert.ok(body.permission, 'session body must have permission array');
   assert.ok(Array.isArray(body.permission), 'permission must be an array');
@@ -241,7 +278,7 @@ async function main() {
   // Verify no workspaceID is set speculatively
   assert.strictEqual(body.workspaceID, undefined, 'workspaceID must not be set speculatively');
 
-  console.log('PASS: _buildSessionBody includes permission, model, and variant');
+  console.log('PASS: session body includes permission, model, and variant');
 }
 
 // ===========================================================================
@@ -318,15 +355,27 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
     }
 
     // ======================================================================
-    // 12b. Wrong directory is caught (we can't easily reach into the HTTP
-    //      layer from CLI, but we prove the helper method rejects mismatches)
+    // 12b. Wrong directory is caught — project identity is verified before
+    //      the first prompt (proven live by a mismatched transport script)
     // ======================================================================
     {
-      const adapter = makeBaseAdapter();
-      // Verify _verifyProjectIdentity exists and is a function
-      assert.strictEqual(typeof adapter._verifyProjectIdentity, 'function',
-        '_verifyProjectIdentity must be a function');
-      console.log('PASS: Live — _verifyProjectIdentity interface present');
+      const dir = tmpDir();
+      const wrongDir = tmpDir();
+      const transport = new FakeTransport({
+        script: {
+          '/project/current': { directory: wrongDir },
+        },
+      });
+      const adapter = new OpencodeAdapter({ transport });
+      adapter.PrepareInvocation({}, { canonicalDir: dir, access: 'read-only' });
+      await assert.rejects(
+        () => adapter.SendPrompt({}, 'probe'),
+        /Project identity mismatch/,
+        'a mismatched project directory must be rejected before the prompt'
+      );
+      clean(dir);
+      clean(wrongDir);
+      console.log('PASS: Live — project identity mismatch is rejected');
     }
 
     // =========================================================================
@@ -338,50 +387,17 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
       const gitResult = spawnSync('git', ['init'], { cwd: repoDir, encoding: 'utf8', timeout: 10000, windowsHide: true });
       assert.strictEqual(gitResult.status, 0, 'git init must succeed');
 
-      const { request } = require('node:http');
-
       const adapter = new OpencodeAdapter();
       let serverStarted = false;
 
       try {
         adapter.PrepareInvocation({}, { canonicalDir: repoDir, access: 'full' });
-        await adapter.Start(0);
+        await adapter.Start({});
         serverStarted = true;
-        const pw = adapter._password;
+        const server = adapter._server;
 
         function liveRequest(method, endpoint, body, timeoutMs) {
-          const url = adapter._buildUrl(endpoint);
-          return new Promise((resolve, reject) => {
-            const u = new URL(url);
-            const headers = body ? { 'Content-Type': 'application/json' } : {};
-            if (pw) {
-              headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + pw).toString('base64');
-            }
-            let settled = false;
-            const req = request({
-              hostname: u.hostname, port: u.port, path: u.pathname + u.search,
-              method, headers, timeout: timeoutMs || 10000,
-            }, (res) => {
-              const chunks = [];
-              res.on('data', (c) => chunks.push(c));
-              res.on('end', () => {
-                if (settled) return;
-                settled = true;
-                const raw = Buffer.concat(chunks).toString('utf8');
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                  try { resolve(JSON.parse(raw)); } catch { resolve(raw); }
-                } else {
-                  const err = new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 500)}`);
-                  err.statusCode = res.statusCode;
-                  reject(err);
-                }
-              });
-            });
-            req.on('error', (err) => { if (!settled) { settled = true; reject(err); }});
-            req.on('timeout', () => { if (!settled) { settled = true; req.destroy(); reject(new Error(`Request timeout ${timeoutMs}ms`)); }});
-            if (body !== undefined && body !== null) req.write(JSON.stringify(body));
-            req.end();
-          });
+          return server.request({ method, path: adapter._buildPath(endpoint), body, timeoutMs });
         }
 
         function livePost(endpoint, body, timeoutMs) { return liveRequest('POST', endpoint, body, timeoutMs); }
@@ -557,7 +573,7 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
 
       } finally {
         if (serverStarted) {
-          try { adapter.Dispose(0); } catch {}
+          try { adapter.Dispose({}); } catch {}
         }
         clean(repoDir);
       }
@@ -575,7 +591,7 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
 // reproduction: a worktree of an already-open project reported the original
 // repo dir, not the worktree, causing every real implement-mode job to fail
 // this check even though the server was talking to the right directory all
-// along. Uses an in-process fake HTTP server, not a real opencode install.
+// along. Uses an in-process fake HTTP server as the transport's base URL.
 // ===========================================================================
 await (async () => {
   const http = require('node:http');
@@ -605,10 +621,10 @@ await (async () => {
       sandboxes: [canonicalDir],
     });
     const port = server.address().port;
-    const adapter = new OpencodeAdapter({});
-    adapter._serverBaseUrl = `http://127.0.0.1:${port}`;
+    const adapter = new OpencodeAdapter({
+      transport: new HttpTransport({ baseUrl: `http://127.0.0.1:${port}` }),
+    });
     adapter._canonicalDir = canonicalDir;
-    adapter._password = null;
     await adapter._verifyProjectIdentity();
     server.close();
     console.log('PASS: _verifyProjectIdentity accepts canonicalDir listed in sandboxes');
@@ -623,10 +639,10 @@ await (async () => {
       sandboxes: [unrelatedDir],
     });
     const port = server.address().port;
-    const adapter = new OpencodeAdapter({});
-    adapter._serverBaseUrl = `http://127.0.0.1:${port}`;
+    const adapter = new OpencodeAdapter({
+      transport: new HttpTransport({ baseUrl: `http://127.0.0.1:${port}` }),
+    });
     adapter._canonicalDir = canonicalDir;
-    adapter._password = null;
     await assert.rejects(
       () => adapter._verifyProjectIdentity(),
       /Project identity mismatch/,
@@ -661,27 +677,24 @@ await (async () => {
 }
 
 // ===========================================================================
-// 14. _buildMessageUrl appends directory
+// 14. Message path appends directory
 // ===========================================================================
 {
   const adapter = makeBaseAdapter();
   adapter._canonicalDir = 'D:\\repo';
-  const url = adapter._buildUrl('/session/ses_1/message');
-  assert.ok(url.includes('directory='), 'message URL must include directory');
-  console.log('PASS: message URL includes directory');
+  const p = adapter._buildPath('/session/ses_1/message');
+  assert.ok(p.includes('directory='), 'message path must include directory');
+  console.log('PASS: message path includes directory');
 }
 
 // ===========================================================================
 // 15. Permission ruleset sentinel: every created session body has permission
 // ===========================================================================
 {
-  const adapter = makeBaseAdapter();
-  adapter._canonicalDir = __dirname;
-  adapter._accessMode = 'read-only';
-  adapter._lastPermissionRuleset = adapter._buildPermissionRuleset('read-only');
-  adapter._modelObj = { providerID: 'opencode-go', id: 'deepseek-v4-flash' };
+  const dir = tmpDir();
+  const body = await captureSessionBody({ canonicalDir: dir, access: 'read-only' });
+  clean(dir);
 
-  const body = adapter._buildSessionBody('test');
   assert.ok(body.permission, 'session body must contain permission array');
   assert.ok(body.permission.length > 0, 'permission array must not be empty');
   assert.strictEqual(body.permission[0].action, 'allow',

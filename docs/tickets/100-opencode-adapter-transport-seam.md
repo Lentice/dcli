@@ -1,6 +1,6 @@
 # 100 — opencode adapter: a transport seam replaces twenty-one `_testMode` branches
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Test quality, in the largest and second-hottest file in the repository. The turn
 reconciliation logic — SSE versus REST, idle confirmation, unknown status — is where opencode's real
@@ -221,4 +221,116 @@ ticket 100: opencode adapter runs on an injected transport seam
 
 ## Notes
 
-(Left empty by the author.)
+### 2026-08-11 — implemented, one commit (not split)
+
+The estimate came in under two days, so no split was needed: server module and turn module
+landed together in one commit. `adapters/opencode/adapter.js` went from 1771 lines to ~700;
+the turn logic (SSE reconnect, status polling, interaction polling, idle confirmation,
+unknown-status bound) now lives in `adapters/opencode/turn.js` (~650 lines), the per-job
+server in `adapters/opencode/server.js`, the raw HTTP/SSE in `adapters/opencode/transport.js`,
+and CreditsError classification in `adapters/opencode/classify.js`.
+
+**Seam design.** The adapter is constructed with `{ transport, stateRoot, jobId }` only. A
+supplied `transport` means the caller owns the HTTP/SSE surface and `Start()` launches no
+server (the honest test seam); production constructs the adapter bare, and `Start()` creates a
+per-job `OpencodeServer` whose `HttpTransport` becomes the adapter's transport. The transport
+contract is exactly the ticket's: `request({ method, path, body, headers, signal }) ->
+{ status, headers, body }` (raw text body, throws only on transport failure, and **asserts a
+finite signal on every call** — invariant 3, criterion E) plus `events(path, { signal }) ->
+AsyncIterable` of parsed SSE events decorated with `_sseId`/`_sseEvent`. The parsed-JSON /
+non-2xx-throwing semantics the adapter needs are one small shared helper,
+`requestJson(transport, { method, path, body, timeoutMs })`, which builds
+`AbortSignal.timeout(timeoutMs)` itself — so every adapter/turn call site stays bounded without
+repeating the boilerplate. `OpencodeTurn.run({ prompt, session, policy, deadline, context })`
+owns all reconciliation; `context.isCancelled()` and `session.{id,promptSentAt,backendPid}` are
+the only per-job inputs the loop needs beyond the ticket's four. The `prompt` argument is
+accepted per the ticket's signature but is not yet used by the reconciliation logic (the prompt
+is delivered in `SendPrompt`); it is stored on the adapter and passed through for future result
+attribution.
+
+**The 21 `_testMode` branches and what each bypassed** (line numbers in the pre-change file):
+
+1. ctor (176) — the flag and ~15 `_mock*` options (177–185, 220–223). Bypassed: *all* backend
+   interaction; depended on by every opencode test.
+2. `_transportRequest` override (436) — injected responses. Bypassed: HTTP entirely.
+   Depended: async-prompt #1, interactions, unresolved-status-bound.
+3. `_transportRequest` simulated fallback (439) — `{ _simulated: true }`. Bypassed: HTTP.
+   Depended: Respond and server-lifecycle minimal adapters.
+4. `_verifyProjectIdentity` (462) — no-op. Bypassed: the directory-footgun check
+   (backend-pitfalls.md). Depended: every test-mode SendPrompt call.
+5. `DetectVersion` (767) — returned `_mockVersion`. Bypassed: the real version probe.
+   Depended: contract suite, adapter.test.
+6. `Start` (872) — fake pid 42 + seeded `_mockFacts`. Bypassed: process launch, readiness,
+   health check. Depended: contract suite, adapter.test, server-lifecycle.
+7. `SendPrompt` mock-SSE session (991) — set session id without POSTing. Bypassed: session
+   creation + prompt_async. Depended: interactions, unresolved, async-prompt.
+8. `SendPrompt` `_mockFacts` return (996) — early return. Bypassed: everything after
+   project-identity. Depended: adapter.test minimal, contract.
+9. `SendPrompt` no-override return (999) — early return. Bypassed: session/prompt. Depended:
+   minimal adapters.
+10. `_fetchSessionStatus` (1280) — `_mockSessionStatusResponses`. Bypassed: **the status parse
+    itself — ticket 81's subject** (the regression test drove the real parse path). Depended:
+    async-prompt #3/#4, interactions.
+11. `_readMessagesFromServer` (1331) — `_mockMessagesResponse`. Bypassed: GET /message.
+    Depended: async-prompt #4/5/6, interactions, unresolved.
+12. `_sseReadEvents` (1409) — `_mockSseEvents` replay. Bypassed: the SSE source (framing,
+    reconnect, socket). Depended: async-prompt, interactions, unresolved.
+13. `Observe` mock-SSE routing (1497) — routed to the *real* reconciliation loop with mock SSE;
+    bypassed only the SSE source.
+14. `Observe` `_mockFacts` replay (1501) — bypassed the whole reconciliation loop. Depended:
+    adapter.test minimal, contract.
+15. `Respond` (1535) — override/simulated. Bypassed: POST reply. Depended: interactions #7/#10.
+16. `CollectResult` (1622) — mock-SSE result path. Bypassed: turn result tracking.
+17. `CollectResult` (1627) — `_mockFacts` replay. Bypassed: result derivation from emitted
+    facts. Depended: adapter.test #7/#8, contract.
+18. `Dispose` (1668) — skipped server teardown. Bypassed: dispose POST + tree kill. Depended:
+    every test-mode test (it kept tests from touching real processes).
+19. `_runEndpointShapeProbes` (1738) — skipped 3 of the 4 shape probes. Bypassed:
+    /permission, /question, /session/status shape checks. Depended: interactions #16.
+20. `LiveSmoke` (1771) — no-op. Bypassed: the version probe. Depended: interactions #17.
+21. `LiveSmokeRequest` (1787) — no-op. Bypassed: the whole live smoke. Depended: interactions
+    #17.
+
+**Version pin.** `supported_version_range` unchanged: min `1.18.0`, max `1.19.0`. No fresh
+fixture capture was performed for this ticket: the scripted responses reuse the shapes the
+existing tests already consumed, which trace to the study (verified live on 1.18.7 and
+1.18.10–1.18.12, incl. the ticket-81 amendment) — `/session/status` map, message `parts`,
+permission/question arrays, `/project/current`. The version strings in tests are shim outputs,
+not fixture claims. As a live cross-check, `server-teardown.test.js` ran with
+`DCLI_OPENCODE_LIVE_SMOKE=1` against the installed 1.18.12 and passed end to end (Start →
+SendPrompt → Observe → CollectResult → Dispose), confirming the production seam against a real
+backend.
+
+**Unverified-assumption watch.** The SSE `id:`/`Last-Event-ID` reconnect mechanism is
+unverified per study §11.5; the `_sseId` decoration moved **verbatim** from the adapter (no new
+assertion) and the reconnect tests assert only the verified message-re-read gap fill, never the
+header. Nothing else in the fixtures asserts a study-unverified fact.
+
+**Deliberate removals (dead or test-only code, noted per the ticket's "no behaviour change"
+limit):**
+- `IDLE_TIMEOUT_MS` (120 s) and `_idleTimeoutMs` were dead: the reconciliation loop uses
+  `IDLE_CONFIRM_MS` (3 s) and the transport owns socket-idle tolerance; the only consumer of
+  the 120 s constant was a test asserting its own existence.
+- `SendPrompt`'s `response.statusCode !== 204` check was dead in production (the transport
+  throws on non-2xx) and only served the mock path; the transport contract now owns status
+  handling.
+- `CollectDiagnostics().exit_code` now reflects the exit code the turn actually emitted (0
+  after a run) instead of always null — the codex/claude adapters already behaved this way via
+  their `_facts`.
+- `_runEndpointShapeProbes` now runs all four probes unconditionally (the test-mode branch that
+  skipped three was deleted; the probes are only reachable from tests today).
+- `LiveSmoke`/`LiveSmokeRequest` are always real now; the "noop in test mode" behavior is gone
+  with the mode itself, and `core/doctor.test.js` covers the envelope-on-failure guarantee.
+
+**Criterion check.** A: `rg -c "_testMode|_mock" adapters/opencode/adapter.js` → 0 (no
+`_testMode`/`_mock*` anywhere in `adapters/opencode/`). B: transport supplied in the
+constructor, never overridden. C: no test references `_processSseEvents`, `_selectFinalMessage`,
+`_buildPermissionRuleset` or `_transportRequestOverride`; rulesets are asserted on the captured
+POST /session body, message selection on the emitted `assistant_text`/result facts. D: the
+unknown-status bound is asserted through the seam (unresolved-status-bound.test.js, unchanged
+reducer decisions). E: every HTTP call carries a signal — `requestJson` builds
+`AbortSignal.timeout` for every call, the SSE source bounds connect by signal and idle by
+socket timeout, and the transport rejects a call without a signal. F: contract suite passes
+unchanged (suite.js untouched; contract.test.js/parity-gate.test.js construct the adapter with
+the injected transport + a version shim). G: nothing added to `core/` (criterion G grep output
+identical to the pre-change baseline). Z: `npm run check` green.

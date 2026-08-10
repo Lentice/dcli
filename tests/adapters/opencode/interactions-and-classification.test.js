@@ -1,62 +1,54 @@
 // @suite full
+// Interaction polling, unattended rejection, classification and Respond —
+// driven through the ticket-100 seams: the turn module against a scripted
+// transport, Respond against the adapter's injected transport.
 const assert = require('node:assert');
 const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
+const { OpencodeTurn } = require('../../../adapters/opencode/turn');
+const { FakeTransport } = require('../../fixtures/fake-transport');
+const { classifyBackendError } = require('../../../adapters/opencode/classify');
 const { InteractionOutcome } = require('../../../core/interaction-outcome');
 const { validateFact } = require('../../../core/fact-types');
 
+const TURN_TIMINGS = {
+  pollIntervalMs: 0,
+  interactionPollMs: 0,
+  idleConfirmMs: 1,
+};
+
+const FINAL_MESSAGE = {
+  parts: [
+    { id: 'p1', messageID: 'msg_1', type: 'text', text: 'final' },
+    { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 10, input: 5, output: 5 } },
+  ],
+};
+
 function makeAdapter(opts = {}) {
   return new OpencodeAdapter({
-    _testMode: true,
-    _mockVersion: '1.18.8',
-    _mockExitCode: 0,
-    _mockSseEvents: [],
-    _mockSessionStatusResponses: [],
-    _mockMessagesResponse: null,
-    _mockSessionId: 'ses_test',
-    _mockPollIntervalMs: 50,
-    _mockInteractionPollMs: 50,
-    _mockIdleTimeoutMs: 5000,
-    _mockFacts: undefined,
+    transport: new FakeTransport({}),
     ...opts,
   });
 }
 
-async function makeInteractionFacts(adapter, override) {
-  adapter._serverBaseUrl = 'http://127.0.0.1:1';
-  adapter._password = 'test-pw';
-  adapter._backendPid = 42;
-  adapter._sessionId = adapter._sessionId || 'ses_test';
-
-  let replyCalls = 0;
-  let lastReplyBody = null;
-
-  adapter._transportRequestOverride = (method, endpoint, body, timeoutMs) => {
-    if (endpoint.includes('/permission/') && (endpoint.endsWith('/reply') || endpoint.endsWith('/reject')) && method === 'POST') {
-      replyCalls++;
-      lastReplyBody = body;
-      return true;
-    }
-    if (endpoint.includes('/question/') && (endpoint.endsWith('/reply') || endpoint.endsWith('/reject')) && method === 'POST') {
-      replyCalls++;
-      lastReplyBody = body;
-      return true;
-    }
-    if (override) return override(method, endpoint, body, timeoutMs);
-    if (endpoint === '/permission') return [];
-    if (endpoint === '/question') return [];
-    if (endpoint.includes('/session/status')) return { ses_test: { type: 'idle' } };
-    if (endpoint.includes('/message')) {
-      return { parts: [{ id: 'p1', messageID: 'msg_1', type: 'text', text: 'final' }, { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 10, input: 5, output: 5 } }] };
-    }
-    return null;
-  };
-
+async function makeInteractionFacts(script, sessionId = 'ses_test') {
+  const transport = new FakeTransport({
+    script: {
+      '/session/status': { [sessionId]: { type: 'idle' } },
+      '/session/ses_test/message': FINAL_MESSAGE,
+      ...script,
+    },
+  });
+  const turn = new OpencodeTurn({ transport, buildPath: (ep) => ep, timings: TURN_TIMINGS });
   const facts = [];
-  for await (const fact of adapter.Observe({})) {
+  for await (const fact of turn.run({
+    session: { id: sessionId, promptSentAt: Date.now(), backendPid: 42 },
+    policy: null,
+    deadline: null,
+  })) {
     facts.push(fact);
     if (fact.type === 'process_exited') break;
   }
-  return { facts, replyCalls, lastReplyBody };
+  return { facts };
 }
 
 async function main() {
@@ -80,28 +72,18 @@ async function main() {
   await run('Permission and question endpoints polled on interval', async () => {
     let permCalls = 0;
     let qCalls = 0;
-    const adapter = makeAdapter();
-    adapter._serverBaseUrl = 'http://127.0.0.1:1';
-    adapter._password = 'test-pw';
-    adapter._backendPid = 42;
-    adapter._sessionId = 'ses_test';
-
-    adapter._transportRequestOverride = (method, endpoint) => {
-      if (endpoint === '/permission') { permCalls++; return []; }
-      if (endpoint === '/question') { qCalls++; return []; }
-      if (endpoint.includes('/session/status')) return { ses_test: { type: 'idle' } };
-      if (endpoint.includes('/message')) {
-        return { parts: [{ id: 'p1', messageID: 'msg_1', type: 'text', text: 'done' }, { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 10, input: 5, output: 5 } }] };
-      }
-      return null;
-    };
-
-    const facts = [];
-    for await (const fact of adapter.Observe({})) {
-      facts.push(fact);
+    const transport = new FakeTransport({
+      script: {
+        '/session/status': { ses_test: { type: 'idle' } },
+        '/session/ses_test/message': FINAL_MESSAGE,
+        '/permission': () => { permCalls++; return []; },
+        '/question': () => { qCalls++; return []; },
+      },
+    });
+    const turn = new OpencodeTurn({ transport, buildPath: (ep) => ep, timings: TURN_TIMINGS });
+    for await (const fact of turn.run({ session: { id: 'ses_test', promptSentAt: Date.now(), backendPid: 42 }, policy: null, deadline: null })) {
       if (fact.type === 'process_exited') break;
     }
-
     assert.ok(permCalls > 0, 'GET /permission must be called at least once');
     assert.ok(qCalls > 0, 'GET /question must be called at least once');
   });
@@ -122,11 +104,9 @@ async function main() {
   // 3. Pending permission emits interaction_pending fact with correct shape
   // ===========================================================================
   await run('Pending permission emits interaction_pending fact', async () => {
-    const { facts } = await makeInteractionFacts(makeAdapter(), (method, endpoint) => {
-      if (endpoint === '/permission') {
-        return [{ id: 'per_1', sessionID: 'ses_test', permission: 'bash', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }];
-      }
-      return undefined;
+    const { facts } = await makeInteractionFacts({
+      '/permission': [{ id: 'per_1', sessionID: 'ses_test', permission: 'bash', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }],
+      '/question': [],
     });
 
     const pending = facts.find(f => f.type === 'interaction_pending');
@@ -142,12 +122,9 @@ async function main() {
   // 4. Pending question emits interaction_pending fact with kind 'question'
   // ===========================================================================
   await run('Pending question emits interaction_pending fact', async () => {
-    const { facts } = await makeInteractionFacts(makeAdapter(), (method, endpoint) => {
-      if (endpoint === '/question') {
-        return [{ id: 'que_1', sessionID: 'ses_test', questions: [{ question: 'Which file to edit?' }], tool: { messageID: 'msg_1', callID: 'call_1' } }];
-      }
-      if (endpoint === '/permission') return [];
-      return undefined;
+    const { facts } = await makeInteractionFacts({
+      '/permission': [],
+      '/question': [{ id: 'que_1', sessionID: 'ses_test', questions: [{ question: 'Which file to edit?' }], tool: { messageID: 'msg_1', callID: 'call_1' } }],
     });
 
     const pending = facts.find(f => f.type === 'interaction_pending');
@@ -159,11 +136,11 @@ async function main() {
   // 5. Unattended default: rejected_unattended with explanatory message
   // ===========================================================================
   await run('Unattended interaction: rejected_unattended outcome, backend_error with permission_or_sandbox', async () => {
-    const { facts, replyCalls, lastReplyBody } = await makeInteractionFacts(makeAdapter(), (method, endpoint) => {
-      if (endpoint === '/permission') {
-        return [{ id: 'per_2', sessionID: 'ses_test', permission: 'edit', patterns: ['src/*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }];
-      }
-      return undefined;
+    let lastReplyBody = null;
+    const { facts } = await makeInteractionFacts({
+      '/permission': [{ id: 'per_2', sessionID: 'ses_test', permission: 'edit', patterns: ['src/*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }],
+      '/question': [],
+      '/permission/per_2/reply': (req) => { lastReplyBody = req.body; return true; },
     });
 
     const resolved = facts.find(f => f.type === 'interaction_resolved');
@@ -176,8 +153,7 @@ async function main() {
     assert.ok(errorFact.structured_payload, 'Must have structured_payload');
     validateFact(errorFact);
 
-    assert.ok(replyCalls > 0, 'POST reply must be called');
-    assert.ok(lastReplyBody, 'reply body must exist');
+    assert.ok(lastReplyBody, 'POST reply must be called');
     assert.strictEqual(lastReplyBody.reply, 'reject', 'unattended must reject');
     assert.ok(lastReplyBody.message, 'unattended must include explanatory message');
   });
@@ -206,13 +182,15 @@ async function main() {
     } catch (err) {
       assert.ok(err.message.includes('automation policy'));
     }
-    // With a policy, the call still needs a mock transport
-    adapter._automationPolicy = [{ permission: '*', pattern: '*', action: 'allow' }];
-    adapter._transportRequestOverride = (method, endpoint, body) => {
-      assert.ok(endpoint.includes('/permission/'), 'must call permission reply');
-      return { success: true };
-    };
-    const result = await adapter.Respond('per_1', { kind: 'permission', reply: 'always' });
+    // With a policy, the call goes through the injected transport
+    const transport = new FakeTransport({
+      script: {
+        '/permission/per_1/reply': { success: true },
+      },
+    });
+    const policyAdapter = new OpencodeAdapter({ transport });
+    policyAdapter._automationPolicy = [{ permission: '*', pattern: '*', action: 'allow' }];
+    const result = await policyAdapter.Respond('per_1', { kind: 'permission', reply: 'always' });
     assert.ok(result, 'Respond must return a result');
   });
 
@@ -226,18 +204,6 @@ async function main() {
     assert.strictEqual(caps.extensions.interactive_permissions.transport, 'http');
     assert.ok(caps.extensions.answerable_questions.supported, 'answerable_questions must be supported');
     assert.strictEqual(caps.extensions.answerable_questions.transport, 'http');
-
-    // These return Promises but don't throw (they go through _transportRequestOverride which is null)
-    try {
-      await adapter.Respond('test-id', { kind: 'permission', reply: 'reject' });
-    } catch (e) {
-      // Expected to fail because no mock, but should not throw for the wrong reason
-    }
-    try {
-      await adapter.Respond('test-id', 'allow');
-    } catch (e) {
-      // OK - no mock transport
-    }
   });
 
   // ===========================================================================
@@ -245,36 +211,14 @@ async function main() {
   // ===========================================================================
   await run('404 on reply is benign', async () => {
     let replyReturned404 = false;
-    const adapter = makeAdapter();
-    adapter._serverBaseUrl = 'http://127.0.0.1:1';
-    adapter._password = 'test-pw';
-    adapter._backendPid = 42;
-    adapter._sessionId = 'ses_test_404';
-
-    adapter._transportRequestOverride = (method, endpoint, body) => {
-      if (endpoint.includes('/permission/') && endpoint.endsWith('/reply') && method === 'POST') {
+    const { facts } = await makeInteractionFacts({
+      '/permission': [{ id: 'per_notfound', sessionID: 'ses_test_404', permission: 'edit', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }],
+      '/question': [],
+      '/permission/per_notfound/reply': () => {
         replyReturned404 = true;
-        const err = new Error('HTTP 404');
-        err.statusCode = 404;
-        err.body = 'Not Found';
-        throw err;
-      }
-      if (endpoint === '/permission') {
-        return [{ id: 'per_notfound', sessionID: 'ses_test_404', permission: 'edit', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }];
-      }
-      if (endpoint === '/question') return [];
-      if (endpoint.includes('/session/status')) return { ses_test_404: { type: 'idle' } };
-      if (endpoint.includes('/message')) {
-        return { parts: [{ id: 'p1', messageID: 'msg_1', type: 'text', text: 'final' }, { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 10, input: 5, output: 5 } }] };
-      }
-      return null;
-    };
-
-    const facts = [];
-    for await (const fact of adapter.Observe({})) {
-      facts.push(fact);
-      if (fact.type === 'process_exited') break;
-    }
+        return { status: 404, body: 'Not Found' };
+      },
+    }, 'ses_test_404');
 
     assert.ok(replyReturned404, 'Reply must have been attempted (and returned 404)');
     const resolved = facts.find(f => f.type === 'interaction_resolved');
@@ -292,11 +236,14 @@ async function main() {
     } catch (err) {
       assert.ok(err.message.includes('automation policy'));
     }
-    adapter._automationPolicy = [{ permission: '*', pattern: '*', action: 'allow' }];
-    adapter._transportRequestOverride = (method, endpoint, body) => {
-      return { success: true };
-    };
-    const result = await adapter.Respond('per_1', { kind: 'permission', reply: 'always' });
+    const transport = new FakeTransport({
+      script: {
+        '/permission/per_1/reply': { success: true },
+      },
+    });
+    const policyAdapter = new OpencodeAdapter({ transport });
+    policyAdapter._automationPolicy = [{ permission: '*', pattern: '*', action: 'allow' }];
+    const result = await policyAdapter.Respond('per_1', { kind: 'permission', reply: 'always' });
     assert.ok(result, 'Respond must return a result');
   });
 
@@ -305,11 +252,10 @@ async function main() {
   //     is blocked (exit 15 / permission_or_sandbox), NOT timeout
   // ===========================================================================
   await run('Blocked classification: permission_or_sandbox from pending interaction', async () => {
-    const { facts } = await makeInteractionFacts(makeAdapter(), (method, endpoint) => {
-      if (endpoint === '/permission') {
-        return [{ id: 'per_blocked', sessionID: 'ses_test', permission: 'bash', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }];
-      }
-      return undefined;
+    const { facts } = await makeInteractionFacts({
+      '/permission': [{ id: 'per_blocked', sessionID: 'ses_test', permission: 'bash', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }],
+      '/question': [],
+      '/permission/per_blocked/reply': true,
     });
 
     const errorFact = facts.find(f => f.type === 'backend_error' && f.class_hint === 'permission_or_sandbox');
@@ -321,7 +267,6 @@ async function main() {
   // 12. Regression: HTTP 401 + CreditsError classifies as quota_or_rate_limit
   // ===========================================================================
   await run('CreditsError classifies as quota_or_rate_limit (not auth)', () => {
-    const adapter = makeAdapter();
     const payload = {
       name: 'CreditsError',
       responseBody: {
@@ -329,81 +274,69 @@ async function main() {
         isRetryable: false,
       },
     };
-    const result = adapter._classifyBackendError(payload);
-    assert.strictEqual(result, 'quota_or_rate_limit', 'CreditsError must classify as quota_or_rate_limit');
+    assert.strictEqual(classifyBackendError(payload), 'quota_or_rate_limit', 'CreditsError must classify as quota_or_rate_limit');
 
     const payloadNested = {
       responseBody: { error: { type: 'CreditsError' } },
     };
-    assert.strictEqual(adapter._classifyBackendError(payloadNested), 'quota_or_rate_limit');
+    assert.strictEqual(classifyBackendError(payloadNested), 'quota_or_rate_limit');
 
     const noMatch = { responseBody: { error: { type: 'SomeOtherError' } } };
-    assert.strictEqual(adapter._classifyBackendError(noMatch), null, 'Unknown error must return null');
+    assert.strictEqual(classifyBackendError(noMatch), null, 'Unknown error must return null');
 
-    assert.strictEqual(adapter._classifyBackendError(null), null);
+    assert.strictEqual(classifyBackendError(null), null);
   });
 
   // ===========================================================================
   // 13. HTTP 401 with CreditsError gets classHint on the error object
   // ===========================================================================
-  await run('HTTP 401 with CreditsError body receives classHint', () => {
-    const adapter = makeAdapter();
-    let capturedError = null;
-    adapter._transportRequestOverride = (method, endpoint) => {
-      if (endpoint.includes('/session') && method === 'POST') {
-        const err = new Error('HTTP 401: Credits exhausted');
-        err.statusCode = 401;
-        err.body = JSON.stringify({ error: { type: 'CreditsError', message: 'No credits left' }, isRetryable: false });
-        err.classHint = 'quota_or_rate_limit';
-        capturedError = err;
-        throw err;
+  await run('HTTP 401 with CreditsError body receives classHint', async () => {
+    const transport = new FakeTransport({
+      script: {
+        '/project/current': { directory: __dirname },
+        '/session': { status: 401, body: JSON.stringify({ error: { type: 'CreditsError', message: 'No credits left' }, isRetryable: false }) },
+      },
+    });
+    const adapter = new OpencodeAdapter({ transport });
+    adapter.PrepareInvocation({}, { canonicalDir: __dirname, access: 'read-only' });
+    await assert.rejects(
+      () => adapter.SendPrompt({}, 'test'),
+      (err) => {
+        assert.strictEqual(err.statusCode, 401, 'statusCode must be attached');
+        assert.strictEqual(err.classHint, 'quota_or_rate_limit', 'CreditsError body must set the class hint');
+        return true;
       }
-      return null;
-    };
-    assert.strictEqual(capturedError, null);
+    );
   });
 
   // ===========================================================================
   // 14. retry surfaced, not treated as failure
   // ===========================================================================
-  await run('retry status surfaced, not treated as failure', () => {
-    const adapter = makeAdapter();
-    adapter._serverBaseUrl = 'http://127.0.0.1:1';
-    adapter._password = 'test-pw';
-    adapter._backendPid = 42;
-    adapter._sessionId = 'ses_retry';
-
+  await run('retry status surfaced, not treated as failure', async () => {
     const statuses = [
       { ses_retry: { type: 'retry', attempt: 1, message: 'rate limit', next: 1000, action: { reason: 'quota', provider: 'opencode-go', title: 'Rate limited', message: 'slow down', label: 'retry', link: '' } } },
       { ses_retry: { type: 'idle' } },
     ];
+    let i = 0;
+    const { facts } = await makeInteractionFacts({
+      '/session/status': () => statuses[Math.min(i++, statuses.length - 1)],
+    }, 'ses_retry');
 
-    const statusFacts = statuses.map(sr => {
-      const entry = sr['ses_retry'];
-      const state = entry.type === 'retry' ? 'retrying' : entry.type;
-      return { type: 'backend_status', state };
-    });
-
-    assert.strictEqual(statusFacts[0].state, 'retrying');
-    assert.strictEqual(statusFacts[1].state, 'idle');
+    const statusFacts = facts.filter(f => f.type === 'backend_status');
+    assert.ok(statusFacts.some(f => f.state === 'retrying'), 'retry maps to retrying');
+    assert.ok(statusFacts.some(f => f.state === 'idle'), 'idle emitted');
     for (const f of statusFacts) validateFact(f);
-    // retry is not a failure — no backend_error emitted
-    assert.strictEqual(statusFacts.some(f => f.type === 'backend_error'), false);
+    // retry is not a failure — no backend_error with the retry as its cause
+    assert.strictEqual(facts.some(f => f.type === 'backend_error' && f.class_hint === 'backend_status_unresolved'), false);
   });
 
   // ===========================================================================
   // 15. Unmatched signature leaves failure_reason null
   // ===========================================================================
   await run('Unmatched error signature leaves class_hint null', () => {
-    const adapter = makeAdapter();
-    const unmatched = adapter._classifyBackendError({ responseBody: { error: { type: 'UnknownError' } } });
-    assert.strictEqual(unmatched, null, 'Unmatched must return null');
-
-    const emptyResult = adapter._classifyBackendError(null);
-    assert.strictEqual(emptyResult, null, 'null input must return null');
-
-    const unknownStatus = adapter._classifyBackendError({ statusCode: 500, responseBody: { error: { type: 'ServerError' } } });
-    assert.strictEqual(unknownStatus, null, 'Unknown status code must return null');
+    assert.strictEqual(classifyBackendError({ responseBody: { error: { type: 'UnknownError' } } }), null, 'Unmatched must return null');
+    assert.strictEqual(classifyBackendError(null), null, 'null input must return null');
+    assert.strictEqual(classifyBackendError({ statusCode: 500, responseBody: { error: { type: 'ServerError' } } }), null, 'Unknown status code must return null');
   });
 
   // ===========================================================================
@@ -417,7 +350,6 @@ async function main() {
 
   await run('Endpoint shape probe returns correct structure', async () => {
     const adapter = makeAdapter();
-    adapter._password = 'test-pw';
     const result = await adapter._probeEndpointShape(
       'http://127.0.0.1:1/global/health', 'GET', null, 2000, 'test_endpoint',
       (r) => ({ name: 'test_endpoint', ok: r.statusCode >= 200 && r.statusCode < 300, detail: `HTTP ${r.statusCode}` })
@@ -429,43 +361,26 @@ async function main() {
   });
 
   // ===========================================================================
-  // 17. doctor --json returns its envelope even when opencode broken/absent
-  //     (This is tested in core/doctor.test.js — verify the adapter layer
-  //      does not block the envelope by checking LiveSmoke is noop in test mode)
-  // ===========================================================================
-  await run('LiveSmoke is noop in test mode (envelope returned by doctor command)', async () => {
-    const adapter = makeAdapter();
-    const result = await adapter.LiveSmoke(5000);
-    assert.strictEqual(result, undefined, 'test-mode LiveSmoke must return undefined');
-  });
-
-  // ===========================================================================
-  // 18. Interaction poll does not extend past hard deadline
+  // 17. Interaction poll does not extend past hard deadline
   // ===========================================================================
   await run('Interaction poll bounded by hard deadline', async () => {
-    const adapter = makeAdapter();
-    adapter._hardDeadlineMs = Date.now() - 1000; // already expired
-    adapter._serverBaseUrl = 'http://127.0.0.1:1';
-    adapter._password = 'test-pw';
-    adapter._backendPid = 42;
-    adapter._sessionId = 'ses_deadline';
-
-    let permCalledAfterDeadline = false;
-    adapter._transportRequestOverride = (method, endpoint) => {
-      if (endpoint === '/permission') {
-        permCalledAfterDeadline = true;
-        return [{ id: 'per_deadline', sessionID: 'ses_deadline', permission: 'bash', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }];
-      }
-      if (endpoint === '/question') return [];
-      if (endpoint.includes('/session/status')) return { ses_deadline: { type: 'idle' } };
-      if (endpoint.includes('/message')) {
-        return { parts: [{ id: 'p1', messageID: 'msg_1', type: 'text', text: 'done' }, { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 10, input: 5, output: 5 } }] };
-      }
-      return null;
-    };
-
+    const transport = new FakeTransport({
+      script: {
+        '/session/status': { ses_deadline: { type: 'idle' } },
+        '/session/ses_deadline/message': FINAL_MESSAGE,
+        '/permission': () => {
+          return [{ id: 'per_deadline', sessionID: 'ses_deadline', permission: 'bash', patterns: ['*'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }];
+        },
+        '/question': [],
+      },
+    });
+    const turn = new OpencodeTurn({ transport, buildPath: (ep) => ep, timings: TURN_TIMINGS });
     const facts = [];
-    for await (const fact of adapter.Observe({})) {
+    for await (const fact of turn.run({
+      session: { id: 'ses_deadline', promptSentAt: Date.now(), backendPid: 42 },
+      policy: null,
+      deadline: Date.now() - 1000, // already expired
+    })) {
       facts.push(fact);
       if (fact.type === 'process_exited') break;
     }
@@ -475,14 +390,13 @@ async function main() {
   });
 
   // ===========================================================================
-  // 19. Collected facts from interaction flow validate correctly
+  // 18. Collected facts from interaction flow validate correctly
   // ===========================================================================
   await run('Interaction facts validate against fact schema', async () => {
-    const { facts } = await makeInteractionFacts(makeAdapter(), (method, endpoint) => {
-      if (endpoint === '/permission') {
-        return [{ id: 'per_val', sessionID: 'ses_test', permission: 'bash', patterns: ['src/*.js'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }];
-      }
-      return undefined;
+    const { facts } = await makeInteractionFacts({
+      '/permission': [{ id: 'per_val', sessionID: 'ses_test', permission: 'bash', patterns: ['src/*.js'], metadata: {}, always: [], tool: { messageID: 'msg_1', callID: 'call_1' } }],
+      '/question': [],
+      '/permission/per_val/reply': true,
     });
 
     const pending = facts.find(f => f.type === 'interaction_pending');

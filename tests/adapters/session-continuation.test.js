@@ -80,26 +80,30 @@ async function main() {
 // ===========================================================================
 {
   const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
+  const { FakeTransport } = require('../fixtures/fake-transport');
 
   async function sendWith(request) {
-    const adapter = new OpencodeAdapter({ jobId: 'j1' });
-    const calls = [];
-    adapter._verifyProjectIdentity = async () => {};
-    adapter._transportRequest = async (method, endpoint) => {
-      calls.push(`${method} ${endpoint}`);
-      if (endpoint === '/session') return { id: 'ses_new' };
-      return { statusCode: 204 };
-    };
+    const transport = new FakeTransport({
+      script: {
+        '/project/current': { directory: request.canonicalDir },
+        '/session': { id: 'ses_new' },
+        '/session/ses_new/prompt_async': { status: 204 },
+        '/session/ses_parent/prompt_async': { status: 204 },
+      },
+    });
+    const adapter = new OpencodeAdapter({ transport });
     adapter.PrepareInvocation({}, request);
     await adapter.SendPrompt({}, 'hi');
-    return { calls, sessionId: adapter._sessionId };
+    return { calls: transport.calls.map(c => `${c.method} ${c.path.split('?')[0]}`), sessionId: adapter._sessionId };
   }
 
-  const fresh = await sendWith({ canonicalDir: 'C:\\repo', access: 'read-only' });
+  const canonicalDir = __dirname;
+
+  const fresh = await sendWith({ canonicalDir, access: 'read-only' });
   assert.ok(fresh.calls.includes('POST /session'), 'a fresh job creates a session');
   assert.strictEqual(fresh.sessionId, 'ses_new');
 
-  const cont = await sendWith({ canonicalDir: 'C:\\repo', access: 'read-only', resumeSessionId: 'ses_parent' });
+  const cont = await sendWith({ canonicalDir, access: 'read-only', resumeSessionId: 'ses_parent' });
   assert.ok(!cont.calls.includes('POST /session'),
     'a continuation must not create a new session — that is how the context was lost');
   assert.strictEqual(cont.sessionId, 'ses_parent');

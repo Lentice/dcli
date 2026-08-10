@@ -1,115 +1,16 @@
-const { spawn, spawnSync } = require('node:child_process');
-const http = require('node:http');
+const { execSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const net = require('node:net');
-const crypto = require('node:crypto');
-const { buildCmdInvocation } = require('../codex/cmd-quoting');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
-const { getRedactor } = require('../../core/fs-text');
 const { runAdapterSmoke } = require('../../core/adapter-smoke');
+const { HttpTransport, requestJson } = require('./transport');
+const { OpencodeServer } = require('./server');
+const { OpencodeTurn } = require('./turn');
 
-const PORT_RESERVE_MAX_RETRIES = 5;
-const PORT_RESERVE_TIMEOUT_MS = 5000;
-const STARTUP_TIMEOUT_MS = 30000;
-const HEALTH_TIMEOUT_MS = 10000;
 const SESSION_TIMEOUT_MS = 10000;
 const PROJECT_CHECK_TIMEOUT_MS = 10000;
 const DISPOSE_TIMEOUT_MS = 5000;
-const MAX_STDOUT_BYTES = 10 * 1024 * 1024;
-const MAX_STDERR_BYTES = 10 * 1024 * 1024;
-const POLL_INTERVAL_MS = 5000;
-const INTERACTION_POLL_MS = 2000;
-const IDLE_TIMEOUT_MS = 120000;
-const SSE_READ_TIMEOUT_MS = 3000;
-// How long a REST-polled 'idle' status must be observed before it is treated
-// as authoritative turn completion. This is deliberately short (a status
-// poll is itself an immediate, reliable signal that the turn already
-// finished) and is a distinct concept from IDLE_TIMEOUT_MS, which bounds SSE
-// connection keepalive/staleness tolerance, not backend-idle confirmation.
-const IDLE_CONFIRM_MS = 3000;
-// Socket idle timeout for the long-lived SSE connection itself. Must be
-// comfortably longer than any real model turn's gaps between SSE bytes —
-// this connection legitimately sits with no activity for a while during a
-// long turn, and a short value here tears down a still-useful connection
-// purely due to elapsed wall-clock time.
-const SSE_SOCKET_TIMEOUT_MS = 600000;
 const PROMPT_ASYNC_TIMEOUT_MS = 15000;
-// How long after the prompt a session may still be missing from
-// /session/status before its absence is taken to mean the turn is over.
-// Bounds the "turn failed instantly" case, which otherwise never terminates.
-const SESSION_REGISTRATION_GRACE_MS = 15000;
-// How long the session status may stay unresolvable — 'unknown', or a status
-// poll that keeps failing — before the turn's outcome is declared ambiguous.
-// An unresolved status is not "still working": treating it as such polled the
-// full hard-timeout budget and produced zero bytes (ticket 81).
-const UNRESOLVED_STATUS_LIMIT_MS = 60000;
-const MESSAGES_TIMEOUT_MS = 30000;
-const SESSION_STATUS_TIMEOUT_MS = 10000;
-const MAX_SSE_RECONNECTS = 5;
-
-/**
- * One bounded JSON request to the per-job opencode server.
- *
- * The single AbortSignal.timeout bounds connect, response and body read
- * together — a stalled body is inside the budget, which is what the old
- * hand-rolled socket-timeout-plus-wall-clock-timer pair was for.
- *
- * Resolves the parsed JSON body (or the raw text when it is not JSON).
- * A non-2xx rejects with statusCode/body attached, and classHint set when
- * the payload identifies a credits/quota failure.
- */
-async function httpRequest(method, url, body, timeoutMs, password) {
-  const effectiveTimeout = timeoutMs || 10000;
-  const headers = body ? { 'Content-Type': 'application/json' } : {};
-  if (password) {
-    headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + password).toString('base64');
-  }
-
-  let res;
-  let raw;
-  try {
-    res = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(effectiveTimeout),
-    });
-    raw = await res.text();
-  } catch (err) {
-    if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-      throw new Error(`Request timed out after ${effectiveTimeout}ms: ${method} ${url}`);
-    }
-    throw err;
-  }
-
-  if (res.ok) {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return raw;
-    }
-  }
-
-  const err = new Error(`HTTP ${res.status} from ${method} ${url}: ${raw.slice(0, 500)}`);
-  err.statusCode = res.status;
-  err.body = raw;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.error && parsed.error.type === 'CreditsError') {
-      err.classHint = 'quota_or_rate_limit';
-    }
-  } catch {}
-  throw err;
-}
-
-function httpGet(url, opts = {}) {
-  return httpRequest('GET', url, null, opts.responseTimeout, opts.password);
-}
-
-function httpPost(url, body, opts = {}) {
-  return httpRequest('POST', url, body, opts.responseTimeout, opts.password);
-}
 
 const ENDPOINTS_WITHOUT_DIR_PREFIXES = [
   '/global/', '/instance/', '/event', '/doc',
@@ -171,40 +72,37 @@ function resolveOpencodePath() {
   });
 }
 
+/**
+ * The opencode adapter, on the ticket-100 seams.
+ *
+ * HTTP and SSE arrive through an injected `transport` (production: the
+ * per-job server's HttpTransport; tests: an in-memory fake). The server
+ * module owns the `opencode serve` process; the turn module owns the
+ * reconciliation logic. This class maps the wrapper request in and the
+ * normalized fact stream out (design-spec §9) — nothing here declares a job
+ * finished (invariant 2).
+ */
 class OpencodeAdapter {
+  /**
+   * @param {{ transport?: object, stateRoot?: string|null,
+   *           jobId?: string|null }} options
+   *   `transport` supplied means the caller owns the HTTP/SSE surface and no
+   *   server is started — the honest test seam of ticket 100.
+   */
   constructor(options = {}) {
-    this._testMode = options._testMode || false;
-    this._mockVersion = options._mockVersion || null;
-    this._mockFacts = options._mockFacts !== undefined ? options._mockFacts : null;
-    this._mockExitCode = options._mockExitCode !== undefined ? options._mockExitCode : null;
-    this._mockSseEvents = options._mockSseEvents || null;
-    this._mockSessionStatusResponses = options._mockSessionStatusResponses || null;
-    this._mockMessagesResponse = options._mockMessagesResponse || null;
-    this._mockPromptAsyncStatusCode = options._mockPromptAsyncStatusCode !== undefined ? options._mockPromptAsyncStatusCode : 204;
-    this._mockSessionId = options._mockSessionId || null;
-    this._mockIdleTimeoutMs = options._mockIdleTimeoutMs || null;
+    this._transport = options.transport || null;
     this._stateRoot = options.stateRoot || null;
     this._jobId = options.jobId || null;
 
-    this._password = null;
-    this._serverProcess = null;
-    this._serverPort = null;
-    this._serverBaseUrl = null;
+    this._server = null;
     this._sessionId = null;
     this._backendPid = null;
     this._backendSessionId = null;
-    this._facts = [];
-    this._collectedResult = null;
     this._detectedVersion = null;
     this._disposed = false;
     this._cancelled = false;
     this._cancelRungReached = null;
-    this._serverStdout = '';
-    this._serverStderr = '';
-    this._serverHandle = null;
-    this._creationTime = null;
-    this._imagePath = null;
-    this._executionToken = null;
+    this._lastPrompt = null;
 
     this._canonicalDir = null;
     this._accessMode = null;
@@ -212,235 +110,47 @@ class OpencodeAdapter {
     this._modelObj = null;
     this._variant = null;
 
-    this._startupTimeoutMs = STARTUP_TIMEOUT_MS;
-    this._healthTimeoutMs = HEALTH_TIMEOUT_MS;
-    this._maxServerStdoutBytes = MAX_STDOUT_BYTES;
-    this._maxServerStderrBytes = MAX_STDERR_BYTES;
-
-    this._idleTimeoutMs = options._mockIdleTimeoutMs !== undefined ? options._mockIdleTimeoutMs : IDLE_TIMEOUT_MS;
-    this._pollIntervalMs = options._mockPollIntervalMs !== undefined ? options._mockPollIntervalMs : POLL_INTERVAL_MS;
-    this._interactionPollMs = options._mockInteractionPollMs !== undefined ? options._mockInteractionPollMs : INTERACTION_POLL_MS;
-    this._unresolvedStatusLimitMs = options._mockUnresolvedStatusLimitMs !== undefined ? options._mockUnresolvedStatusLimitMs : UNRESOLVED_STATUS_LIMIT_MS;
     this._automationPolicy = null;
     this._hardDeadlineMs = null;
-    this._seenInteractionIds = new Set();
-    this._asyncResultText = '';
-    this._asyncResultUsage = { input: 0, output: 0, total: 0 };
-    this._asyncResultCost = null;
-    this._asyncBackendSessionId = null;
-    // Set once /session/status has actually reported our session, so its later
-    // absence from that map can be read as "turn over" rather than "no idea".
-    this._sawLiveStatus = false;
-    this._promptSentAt = null;
     this._resumeSessionId = null;
+    this._promptSentAt = null;
 
-    this._serversDir = this._stateRoot ? path.join(this._stateRoot, 'servers') : null;
+    this._turn = null;
+    this._collectedResult = null;
   }
 
   get disposed() { return this._disposed; }
   get cancelled() { return this._cancelled; }
   get cancelRungReached() { return this._cancelRungReached; }
-  /** @returns {string} */
-  get serverStdout() { return this._serverStdout; }
-  /** @returns {string} */
-  get serverStderr() { return this._serverStderr; }
 
-  _buildArgs(port) {
-    return ['serve', '--port', String(port), '--hostname', '127.0.0.1'];
-  }
+  // -------------------------------------------------------------------------
+  // URL / request building
+  // -------------------------------------------------------------------------
 
-  _parseStartupOutput(text) {
-    const match = text.match(/opencode server listening on http:\/\/[^:]+:(\d+)/);
-    if (match) return parseInt(match[1], 10);
-    return null;
-  }
-
-  async _reservePort(maxRetries) {
-    const maxAttempts = maxRetries || PORT_RESERVE_MAX_RETRIES;
-    const errors = [];
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const port = await new Promise((resolve, reject) => {
-          const server = net.createServer();
-          let settled = false;
-          const timer = setTimeout(() => {
-            settled = true;
-            server.close();
-            reject(new Error('Port reservation timed out'));
-          }, PORT_RESERVE_TIMEOUT_MS);
-          if (timer.unref) timer.unref();
-
-          server.on('error', (err) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            server.close(() => reject(err));
-          });
-
-          server.listen(0, '127.0.0.1', () => {
-            if (settled) return;
-            const boundPort = server.address().port;
-            clearTimeout(timer);
-            server.close(() => {
-              resolve(boundPort);
-            });
-          });
-        });
-        return port;
-      } catch (err) {
-        errors.push(err.message);
-        if (attempt < maxAttempts - 1) {
-          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
-        }
-      }
-    }
-
-    throw new Error(`Port reservation failed after ${maxAttempts} attempts: ${errors.join('; ')}`);
-  }
-
-  _generatePassword() {
-    return 'dcli_' + crypto.randomBytes(24).toString('hex');
-  }
-
-  _registerPasswordWithRedactor() {
-    const redactor = getRedactor();
-    if (redactor && this._password) {
-      redactor.registerSecret('opencode_server_password', this._password);
-    }
-  }
-
-  _writeServerMetadata(port, executionToken) {
-    if (!this._serversDir || !this._jobId) return;
-    const meta = {
-      pid: this._backendPid,
-      creationTime: this._creationTime || new Date().toISOString(),
-      imagePath: this._imagePath || '',
-      executionToken: executionToken || '',
-      port,
-      startedAt: new Date().toISOString(),
-    };
-    try {
-      fs.mkdirSync(this._serversDir, { recursive: true });
-      const filePath = path.join(this._serversDir, `${this._jobId}.json`);
-      fs.writeFileSync(filePath, JSON.stringify(meta, null, 2) + '\n', 'utf8');
-    } catch {}
-  }
-
-  _deleteServerMetadata() {
-    if (!this._serversDir || !this._jobId) return;
-    const filePath = path.join(this._serversDir, `${this._jobId}.json`);
-    try {
-      fs.unlinkSync(filePath);
-    } catch {}
-  }
-
-  _discoverOrphanedServers() {
-    if (!this._serversDir || !fs.existsSync(this._serversDir)) return [];
-    const results = [];
-    try {
-      const entries = fs.readdirSync(this._serversDir);
-      for (const entry of entries) {
-        if (!entry.endsWith('.json')) continue;
-        try {
-          const content = fs.readFileSync(path.join(this._serversDir, entry), 'utf8');
-          const meta = JSON.parse(content);
-          results.push({ jobId: entry.replace('.json', ''), ...meta });
-        } catch {}
-      }
-    } catch {}
-    return results;
-  }
-
-  _appendServerStdout(chunk) {
-    if (typeof chunk === 'string') {
-      if (this._serverStdout.length < this._maxServerStdoutBytes) {
-        this._serverStdout += chunk;
-        if (this._serverStdout.length > this._maxServerStdoutBytes) {
-          this._serverStdout = this._serverStdout.slice(0, this._maxServerStdoutBytes);
-        }
-      }
-    }
-  }
-
-  _appendServerStderr(chunk) {
-    if (typeof chunk === 'string') {
-      if (this._serverStderr.length < this._maxServerStderrBytes) {
-        this._serverStderr += chunk;
-        if (this._serverStderr.length > this._maxServerStderrBytes) {
-          this._serverStderr = this._serverStderr.slice(0, this._maxServerStderrBytes);
-        }
-      }
-    }
-  }
-
-  _buildPermissionRuleset(access) {
-    switch (access) {
-      case 'full':
-        return [{ permission: '*', pattern: '*', action: 'allow' }];
-
-      case 'workspace':
-        return [
-          { permission: '*', pattern: '*', action: 'allow' },
-          { permission: 'external_directory', pattern: '*', action: 'deny' },
-        ];
-
-      case 'read-only':
-      default:
-        return [
-          { permission: 'read', pattern: '*', action: 'allow' },
-          { permission: 'glob', pattern: '*', action: 'allow' },
-          { permission: 'grep', pattern: '*', action: 'allow' },
-          { permission: 'lsp', pattern: '*', action: 'allow' },
-          { permission: 'bash', pattern: '*', action: 'allow' },
-          { permission: 'task', pattern: '*', action: 'allow' },
-          { permission: 'edit', pattern: '*', action: 'deny' },
-          { permission: 'todowrite', pattern: '*', action: 'deny' },
-          { permission: 'skill', pattern: '*', action: 'deny' },
-          { permission: 'external_directory', pattern: '*', action: 'deny' },
-          { permission: 'webfetch', pattern: '*', action: 'deny' },
-          { permission: 'websearch', pattern: '*', action: 'deny' },
-        ];
-    }
-  }
-
-  _parseModelString(modelStr) {
-    if (!modelStr || typeof modelStr !== 'string') {
-      return { providerID: 'opencode-go', id: 'deepseek-v4-flash' };
-    }
-    const firstSlash = modelStr.indexOf('/');
-    if (firstSlash === -1) {
-      return { providerID: modelStr, id: modelStr };
-    }
-    return {
-      providerID: modelStr.slice(0, firstSlash),
-      id: modelStr.slice(firstSlash + 1),
-    };
-  }
-
-  _buildUrl(endpoint) {
-    const base = this._serverBaseUrl || 'http://127.0.0.1:0';
-    const url = new URL(endpoint, base);
-
+  /**
+   * The request path (with the canonical directory query parameter) for an
+   * opencode endpoint. The directory footgun (backend-pitfalls.md) is settled
+   * here: one canonical job directory on every request that accepts it.
+   *
+   * @param {string} endpoint
+   * @returns {string} path + query, e.g. "/session/status?directory=C%3A%5Crepo"
+   */
+  _buildPath(endpoint) {
+    const u = new URL(endpoint, 'http://localhost');
     if (this._canonicalDir) {
       const needsDir = !ENDPOINTS_WITHOUT_DIR_PREFIXES.some(p => endpoint.startsWith(p));
       if (needsDir) {
-        url.searchParams.set('directory', this._canonicalDir);
+        u.searchParams.set('directory', this._canonicalDir);
       }
     }
-
-    return url.toString();
+    return u.pathname + u.search;
   }
 
-  _transportRequest(method, endpoint, body, timeoutMs) {
-    if (this._testMode && typeof this._transportRequestOverride === 'function') {
-      return this._transportRequestOverride(method, endpoint, body, timeoutMs);
+  _request({ method, path: endpoint, body, timeoutMs }) {
+    if (!this._transport) {
+      throw new Error('No transport available: call Start() first or supply a transport to the constructor');
     }
-    if (this._testMode) {
-      return { _simulated: true, method, endpoint };
-    }
-    const url = this._buildUrl(endpoint);
-    return httpRequest(method, url, body, timeoutMs, this._password);
+    return requestJson(this._transport, { method, path: endpoint, body, timeoutMs });
   }
 
   _buildSessionBody(prompt) {
@@ -458,295 +168,9 @@ class OpencodeAdapter {
     return body;
   }
 
-  async _verifyProjectIdentity() {
-    if (this._testMode) return;
-    if (!this._serverBaseUrl || !this._canonicalDir) return;
-
-    const projectUrl = this._buildUrl('/project/current');
-    const project = await httpGet(projectUrl, {
-      responseTimeout: PROJECT_CHECK_TIMEOUT_MS,
-      password: this._password,
-    });
-
-    if (!project) {
-      throw new Error('Project identity check failed: no response from /project/current');
-    }
-
-    const effectiveDir = project.directory || project.path || project.worktree || null;
-    if (!effectiveDir) {
-      throw new Error('Project identity check failed: /project/current returned no directory');
-    }
-
-    // opencode reports "/" when launched from a directory it does not
-    // recognise as a project (e.g. a non-git temp directory). Accept it when
-    // the canonical directory lacks a .git directory — a repo that returns
-    // root is a real mismatch.
-    if (effectiveDir === '/' || effectiveDir === '\\') {
-      const hasGit = fs.existsSync(path.join(this._canonicalDir, '.git'));
-      if (!hasGit) return;
-    }
-    try {
-      const resolved = fs.realpathSync.native(path.resolve(effectiveDir));
-      if ((resolved === '\\' || resolved === '/') && !fs.existsSync(path.join(this._canonicalDir, '.git'))) {
-        return;
-      }
-    } catch {}
-
-    const normalizedCanonical = fs.realpathSync.native(path.resolve(this._canonicalDir)).toLowerCase();
-    const normalizedEffective = fs.realpathSync.native(path.resolve(effectiveDir)).toLowerCase();
-
-    if (normalizedEffective === normalizedCanonical) return;
-
-    // A git worktree of a project opencode already knows about is not
-    // reported as its own project: /project/current keeps returning the
-    // original registered project's directory (confusingly, in its own
-    // "worktree" field) and instead lists every known worktree path under
-    // "sandboxes". Accept the canonical directory if it shows up there.
-    const sandboxes = Array.isArray(project.sandboxes) ? project.sandboxes : [];
-    for (const sandbox of sandboxes) {
-      let normalizedSandbox;
-      try {
-        normalizedSandbox = fs.realpathSync.native(path.resolve(sandbox)).toLowerCase();
-      } catch {
-        continue;
-      }
-      if (normalizedSandbox === normalizedCanonical) return;
-    }
-
-    throw new Error(
-      `Project identity mismatch: server reports "${effectiveDir}" but canonical job directory is "${this._canonicalDir}". ` +
-      'Refusing to send prompt to the wrong repository.'
-    );
-  }
-
-  _processSseEvents(events) {
-    const facts = [];
-    for (const event of events) {
-      const part = event.part || {};
-      const eventType = event.type || '';
-      const partType = part.type || '';
-
-      switch (eventType) {
-        case 'text': {
-          if (partType === 'text' && typeof part.text === 'string') {
-            facts.push({ type: 'assistant_text', message_id: part.messageID || 'msg_unknown', text: part.text });
-          } else if (partType === 'reasoning') {
-            facts.push({ type: 'reasoning', message_id: part.messageID || 'msg_unknown' });
-          }
-          break;
-        }
-
-        case 'tool_use': {
-          if (partType === 'tool' && part.tool) {
-            const callId = part.callID || 'call_unknown';
-            const isRunning = part.state && (part.state.status === 'running' || part.state.status === 'pending');
-            if (isRunning) {
-              const inputSummary = part.state && part.state.input
-                ? (part.state.input.command || part.state.input.file || JSON.stringify(part.state.input).slice(0, 100))
-                : part.tool;
-              facts.push({ type: 'tool_invoked', call_id: callId, tool: part.tool, summary: inputSummary });
-            } else {
-              const ok = part.state && part.state.metadata ? part.state.metadata.exit === 0 : null;
-              const outputSummary = part.state && part.state.output
-                ? String(part.state.output).slice(0, 200)
-                : (part.tool || '');
-              facts.push({ type: 'tool_result', call_id: callId, ok, summary: outputSummary });
-            }
-          }
-          break;
-        }
-
-        case 'step_finish':
-        case 'step-finish': {
-          if (part.reason === 'stop' && part.tokens) {
-            facts.push({
-              type: 'usage_reported',
-              tokens: {
-                total: part.tokens.total || 0,
-                input: part.tokens.input || 0,
-                output: part.tokens.output || 0,
-              },
-              cost: part.cost !== undefined ? part.cost : null,
-            });
-          }
-          break;
-        }
-
-        case 'error': {
-          const payload = event.error || event;
-          const classHint = this._classifyBackendError(payload);
-          facts.push({
-            type: 'backend_error',
-            class_hint: classHint || 'provider_error',
-            structured_payload: typeof payload === 'object' ? payload : { message: String(payload) },
-          });
-          break;
-        }
-
-        default:
-          break;
-      }
-    }
-    return facts;
-  }
-
-  /**
-   * The error an assistant turn ended on, from `/session/:id/message`.
-   *
-   * opencode records a failed turn as a normal message carrying `info.error`;
-   * there is no separate failure signal to observe, so this is the only place
-   * a provider refusal is visible once the SSE stream has closed.
-   *
-   * @param {*} messageResponse
-   * @returns {{ message:string, name:string|null, statusCode:number|null,
-   *             class_hint:string }|null}
-   */
-  _findMessageError(messageResponse) {
-    let messages = [];
-    if (Array.isArray(messageResponse)) messages = messageResponse;
-    else if (messageResponse && Array.isArray(messageResponse.messages)) messages = messageResponse.messages;
-    else return null;
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const info = messages[i] && messages[i].info;
-      const err = info && info.error;
-      if (!err) continue;
-      const data = err.data || {};
-      return {
-        message: data.message || err.message || err.name || 'Backend reported an error',
-        name: err.name || null,
-        statusCode: typeof data.statusCode === 'number' ? data.statusCode : null,
-        class_hint: this._classifyBackendError(data) || this._classifyBackendError(err) || 'provider_error',
-      };
-    }
-    return null;
-  }
-
-  _selectFinalMessage(messageResponse) {
-    let messages = [];
-    if (Array.isArray(messageResponse)) {
-      messages = messageResponse;
-    } else if (messageResponse && Array.isArray(messageResponse.messages)) {
-      messages = messageResponse.messages;
-    } else if (messageResponse && Array.isArray(messageResponse.parts)) {
-      messages = [{ parts: messageResponse.parts }];
-    }
-
-    let lastCompletedMid = null;
-    let hasInfoIds = false;
-    let finalFlatMid = null;
-
-    for (const msg of messages) {
-      const info = msg.info;
-      // Skip explicit user messages; messages without info (flat parts shape)
-      // are treated as assistant.
-      if (info && info.role === 'user') continue;
-      const parts = msg.parts || [];
-      const hasStop = parts.some(p => (p.type === 'step-finish' || p.type === 'step_finish') && p.reason === 'stop');
-      if (hasStop) {
-        if (info && info.id) {
-          lastCompletedMid = info.id;
-          hasInfoIds = true;
-        } else {
-          lastCompletedMid = null;
-          const stopPart = parts.find(p => (p.type === 'step-finish' || p.type === 'step_finish') && p.reason === 'stop');
-          finalFlatMid = stopPart ? stopPart.messageID || null : null;
-        }
-      }
-    }
-
-    // Only consider assistant messages — user messages (the prompt and its
-    // echo) must never be picked up as the result. An invalid model that
-    // produces no assistant turn at all must yield an empty result.
-    // When a message has no info (e.g. the flat { parts: [...] } shape
-    // mapped at the top of this function), treat it as an assistant message
-    // because the adapter itself constructs that shape from API responses
-    // which do not include role metadata.
-    const assistantMessages = messages.filter(msg => {
-      const info = msg && msg.info;
-      if (!info) return true;
-      return info.role === 'assistant';
-    });
-
-    let text = '';
-    let usage = { input: 0, output: 0, total: 0 };
-    let cost = null;
-
-    if (hasInfoIds) {
-      for (const msg of assistantMessages) {
-        if (msg.info && msg.info.id !== lastCompletedMid) continue;
-        const parts = msg.parts || [];
-        for (const p of parts) {
-          if (p.type === 'text') text += p.text || '';
-          if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
-            usage = {
-              total: p.tokens.total || 0,
-              input: p.tokens.input || 0,
-              output: p.tokens.output || 0,
-              reasoning: p.tokens.reasoning || null,
-              cache_read: (p.tokens.cache && p.tokens.cache.read) || null,
-              cache_write: (p.tokens.cache && p.tokens.cache.write) || null,
-            };
-            if (p.cost !== undefined) cost = p.cost;
-          }
-        }
-      }
-      return { text, usage, cost, message_id: lastCompletedMid };
-    }
-
-    if (finalFlatMid) {
-      const parts = assistantMessages.length > 0 ? assistantMessages[0].parts || [] : [];
-      for (const p of parts) {
-        if (p.messageID !== finalFlatMid) continue;
-        if (p.type === 'text') text += p.text || '';
-        if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
-          usage = {
-            total: p.tokens.total || 0,
-            input: p.tokens.input || 0,
-            output: p.tokens.output || 0,
-            reasoning: p.tokens.reasoning || null,
-            cache_read: (p.tokens.cache && p.tokens.cache.read) || null,
-            cache_write: (p.tokens.cache && p.tokens.cache.write) || null,
-          };
-          if (p.cost !== undefined) cost = p.cost;
-        }
-      }
-      return { text, usage, cost, message_id: finalFlatMid };
-    }
-
-    if (assistantMessages.length === 0) {
-      return { text: '', usage: { input: 0, output: 0, total: 0 }, cost: null, message_id: null };
-    }
-
-    const parts = assistantMessages[0].parts || [];
-    for (const p of parts) {
-      if (p.type === 'text') text += p.text || '';
-      if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
-        usage = {
-          total: p.tokens.total || 0,
-          input: p.tokens.input || 0,
-          output: p.tokens.output || 0,
-          reasoning: p.tokens.reasoning || null,
-          cache_read: (p.tokens.cache && p.tokens.cache.read) || null,
-          cache_write: (p.tokens.cache && p.tokens.cache.write) || null,
-        };
-        if (p.cost !== undefined) cost = p.cost;
-      }
-    }
-    return { text, usage, cost, message_id: null };
-  }
-
-  async _readSseWithTimeout(sseIterator, timeoutMs) {
-    const timeout = new Promise(resolve => {
-      const t = setTimeout(() => resolve(null), timeoutMs);
-      if (t.unref) t.unref();
-    });
-    const result = await Promise.race([
-      sseIterator.next().then(r => r, () => ({ done: true })),
-      timeout,
-    ]);
-    return result;
-  }
+  // -------------------------------------------------------------------------
+  // Capabilities / identity / validation
+  // -------------------------------------------------------------------------
 
   GetResourceCost() {
     return {
@@ -764,7 +188,6 @@ class OpencodeAdapter {
   }
 
   DetectVersion() {
-    if (this._testMode) return this._mockVersion || '1.18.8';
     if (this._detectedVersion) return this._detectedVersion;
 
     const opencodePath = resolveOpencodePath();
@@ -777,7 +200,6 @@ class OpencodeAdapter {
       }
     } catch {}
 
-    const { execSync } = require('node:child_process');
     try {
       const result = execSync(`"${opencodePath}" --version`, {
         encoding: 'utf8',
@@ -843,6 +265,54 @@ class OpencodeAdapter {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Invocation
+  // -------------------------------------------------------------------------
+
+  _buildPermissionRuleset(access) {
+    switch (access) {
+      case 'full':
+        return [{ permission: '*', pattern: '*', action: 'allow' }];
+
+      case 'workspace':
+        return [
+          { permission: '*', pattern: '*', action: 'allow' },
+          { permission: 'external_directory', pattern: '*', action: 'deny' },
+        ];
+
+      case 'read-only':
+      default:
+        return [
+          { permission: 'read', pattern: '*', action: 'allow' },
+          { permission: 'glob', pattern: '*', action: 'allow' },
+          { permission: 'grep', pattern: '*', action: 'allow' },
+          { permission: 'lsp', pattern: '*', action: 'allow' },
+          { permission: 'bash', pattern: '*', action: 'allow' },
+          { permission: 'task', pattern: '*', action: 'allow' },
+          { permission: 'edit', pattern: '*', action: 'deny' },
+          { permission: 'todowrite', pattern: '*', action: 'deny' },
+          { permission: 'skill', pattern: '*', action: 'deny' },
+          { permission: 'external_directory', pattern: '*', action: 'deny' },
+          { permission: 'webfetch', pattern: '*', action: 'deny' },
+          { permission: 'websearch', pattern: '*', action: 'deny' },
+        ];
+    }
+  }
+
+  _parseModelString(modelStr) {
+    if (!modelStr || typeof modelStr !== 'string') {
+      return { providerID: 'opencode-go', id: 'deepseek-v4-flash' };
+    }
+    const firstSlash = modelStr.indexOf('/');
+    if (firstSlash === -1) {
+      return { providerID: modelStr, id: modelStr };
+    }
+    return {
+      providerID: modelStr.slice(0, firstSlash),
+      id: modelStr.slice(firstSlash + 1),
+    };
+  }
+
   PrepareInvocation(attempt, request) {
     if (!request) return;
 
@@ -868,138 +338,96 @@ class OpencodeAdapter {
     }
   }
 
+  async _verifyProjectIdentity() {
+    if (!this._transport || !this._canonicalDir) return;
+
+    const project = await this._request({
+      method: 'GET',
+      path: this._buildPath('/project/current'),
+      timeoutMs: PROJECT_CHECK_TIMEOUT_MS,
+    });
+
+    if (!project) {
+      throw new Error('Project identity check failed: no response from /project/current');
+    }
+
+    const effectiveDir = project.directory || project.path || project.worktree || null;
+    if (!effectiveDir) {
+      throw new Error('Project identity check failed: /project/current returned no directory');
+    }
+
+    // opencode reports "/" when launched from a directory it does not
+    // recognise as a project (e.g. a non-git temp directory). Accept it when
+    // the canonical directory lacks a .git directory — a repo that returns
+    // root is a real mismatch.
+    if (effectiveDir === '/' || effectiveDir === '\\') {
+      const hasGit = fs.existsSync(path.join(this._canonicalDir, '.git'));
+      if (!hasGit) return;
+    }
+    try {
+      const resolved = fs.realpathSync.native(path.resolve(effectiveDir));
+      if ((resolved === '\\' || resolved === '/') && !fs.existsSync(path.join(this._canonicalDir, '.git'))) {
+        return;
+      }
+    } catch {}
+
+    const normalizedCanonical = fs.realpathSync.native(path.resolve(this._canonicalDir)).toLowerCase();
+    const normalizedEffective = fs.realpathSync.native(path.resolve(effectiveDir)).toLowerCase();
+
+    if (normalizedEffective === normalizedCanonical) return;
+
+    // A git worktree of a project opencode already knows about is not
+    // reported as its own project: /project/current keeps returning the
+    // original registered project's directory (confusingly, in its own
+    // "worktree" field) and instead lists every known worktree path under
+    // "sandboxes". Accept the canonical directory if it shows up there.
+    const sandboxes = Array.isArray(project.sandboxes) ? project.sandboxes : [];
+    for (const sandbox of sandboxes) {
+      let normalizedSandbox;
+      try {
+        normalizedSandbox = fs.realpathSync.native(path.resolve(sandbox)).toLowerCase();
+      } catch {
+        continue;
+      }
+      if (normalizedSandbox === normalizedCanonical) return;
+    }
+
+    throw new Error(
+      `Project identity mismatch: server reports "${effectiveDir}" but canonical job directory is "${this._canonicalDir}". ` +
+      'Refusing to send prompt to the wrong repository.'
+    );
+  }
+
   async Start(attempt) {
-    if (this._testMode) {
-      this._backendPid = 42;
-      if (!this._mockSseEvents && this._mockFacts) {
-        this._facts = [...this._mockFacts];
-      } else {
-        this._facts = [];
-      }
-      return { handle: 'opencode-test-handle' };
+    if (this._transport) {
+      // The caller supplied the HTTP/SSE surface (the ticket-100 test seam);
+      // there is no server to launch.
+      this._backendPid = this._transport.pid != null ? this._transport.pid : null;
+      return {
+        handle: 'opencode-transport',
+        serverPid: this._backendPid,
+        port: null,
+        version: this._detectedVersion || 'unknown',
+      };
     }
 
-    this._password = this._generatePassword();
-    this._registerPasswordWithRedactor();
-
+    const server = new OpencodeServer({ stateRoot: this._stateRoot, jobId: this._jobId });
     const opencodePath = resolveOpencodePath();
+    const handle = await server.start({ canonicalDir: this._canonicalDir, opencodePath });
 
-    const port = await this._reservePort();
-    const args = this._buildArgs(port);
-
-    const invocation = buildCmdInvocation({
-      command: opencodePath,
-      args,
-      cwd: this._canonicalDir || undefined,
-    });
-
-    const server = spawn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, OPENCODE_SERVER_PASSWORD: this._password },
-      windowsHide: invocation.windowsHide,
-      // Forward the invocation's own value: it is the single source of truth
-      // for how its command line is quoted (adapters/codex/cmd-quoting.js).
-      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-    });
-
-    this._serverProcess = server;
+    this._server = server;
+    this._transport = server.transport;
     this._backendPid = server.pid;
-    this._creationTime = new Date().toISOString();
-    this._imagePath = opencodePath;
-    this._executionToken = crypto.randomBytes(16).toString('hex');
-
-    let startupResolve;
-    let startupReject;
-    const startupPromise = new Promise((resolve, reject) => {
-      startupResolve = resolve;
-      startupReject = reject;
-    });
-
-    const startupTimer = setTimeout(() => {
-      startupReject(new Error('Server startup timed out'));
-    }, this._startupTimeoutMs);
-
-    server.stdout.setEncoding('utf8');
-    server.stderr.setEncoding('utf8');
-
-    server.stdout.on('data', (chunk) => {
-      this._appendServerStdout(chunk);
-      const port = this._parseStartupOutput(this._serverStdout);
-      if (port !== null) {
-        clearTimeout(startupTimer);
-        startupResolve(port);
-      }
-    });
-
-    server.stderr.on('data', (chunk) => {
-      this._appendServerStderr(chunk);
-    });
-
-    server.on('exit', (code, signal) => {
-      if (this._serverPort === null) {
-        clearTimeout(startupTimer);
-        startupReject(new Error(`Server exited prematurely with code ${code} signal ${signal}`));
-      }
-    });
-
-    server.on('error', (err) => {
-      clearTimeout(startupTimer);
-      startupReject(err);
-    });
-
-    let resolvedPort;
-    try {
-      resolvedPort = await startupPromise;
-    } catch (err) {
-      this._killServer();
-      throw err;
-    }
-
-    if (resolvedPort !== port) {
-      this._killServer();
-      throw new Error(`Server bound on port ${resolvedPort} but was launched on port ${port}`);
-    }
-
-    this._serverPort = resolvedPort;
-    this._serverBaseUrl = `http://127.0.0.1:${resolvedPort}`;
-
-    try {
-      const health = await httpGet(`${this._serverBaseUrl}/global/health`, {
-        responseTimeout: this._healthTimeoutMs,
-        password: this._password,
-      });
-      if (!health || !health.healthy) {
-        throw new Error(`Server health check failed: version=${health ? health.version : 'unknown'}`);
-      }
-    } catch (err) {
-      this._killServer();
-      throw err;
-    }
-
-    this._writeServerMetadata(resolvedPort, this._executionToken);
 
     return {
       handle: 'opencode-server',
       serverPid: server.pid,
-      port: resolvedPort,
+      port: server.port,
       version: this._detectedVersion || 'unknown',
     };
   }
 
   async SendPrompt(attempt, prompt) {
-    if (this._testMode && this._mockSseEvents) {
-      this._sessionId = this._mockSessionId || 'ses_mock';
-      this._backendSessionId = this._sessionId;
-      return;
-    }
-    if (this._testMode && this._mockFacts && this._mockFacts.length > 0) {
-      return;
-    }
-    if (this._testMode && typeof this._transportRequestOverride !== 'function') {
-      return;
-    }
-
     if (!this._canonicalDir) {
       throw new Error('Cannot send prompt: no canonical job directory set. Call PrepareInvocation first.');
     }
@@ -1018,493 +446,50 @@ class OpencodeAdapter {
       this._backendSessionId = this._resumeSessionId;
     } else {
       const sessionBody = this._buildSessionBody(prompt);
-      const session = await this._transportRequest('POST', '/session', sessionBody, SESSION_TIMEOUT_MS);
+      const session = await this._request({
+        method: 'POST',
+        path: this._buildPath('/session'),
+        body: sessionBody,
+        timeoutMs: SESSION_TIMEOUT_MS,
+      });
       this._sessionId = session.id;
       this._backendSessionId = session.id;
     }
-    const session = { id: this._sessionId };
 
     const promptBody = {
       parts: [{ type: 'text', text: prompt }],
     };
 
-    const response = await this._transportRequest('POST', `/session/${session.id}/prompt_async`, promptBody, PROMPT_ASYNC_TIMEOUT_MS);
-    // The turn is in flight from here, which is what makes a later absence from
-    // /session/status meaningful. See _fetchSessionStatus.
-    this._promptSentAt = Date.now();
-    if (typeof response === 'object' && response !== null && response.statusCode) {
-      if (response.statusCode !== 204) {
-        throw new Error(`prompt_async returned HTTP ${response.statusCode}, expected 204`);
-      }
-    }
-  }
-
-  async *_runAsyncReconciliation(attempt) {
-    this._asyncResultText = '';
-    this._asyncResultUsage = { input: 0, output: 0, total: 0 };
-    this._asyncResultCost = null;
-    this._asyncBackendSessionId = this._sessionId;
-
-    yield { type: 'started', backend_pid: this._backendPid, backend_session_id: this._sessionId };
-
-    const POLL_MS = this._pollIntervalMs;
-    const SSE_TIMEOUT = SSE_READ_TIMEOUT_MS;
-
-    let sseLastId = null;
-    let idleSince = null;
-    let lastPoll = Date.now();
-    let lastInteractionPoll = 0;
-    let reconnectCount = 0;
-    let statusCache = null;
-    let unresolvedPolls = 0;
-    let unresolvedExhausted = false;
-    const maxUnresolvedPolls = Math.max(2, Math.ceil(this._unresolvedStatusLimitMs / Math.max(1, POLL_MS)));
-
-    async function pollNow(self) {
-      try {
-        statusCache = await self._fetchSessionStatus();
-        self._asyncBackendSessionId = self._asyncBackendSessionId || self._sessionId;
-        return statusCache;
-      } catch {
-        // A failed poll leaves no opinion — but leaving the *previous* cache in
-        // place made a transport error look like "never polled", which broke the
-        // reconnect loop out and reported a partial turn as clean.
-        statusCache = 'unknown';
-        return null;
-      }
-    }
-
-    while (reconnectCount < MAX_SSE_RECONNECTS) {
-      if (this._cancelled) break;
-
-      const sseGen = this._sseReadEvents(sseLastId);
-      let sseDone = false;
-
-      while (!sseDone) {
-        if (this._cancelled) break;
-
-        if (Date.now() - lastPoll >= POLL_MS) {
-          lastPoll = Date.now();
-          const s = await pollNow(this);
-          // 'unknown' is not a reportable state (see core/fact-types.js) and is
-          // handled by the bound below, not published as progress.
-          if (s && s !== 'unknown') yield { type: 'backend_status', state: s };
-
-          if (!s || s === 'unknown') {
-            unresolvedPolls++;
-            // Counted, not clocked: consecutive polls are the thing that must be
-            // bounded, and a count cannot be defeated by a loop that spins
-            // several polls inside one millisecond.
-            if (unresolvedPolls >= maxUnresolvedPolls) {
-              yield {
-                type: 'backend_error',
-                class_hint: 'backend_status_unresolved',
-                structured_payload: {
-                  message: `Backend session status was unresolvable for ${maxUnresolvedPolls} consecutive polls (last status: ${s || 'poll_failed'}). The turn's outcome is unknown; any result recorded may be incomplete.`,
-                },
-              };
-              unresolvedExhausted = true;
-              sseDone = true;
-              break;
-            }
-          } else {
-            unresolvedPolls = 0;
-          }
-        }
-
-        if (Date.now() - lastInteractionPoll >= this._interactionPollMs) {
-          lastInteractionPoll = Date.now();
-          if (this._hardDeadlineMs === null || Date.now() < this._hardDeadlineMs) {
-            const interactions = await this._pollInteractions();
-            for (const interaction of interactions) {
-              yield { type: 'interaction_pending', interaction_id: interaction.interaction_id, kind: interaction.kind, detail: interaction.detail };
-              if (!this._automationPolicy) {
-                try {
-                  await this._rejectInteraction(interaction);
-                } catch (err) {
-                  if (err && err.rejectFailed) {
-                    yield { type: 'stream_closed', reason: 'interaction_reject_failed', detail: { interaction_id: interaction.interaction_id, error: err.message } };
-                    break;
-                  }
-                  throw err;
-                }
-                yield { type: 'interaction_resolved', interaction_id: interaction.interaction_id, outcome: 'rejected_unattended' };
-                const permPayload = interaction.raw ? { permission: interaction.raw.permission || null, patterns: interaction.raw.patterns || null } : {};
-                yield {
-                  type: 'backend_error',
-                  class_hint: 'permission_or_sandbox',
-                  structured_payload: { ...permPayload, message: 'Interaction rejected: no authorized responder available' },
-                };
-              }
-            }
-          }
-        }
-
-        if (statusCache === 'idle') {
-          if (idleSince === null) {
-            idleSince = Date.now();
-          } else if (Date.now() - idleSince > IDLE_CONFIRM_MS) {
-            sseDone = true;
-            break;
-          }
-        } else {
-          idleSince = null;
-        }
-
-        const nextResult = await this._readSseWithTimeout(sseGen, SSE_TIMEOUT);
-
-        if (nextResult === null) continue;
-
-        if (nextResult.done) {
-          yield { type: 'stream_closed', reason: 'sse_disconnect' };
-          sseDone = true;
-          break;
-        }
-
-        const event = nextResult.value;
-        const sseId = event._sseId || null;
-        if (sseId) sseLastId = sseId;
-
-        const events = Array.isArray(event) ? event : [event];
-        const facts = this._processSseEvents(events);
-        for (const f of facts) yield f;
-        idleSince = null;
-      }
-
-      if (this._cancelled || unresolvedExhausted) break;
-
-      reconnectCount++;
-
-      if (statusCache === null || statusCache === 'idle') {
-        break;
-      }
-
-      if (reconnectCount >= MAX_SSE_RECONNECTS) {
-        break;
-      }
-
-      try {
-        const gapMsgs = await this._readMessagesFromServer();
-        if (gapMsgs) {
-          const gf = this._processMessageFacts(gapMsgs);
-          for (const f of gf) yield f;
-        }
-      } catch {}
-    }
-
-    if (!this._cancelled) {
-      try {
-        const msgs = await this._readMessagesFromServer();
-        const final = this._selectFinalMessage(msgs);
-        this._asyncResultText = final.text;
-        this._asyncResultUsage = final.usage;
-        this._asyncResultCost = final.cost;
-        // An assistant turn that failed carries its error on the message, and
-        // nothing here used to read it — so a provider refusal surfaced as a
-        // successful job with an empty result. Emit it as a fact and let the
-        // engine decide the state.
-        const msgError = this._findMessageError(msgs);
-        if (msgError) {
-          yield {
-            type: 'backend_error',
-            class_hint: msgError.class_hint,
-            structured_payload: { message: msgError.message, name: msgError.name, status_code: msgError.statusCode },
-          };
-        }
-
-        // A zero-token result where the server accepted the session but
-        // produced no assistant messages at all means the model was not
-        // viable (invalid/unreachable provider). Without this, opencode
-        // silently returns only the prompt message as the result.
-        // This is distinct from a legitimate empty completion where an
-        // assistant message exists but produces no text.
-        const hasAssistantMessages = Array.isArray(msgs) && msgs.some(msg => {
-          const info = msg && msg.info;
-          return !info || info.role === 'assistant';
-        });
-        const totalTokens = (final.usage && final.usage.total) || 0;
-        if (!msgError && totalTokens === 0 && !hasAssistantMessages) {
-          yield {
-            type: 'backend_error',
-            class_hint: 'provider_error',
-            structured_payload: {
-              message: 'Backend session completed without running the model. The provider/model may be invalid, unreachable, or configured incorrectly.',
-            },
-          };
-        }
-        if (final.text) {
-          yield { type: 'assistant_text', message_id: final.message_id || this._sessionId || 'msg_final', text: final.text };
-        }
-        yield {
-          type: 'usage_reported',
-          tokens: final.usage,
-          cost: final.cost,
-        };
-      } catch (err) {
-        yield { type: 'stream_closed', reason: 'finalization_error' };
-      }
-    }
-
-    yield { type: 'process_exited', code: 0 };
-  }
-
-  _processMessageFacts(messagesResponse) {
-    let messages = [];
-    if (Array.isArray(messagesResponse)) {
-      messages = messagesResponse;
-    } else if (messagesResponse && Array.isArray(messagesResponse.messages)) {
-      messages = messagesResponse.messages;
-    } else if (messagesResponse && Array.isArray(messagesResponse.parts)) {
-      messages = [{ parts: messagesResponse.parts }];
-    }
-    const facts = [];
-    for (const msg of messages) {
-      const parts = msg.parts || [];
-      for (const p of parts) {
-        switch (p.type || '') {
-          case 'text':
-            facts.push({ type: 'assistant_text', message_id: p.messageID || 'msg_gap', text: p.text || '' });
-            break;
-          case 'reasoning':
-            facts.push({ type: 'reasoning', message_id: p.messageID || 'msg_gap' });
-            break;
-          default:
-            break;
-        }
-      }
-    }
-    return facts;
-  }
-
-  async _fetchSessionStatus() {
-    if (this._testMode && this._mockSessionStatusResponses) {
-      if (this._mockStatusIndex === undefined) this._mockStatusIndex = 0;
-      if (this._mockStatusIndex < this._mockSessionStatusResponses.length) {
-        const resp = this._mockSessionStatusResponses[this._mockStatusIndex++];
-        const sid = this._mockSessionId || this._sessionId;
-        if (resp && resp[sid] && resp[sid].type) {
-          const t = resp[sid].type;
-          return t === 'retry' ? 'retrying' : t;
-        }
-        return 'unknown';
-      }
-      return 'unknown';
-    }
-
-    const status = await this._transportRequest('GET', '/session/status', null, SESSION_STATUS_TIMEOUT_MS);
-    if (status && typeof status === 'object') {
-      const sid = this._sessionId;
-      if (sid && status[sid]) {
-        const t = status[sid].type || status[sid];
-        if (typeof t === 'string') {
-          this._sawLiveStatus = true;
-          return t === 'retry' ? 'retrying' : t;
-        }
-        if (t && typeof t === 'object' && t.type) {
-          this._sawLiveStatus = true;
-          return t.type === 'retry' ? 'retrying' : t.type;
-        }
-      }
-
-      // `/session/status` lists only sessions with work in flight, so once the
-      // turn is over ours is simply absent and the map comes back `{}`.
-      // Reporting that as 'unknown' meant the reconciliation loop — which
-      // terminates only on a confirmed 'idle' — never terminated: a model turn
-      // that ended in an APIError (verified live: a 403 RegionError, five
-      // seconds in) was polled for the full hard-timeout budget and reported as
-      // `timed_out` with zero bytes, hiding the real error behind a fake stall.
-      //
-      // Guarded so a session that has not yet been registered is not read as
-      // finished. Observing it live once is the strong signal, but it cannot be
-      // the only one: a turn that fails in the first few seconds — the case
-      // this exists for — can be gone before the first poll ever sees it. So a
-      // registration grace period counted from the prompt also qualifies.
-      if (this._sawLiveStatus) return 'idle';
-      if (this._promptSentAt && Date.now() - this._promptSentAt > SESSION_REGISTRATION_GRACE_MS) {
-        return 'idle';
-      }
-    }
-    return 'unknown';
-  }
-
-  async _readMessagesFromServer() {
-    if (this._testMode && this._mockMessagesResponse) {
-      return this._mockMessagesResponse;
-    }
-
-    return this._transportRequest('GET', `/session/${this._sessionId}/message`, null, MESSAGES_TIMEOUT_MS);
-  }
-
-  async _pollInteractions() {
-    const results = [];
-    try {
-      const perms = await this._transportRequest('GET', '/permission', null, 5000);
-      if (Array.isArray(perms)) {
-        for (const p of perms) {
-          if (p && p.id && !this._seenInteractionIds.has(p.id)) {
-            this._seenInteractionIds.add(p.id);
-            results.push({
-              interaction_id: p.id,
-              kind: 'permission',
-              detail: `${p.permission || 'unknown'}: ${(p.patterns || []).join(', ')}`,
-              raw: p,
-            });
-          }
-        }
-      }
-    } catch {
-    }
-    try {
-      const questions = await this._transportRequest('GET', '/question', null, 5000);
-      if (Array.isArray(questions)) {
-        for (const q of questions) {
-          if (q && q.id && !this._seenInteractionIds.has(q.id)) {
-            this._seenInteractionIds.add(q.id);
-            const topic = (q.questions || []).map(x => (typeof x === 'string' ? x : x.question || '')).join(', ');
-            results.push({
-              interaction_id: q.id,
-              kind: 'question',
-              detail: topic,
-              raw: q,
-            });
-          }
-        }
-      }
-    } catch {
-    }
-    return results;
-  }
-
-  async _rejectInteraction(interaction) {
-    try {
-      if (interaction.kind === 'question') {
-        await this._transportRequest('POST', `/question/${interaction.interaction_id}/reject`, {}, 5000);
-      } else {
-        await this._transportRequest('POST', `/permission/${interaction.interaction_id}/reply`, {
-          reply: 'reject',
-          message: 'Automatically rejected: no authorized responder is available to answer this permission request. Provide an automation policy or run interactively.',
-        }, 5000);
-      }
-    } catch (err) {
-      if (err && err.statusCode === 404) return;
-      const wrapped = new Error(`Failed to reject interaction ${interaction.interaction_id}: ${err.message}`);
-      wrapped.rejectFailed = true;
-      wrapped.cause = err;
-      throw wrapped;
-    }
-  }
-
-  _classifyBackendError(structuredPayload) {
-    if (!structuredPayload || typeof structuredPayload !== 'object') return null;
-    const responseBody = structuredPayload.responseBody || structuredPayload.body || null;
-    if (responseBody && typeof responseBody === 'object') {
-      const errorType = responseBody.error && responseBody.error.type;
-      if (errorType === 'CreditsError') return 'quota_or_rate_limit';
-    }
-    if (structuredPayload.name === 'CreditsError') return 'quota_or_rate_limit';
-    return null;
-  }
-
-  async *_sseReadEvents(lastEventId) {
-    if (this._testMode && this._mockSseEvents) {
-      const events = this._mockSseEvents;
-      this._mockSseEvents = [];
-      for (const ev of events) {
-        if (this._cancelled) return;
-        yield ev;
-      }
-      return;
-    }
-
-    const url = this._buildUrl('/event');
-    const u = new URL(url);
-
-    const headers = {};
-    if (this._password) {
-      headers['Authorization'] = 'Basic ' + Buffer.from('opencode:' + this._password).toString('base64');
-    }
-    if (lastEventId) {
-      headers['Last-Event-ID'] = lastEventId;
-    }
-
-    const response = await new Promise((resolve, reject) => {
-      const req = http.get({
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        headers,
-        timeout: SSE_SOCKET_TIMEOUT_MS,
-      }, (res) => { resolve(res); });
-      req.on('error', reject);
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error('SSE connection timed out'));
-      });
+    await this._request({
+      method: 'POST',
+      path: this._buildPath(`/session/${this._sessionId}/prompt_async`),
+      body: promptBody,
+      timeoutMs: PROMPT_ASYNC_TIMEOUT_MS,
     });
-
-    let buffer = '';
-    let sseId = null;
-
-    try {
-      for await (const chunkRaw of response) {
-        buffer += chunkRaw.toString('utf8');
-
-        while (buffer.includes('\n\n')) {
-          const idx = buffer.indexOf('\n\n');
-          const block = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-
-          const parsed = this._parseSseBlock(block);
-          if (!parsed) continue;
-
-          if (parsed.id) sseId = parsed.id;
-          if (!parsed.data || parsed.data.length === 0) continue;
-
-          try {
-            const data = JSON.parse(parsed.data);
-            if (sseId) data._sseId = sseId;
-            if (parsed.event) data._sseEvent = parsed.event;
-            yield data;
-          } catch {}
-        }
-      }
-    } catch (err) {
-      return;
-    }
-  }
-
-  _parseSseBlock(block) {
-    const lines = block.split('\n');
-    const event = { data: [] };
-    for (const line of lines) {
-      if (line.startsWith(':')) continue;
-      const colonIdx = line.indexOf(':');
-      if (colonIdx === -1) continue;
-      const field = line.slice(0, colonIdx);
-      let value = line.slice(colonIdx + 1);
-      if (value.startsWith(' ')) value = value.slice(1);
-      if (field === 'event') event.event = value;
-      else if (field === 'data') event.data.push(value);
-      else if (field === 'id') event.id = value;
-      else if (field === 'retry') event.retry = parseInt(value, 10);
-    }
-    if (event.data.length === 0) return null;
-    event.data = event.data.join('\n');
-    return event;
+    // The turn is in flight from here, which is what makes a later absence from
+    // /session/status meaningful. See the turn module's _fetchSessionStatus.
+    this._promptSentAt = Date.now();
+    this._lastPrompt = prompt;
   }
 
   async *Observe(attempt) {
-    if (this._testMode && this._mockSseEvents) {
-      yield* this._runAsyncReconciliation(attempt);
-      return;
+    if (!this._turn) {
+      this._turn = new OpencodeTurn({
+        transport: this._transport,
+        buildPath: (endpoint) => this._buildPath(endpoint),
+      });
     }
-    if (this._testMode && this._mockFacts) {
-      for (const fact of this._mockFacts) {
-        yield { ...fact };
-      }
-      return;
-    }
-    yield* this._runAsyncReconciliation(attempt);
+    yield* this._turn.run({
+      prompt: this._lastPrompt,
+      session: {
+        id: this._sessionId,
+        promptSentAt: this._promptSentAt,
+        backendPid: this._backendPid,
+      },
+      policy: this._automationPolicy,
+      deadline: this._hardDeadlineMs,
+      context: { isCancelled: () => this._cancelled },
+    });
   }
 
   Resume(attempt, kind, prompt) {
@@ -1532,15 +517,13 @@ class OpencodeAdapter {
       ? { answers: (typeof decision === 'object' && decision !== null && Array.isArray(decision.answers)) ? decision.answers : [] }
       : { reply, ...(message ? { message } : {}) };
 
-    if (this._testMode) {
-      if (typeof this._transportRequestOverride === 'function') {
-        return this._transportRequestOverride('POST', endpoint, body, 5000);
-      }
-      return { simulated: true };
-    }
-
     try {
-      return await this._transportRequest('POST', endpoint, body, 5000);
+      return await this._request({
+        method: 'POST',
+        path: this._buildPath(endpoint),
+        body,
+        timeoutMs: 5000,
+      });
     } catch (err) {
       if (err && err.statusCode === 404) return { resolved: true };
       throw err;
@@ -1552,10 +535,14 @@ class OpencodeAdapter {
 
     switch (rung) {
       case 'session_abort':
-        if (this._sessionId && this._serverBaseUrl) {
+        if (this._sessionId && this._transport) {
           try {
-            const abortUrl = this._buildUrl(`/session/${this._sessionId}/abort`);
-            await httpPost(abortUrl, {}, { responseTimeout: 5000, password: this._password });
+            await this._request({
+              method: 'POST',
+              path: this._buildPath(`/session/${this._sessionId}/abort`),
+              body: {},
+              timeoutMs: 5000,
+            });
             this._cancelRungReached = 'session_abort';
             this._cancelled = true;
             return { success: true };
@@ -1568,21 +555,23 @@ class OpencodeAdapter {
         return { success: true };
 
       case 'server_dispose':
-        if (this._serverBaseUrl) {
+        if (this._server) {
           try {
-            await httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password });
+            const result = await this._server.dispose();
+            if (result.gracefulPost !== 'ok') {
+              return { success: false, error: 'server_dispose HTTP failed' };
+            }
           } catch {
             return { success: false, error: 'server_dispose HTTP failed' };
           }
+          this._server = null;
         }
-        this._killServer();
-        this._serverBaseUrl = null;
         this._cancelRungReached = 'server_dispose';
         this._cancelled = true;
         return { success: true };
 
       case 'hard_kill':
-        this._killServer();
+        if (this._server) this._server.kill();
         this._cancelRungReached = 'hard_kill';
         this._cancelled = true;
         return { success: true };
@@ -1592,132 +581,79 @@ class OpencodeAdapter {
     }
   }
 
-  _killServer() {
-    if (this._serverProcess) {
-      // The Windows Bun shim spawns the real server as a child; ChildProcess.kill()
-      // only reaches the shim, so terminate the whole tree first.
-      if (process.platform === 'win32' && !this._serverProcess.killed && this._serverProcess.exitCode === null &&
-        Number.isInteger(this._serverProcess.pid) && this._serverProcess.pid > 0) {
-        try {
-          spawnSync('taskkill', ['/PID', String(this._serverProcess.pid), '/T', '/F'], {
-            windowsHide: true,
-            stdio: 'ignore',
-            timeout: 5000,
-          });
-        } catch {}
-      }
-      try { this._serverProcess.kill('SIGKILL'); } catch {
-        try { this._serverProcess.kill(); } catch {}
-      }
-    }
-  }
-
   CollectResult(attempt) {
     if (this._collectedResult) return this._collectedResult;
 
-    let lastText = '';
+    const turn = this._turn;
+    let text = '';
     let usage = { input: 0, output: 0, total: 0 };
     let backendSessionId = null;
-
-    if (this._mockSseEvents || (!this._testMode && this._asyncResultText !== undefined)) {
-      lastText = this._asyncResultText || '';
-      usage = this._asyncResultUsage || { input: 0, output: 0, total: 0 };
-      backendSessionId = this._asyncBackendSessionId || this._sessionId || null;
-    } else {
-      const facts = this._testMode ? (this._mockFacts || []) : this._facts;
-      for (const f of facts) {
-        if (f.type === 'assistant_text') lastText = f.text;
-        if (f.type === 'usage_reported' && f.tokens) usage = { ...f.tokens };
-        if (f.type === 'started' && f.backend_session_id) backendSessionId = f.backend_session_id;
-      }
+    if (turn) {
+      text = turn.result.text || '';
+      usage = turn.result.usage || usage;
+      backendSessionId = turn.result.backendSessionId || null;
     }
 
-    const result = { text: lastText, usage, backend_session_id: backendSessionId };
+    const result = { text, usage, backend_session_id: backendSessionId };
     this._collectedResult = result;
     return result;
   }
 
   CollectDiagnostics(attempt) {
-    const factCount = this._mockFacts ? this._mockFacts.length : (this._facts ? this._facts.length : 0);
     return {
       schema_version: 1,
       backend: 'opencode',
       version: this._detectedVersion || 'unknown',
-      facts_emitted: factCount,
-      exit_code: this._resolveExitCode(),
-      interactions_seen: this._seenInteractionIds.size,
+      facts_emitted: this._turn ? this._turn.factCount : 0,
+      exit_code: this._turn ? this._turn.exitCode : null,
+      interactions_seen: this._turn ? this._turn.seenInteractionCount : 0,
       has_automation_policy: this._automationPolicy !== null,
     };
-  }
-
-  _resolveExitCode() {
-    if (this._mockExitCode !== null) return this._mockExitCode;
-    const facts = this._facts || [];
-    for (let i = facts.length - 1; i >= 0; i--) {
-      if (facts[i].type === 'process_exited') {
-        return facts[i].code !== undefined ? facts[i].code : null;
-      }
-    }
-    return null;
   }
 
   Dispose(attempt) {
     if (this._disposed) return;
     this._disposed = true;
 
-    if (!this._testMode) {
-      if (this._serverBaseUrl) {
-        try { httpPost(`${this._serverBaseUrl}/global/dispose`, {}, { responseTimeout: DISPOSE_TIMEOUT_MS, password: this._password }).catch(() => {}); } catch {}
-      }
-      this._killServer();
+    if (this._server) {
+      const disposeWork = this._server.dispose();
+      if (disposeWork && typeof disposeWork.catch === 'function') disposeWork.catch(() => {});
+      this._server = null;
     }
-
-    this._deleteServerMetadata();
-
-    this._serverProcess = null;
-    this._serverBaseUrl = null;
-    this._serverPort = null;
   }
 
   Recover(attempt) {
     if (this._cancelled) return { state: 'cancelled' };
-    const facts = this._mockFacts || this._facts || [];
-    const processExited = facts.find(f => f && f.type === 'process_exited');
-    if (processExited) {
-      return { state: processExited.code === 0 ? 'done' : 'failed' };
+    const turn = this._turn;
+    if (turn) {
+      if (turn.exitCode !== null) {
+        return { state: turn.exitCode === 0 ? 'done' : 'failed' };
+      }
+      if (turn.hadBackendError) return { state: 'failed' };
     }
-    const backendError = facts.find(f => f && f.type === 'backend_error');
-    if (backendError) return { state: 'failed' };
     return { state: 'interrupted' };
   }
 
+  // -------------------------------------------------------------------------
+  // Doctor probes
+  // -------------------------------------------------------------------------
+
   async _probeEndpointShape(url, method, body, timeoutMs, name, shapeCheck) {
     try {
-      const hdrs = {};
-      if (this._password) {
-        hdrs['Authorization'] = 'Basic ' + Buffer.from('opencode:' + this._password).toString('base64');
-      }
       const u = new URL(url);
-      const result = await new Promise((resolve, reject) => {
-        const req = http.request({
-          hostname: u.hostname, port: u.port, path: u.pathname + u.search,
-          method: method || 'GET', headers: hdrs, timeout: timeoutMs || 5000,
-        }, (res) => {
-          const chunks = [];
-          res.on('data', (c) => chunks.push(c));
-          res.on('end', () => {
-            const raw = Buffer.concat(chunks).toString('utf8');
-            let parsed = null;
-            try { parsed = JSON.parse(raw); } catch {}
-            resolve({ statusCode: res.statusCode, body: raw, parsed });
-          });
-        });
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-        if (body) req.write(JSON.stringify(body));
-        req.end();
+      const transport = new HttpTransport({
+        baseUrl: u.origin,
+        password: this._server ? this._server.password : null,
       });
-      return shapeCheck(result);
+      const res = await transport.request({
+        method: method || 'GET',
+        path: u.pathname + u.search,
+        body,
+        signal: AbortSignal.timeout(timeoutMs || 5000),
+      });
+      let parsed = null;
+      try { parsed = JSON.parse(res.body); } catch {}
+      return shapeCheck({ statusCode: res.status, body: res.body, parsed });
     } catch (err) {
       return { name, ok: false, detail: err.message };
     }
@@ -1735,45 +671,41 @@ class OpencodeAdapter {
         return { name: 'health_endpoint', ok: true, detail: `/global/health: healthy=${p.healthy}, version=${p.version}` };
       }
     ));
-    if (!this._testMode) {
-      results.push(await this._probeEndpointShape(
-        `${baseUrl}/permission`, 'GET', null, 5000, 'permission_endpoint',
-        (r) => {
-          if (r.statusCode >= 200 && r.statusCode < 300) {
-            return { name: 'permission_endpoint', ok: true, detail: `/permission returns ${Array.isArray(r.parsed) ? 'array' : typeof r.parsed}` };
-          }
-          return { name: 'permission_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+    results.push(await this._probeEndpointShape(
+      `${baseUrl}/permission`, 'GET', null, 5000, 'permission_endpoint',
+      (r) => {
+        if (r.statusCode >= 200 && r.statusCode < 300) {
+          return { name: 'permission_endpoint', ok: true, detail: `/permission returns ${Array.isArray(r.parsed) ? 'array' : typeof r.parsed}` };
         }
-      ));
-      results.push(await this._probeEndpointShape(
-        `${baseUrl}/question`, 'GET', null, 5000, 'question_endpoint',
-        (r) => {
-          if (r.statusCode >= 200 && r.statusCode < 300) {
-            return { name: 'question_endpoint', ok: true, detail: `/question returns ${Array.isArray(r.parsed) ? 'array' : typeof r.parsed}` };
-          }
-          return { name: 'question_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+        return { name: 'permission_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+      }
+    ));
+    results.push(await this._probeEndpointShape(
+      `${baseUrl}/question`, 'GET', null, 5000, 'question_endpoint',
+      (r) => {
+        if (r.statusCode >= 200 && r.statusCode < 300) {
+          return { name: 'question_endpoint', ok: true, detail: `/question returns ${Array.isArray(r.parsed) ? 'array' : typeof r.parsed}` };
         }
-      ));
-      results.push(await this._probeEndpointShape(
-        `${baseUrl}/session/status`, 'GET', null, 5000, 'session_status_endpoint',
-        (r) => {
-          if (r.statusCode >= 200 && r.statusCode < 300) {
-            return { name: 'session_status_endpoint', ok: true, detail: `/session/status responds HTTP ${r.statusCode}` };
-          }
-          return { name: 'session_status_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+        return { name: 'question_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+      }
+    ));
+    results.push(await this._probeEndpointShape(
+      `${baseUrl}/session/status`, 'GET', null, 5000, 'session_status_endpoint',
+      (r) => {
+        if (r.statusCode >= 200 && r.statusCode < 300) {
+          return { name: 'session_status_endpoint', ok: true, detail: `/session/status responds HTTP ${r.statusCode}` };
         }
-      ));
-    }
+        return { name: 'session_status_endpoint', ok: false, detail: `HTTP ${r.statusCode}` };
+      }
+    ));
     return results;
   }
 
   async LiveSmoke() {
-    if (this._testMode) return;
     const opencodePath = resolveOpencodePath();
     if (!opencodePath) {
       throw new Error('opencode executable not found');
     }
-    const { execSync } = require('node:child_process');
     try {
       const result = execSync(`"${opencodePath}" --version`, { encoding: 'utf8', timeout: 10000, windowsHide: true });
       const version = result.toString().trim();
@@ -1784,9 +716,8 @@ class OpencodeAdapter {
   }
 
   async LiveSmokeRequest(timeoutMs, repoPath) {
-    if (this._testMode) return;
     return runAdapterSmoke(this, repoPath);
   }
 }
 
-module.exports = { OpencodeAdapter, httpRequest, resolveOpencodePath };
+module.exports = { OpencodeAdapter, resolveOpencodePath };

@@ -1,18 +1,15 @@
 // @suite quick
-// Covers the non-test-mode Start() path in adapters/opencode/adapter.js.
+// Covers the server module's non-happy-path start() (ticket 100): the startup
+// sentinel must reject with the real reason, the server process must be
+// killed, and no half-initialized state may survive.
 //
-// Every adapter's Start() opens with `if (this._testMode) { ...; return }`, and
-// every existing adapter test sets _testMode, so the ~110 lines below that guard
-// were executed by nothing in the suite. That blind spot is what let a
-// `ReferenceError: child is not defined` ship in the codex adapter and break
-// every job.
-//
-// opencode differs from the other two backends: Start() launches a *server* and
-// then waits on a startup sentinel, so the reachable non-test-mode assertion is
-// the failure path -- the sentinel must reject with the real reason, the server
-// process must be killed, and no half-initialized state may survive. Pointing
-// the binary at cmd.exe makes the child exit immediately, which trips the
-// premature-exit branch fast instead of burning the 30s startup budget.
+// Every adapter's Start() used to open with `if (this._testMode) { ...; return }`,
+// so the ~110 lines below that guard were executed by nothing in the suite.
+// That blind spot is what let a `ReferenceError: child is not defined` ship in
+// the codex adapter and break every job. The failure path is the reachable
+// non-test-mode assertion: pointing the binary at cmd.exe makes the child exit
+// immediately, which trips the premature-exit branch fast instead of burning
+// the 30s startup budget.
 const assert = require('node:assert');
 const { assertRealFailure } = require('../../helpers/assert-failure');
 
@@ -23,8 +20,8 @@ async function main() {
 //    child, and leaves no half-initialized state
 // ===========================================================================
 {
-  const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
-  const adapter = new OpencodeAdapter({ _testMode: false, _mockVersion: '1.18.8' });
+  const { OpencodeServer } = require('../../../adapters/opencode/server');
+  const server = new OpencodeServer({});
 
   const savedPath = process.env.OPENCODE_PATH;
   // process.execPath, not cmd.exe: cmd.exe with unrecognized switches starts an
@@ -36,7 +33,7 @@ async function main() {
   const startedAt = process.hrtime.bigint();
   let error;
   try {
-    await adapter.Start({});
+    await server.start({ canonicalDir: null, opencodePath: process.execPath });
   } catch (err) {
     error = err;
   } finally {
@@ -56,32 +53,32 @@ async function main() {
   // budget -- a dead worker has to fail fast (AGENTS.md: startup sentinels
   // need slack and a fast-fail).
   const elapsedMs = Number((process.hrtime.bigint() - startedAt) / 1000000n);
-  assert.ok(elapsedMs < adapter._startupTimeoutMs,
-    `Dead server must fail fast, not wait out the ${adapter._startupTimeoutMs}ms sentinel (took ${elapsedMs}ms)`);
+  assert.ok(elapsedMs < server.startupTimeoutMs,
+    `Dead server must fail fast, not wait out the ${server.startupTimeoutMs}ms sentinel (took ${elapsedMs}ms)`);
 
-  // Proof it got past spawn and recorded launch identity before failing --
+  // Proof it got past spawn and recorded launch identity before failing —
   // identity must be captured the instant the process exists, so that a later
   // reconciliation can prove death.
-  assert.ok(adapter._serverProcess, '_serverProcess must be retained for teardown');
-  assert.strictEqual(typeof adapter._backendPid, 'number', 'launch pid must be recorded');
-  assert.ok(adapter._creationTime, 'creation time must be recorded with the pid');
-  assert.ok(adapter._imagePath, 'image path must be recorded with the pid');
-  assert.ok(adapter._executionToken, 'execution token must be minted for proof of ownership');
+  assert.ok(server.process, 'server.process must be retained for teardown');
+  assert.strictEqual(typeof server.pid, 'number', 'launch pid must be recorded');
+  assert.ok(server.creationTime, 'creation time must be recorded with the pid');
+  assert.ok(server.imagePath, 'image path must be recorded with the pid');
+  assert.ok(server.executionToken, 'execution token must be minted for proof of ownership');
 
   // No half-initialized transport state.
-  assert.strictEqual(adapter._serverPort, null,
-    '_serverPort must stay null when startup failed');
-  assert.strictEqual(adapter._serverBaseUrl, null,
-    '_serverBaseUrl must stay null when startup failed');
+  assert.strictEqual(server.port, null,
+    'port must stay null when startup failed');
+  assert.strictEqual(server.baseUrl, null,
+    'baseUrl must stay null when startup failed');
 
   // The child must be dead, not leaked. A leaked fixture server poisons every
   // later test on the machine.
-  assert.ok(adapter._serverProcess.killed || adapter._serverProcess.exitCode !== null,
-    'server process must be killed or already exited after a failed Start');
+  assert.ok(server.process.killed || server.process.exitCode !== null,
+    'server process must be killed or already exited after a failed start');
 
-  try { adapter.Dispose({}); } catch {}
+  try { await server.dispose(); } catch {}
 
-  console.log('PASS: opencode Start fails fast with the real reason and kills the server');
+  console.log('PASS: opencode server start fails fast with the real reason and kills the child');
 }
 
 // ===========================================================================
@@ -91,8 +88,8 @@ async function main() {
 //    the only place the child environment is actually built.
 // ===========================================================================
 {
-  const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
-  const adapter = new OpencodeAdapter({ _testMode: false, _mockVersion: '1.18.8' });
+  const { OpencodeServer } = require('../../../adapters/opencode/server');
+  const server = new OpencodeServer({});
 
   const savedPath = process.env.OPENCODE_PATH;
   // process.execPath, not cmd.exe: cmd.exe with unrecognized switches starts an
@@ -102,15 +99,15 @@ async function main() {
   process.env.OPENCODE_PATH = process.execPath;
 
   try {
-    await adapter.Start({});
+    await server.start({ canonicalDir: null, opencodePath: process.execPath });
   } catch {
-    // Expected -- cmd.exe is not an opencode server.
+    // Expected -- node is not an opencode server.
   } finally {
     if (savedPath === undefined) delete process.env.OPENCODE_PATH;
     else process.env.OPENCODE_PATH = savedPath;
   }
 
-  const password = adapter._password;
+  const password = server.password;
   assert.ok(password, 'a per-job password must have been generated');
 
   for (const [key, value] of Object.entries(process.env)) {
@@ -122,7 +119,7 @@ async function main() {
   assert.strictEqual(process.env.OPENCODE_SERVER_PASSWORD, undefined,
     'the password must not be written into the parent environment');
 
-  try { adapter.Dispose({}); } catch {}
+  try { await server.dispose(); } catch {}
 
   console.log('PASS: opencode server password stays out of the parent env and DCLI_* names');
 }

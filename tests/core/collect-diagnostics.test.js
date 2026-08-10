@@ -73,25 +73,50 @@ async function main() {
 }
 
 // ===========================================================================
-// 6. OpencodeAdapter: null when no process_exited fact
+// 6. OpencodeAdapter: null when no turn has run
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true, _mockVersion: '1.18.8' });
+  const adapter = new OpencodeAdapter();
   const diag = adapter.CollectDiagnostics({});
   assert.strictEqual(diag.exit_code, null,
-    `Without process_exited, opencode exit_code must be null, got ${diag.exit_code}`);
-  console.log('PASS: OpencodeAdapter returns null without process_exited');
+    `Without a completed turn, opencode exit_code must be null, got ${diag.exit_code}`);
+  console.log('PASS: OpencodeAdapter returns null without a completed turn');
 }
 
 // ===========================================================================
-// 7. OpencodeAdapter honours _mockExitCode
+// 7. OpencodeAdapter reports the exit code its turn actually emitted
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true, _mockExitCode: 143, _mockVersion: '1.18.8' });
+  const { FakeTransport } = require('../fixtures/fake-transport');
+  const adapter = new OpencodeAdapter({
+    transport: new FakeTransport({
+      script: {
+        '/project/current': { directory: __dirname },
+        '/session': { id: 'ses_diag' },
+        '/session/ses_diag/prompt_async': { status: 204 },
+        '/session/status': { ses_diag: { type: 'idle' } },
+        '/session/ses_diag/message': {
+          parts: [
+            { id: 'p1', messageID: 'msg_1', type: 'text', text: 'done' },
+            { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 10, input: 5, output: 5 } },
+          ],
+        },
+        '/permission': [],
+        '/question': [],
+      },
+    }),
+  });
+  adapter.PrepareInvocation({}, { canonicalDir: __dirname, access: 'read-only' });
+  await adapter.Start({});
+  await adapter.SendPrompt({}, 'run me');
+  for await (const fact of adapter.Observe({})) {
+    if (fact.type === 'process_exited') break;
+  }
   const diag = adapter.CollectDiagnostics({});
-  assert.strictEqual(diag.exit_code, 143,
-    `_mockExitCode 143 must be honoured, got ${diag.exit_code}`);
-  console.log('PASS: OpencodeAdapter honours _mockExitCode');
+  assert.strictEqual(diag.exit_code, 0,
+    `a completed turn must report its process_exited code, got ${diag.exit_code}`);
+  assert.ok(diag.facts_emitted > 0, 'facts_emitted must reflect the turn');
+  console.log('PASS: OpencodeAdapter reports the exit code its turn emitted');
 }
 
 // ===========================================================================

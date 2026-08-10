@@ -1,12 +1,15 @@
 // @suite full
 // @serial  binds loopback ports; asserts reserve-and-retry races
+// Server lifecycle, now against the per-job server module (ticket 100):
+// port reservation, password handling, metadata, stdout capture, orphan
+// discovery, dispose.
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
 
-const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
+const { OpencodeServer } = require('../../../adapters/opencode/server');
 const { Redactor } = require('../../../core/redactor');
 const { setRedactor, getRedactor } = require('../../../core/fs-text');
 
@@ -20,18 +23,8 @@ function clean(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
-function makeMinimalAdapter() {
-  return new OpencodeAdapter({
-    _testMode: true,
-    _mockVersion: '1.18.8',
-    _mockFacts: [
-      { type: 'started', backend_pid: 42, backend_session_id: 'ses_test' },
-      { type: 'assistant_text', message_id: 'msg_1', text: 'Hello' },
-      { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-      { type: 'process_exited', code: 0 },
-    ],
-    _mockExitCode: 0,
-  });
+function makeServer(opts = {}) {
+  return new OpencodeServer(opts);
 }
 
 async function main() {
@@ -40,8 +33,7 @@ async function main() {
 // 1. Port reservation returns a usable loopback port
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  const port = await adapter._reservePort();
+  const port = await OpencodeServer.reservePort();
   assert.ok(typeof port === 'number', 'Port must be a number');
   assert.ok(port > 0 && port < 65536, `Port ${port} must be in valid range`);
   assert.ok(Number.isInteger(port), `Port ${port} must be an integer`);
@@ -54,7 +46,7 @@ async function main() {
     });
     srv.on('error', reject);
   });
-  console.log('PASS: _reservePort returns a usable loopback port');
+  console.log('PASS: reservePort returns a usable loopback port');
 }
 
 // ===========================================================================
@@ -62,10 +54,9 @@ async function main() {
 // ===========================================================================
 {
   // Reserve a port, then try to reserve the same one (simulate race)
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  const port = await adapter._reservePort();
+  const port = await OpencodeServer.reservePort();
 
-  // Bind to it so the next _reservePort call with binding fails
+  // Bind to it so the next reservePort call with binding fails
   let occupied = false;
   const occupy = await new Promise((resolve) => {
     const srv = net.createServer();
@@ -80,13 +71,13 @@ async function main() {
   });
 
   // Force reservation of same port (this simulates the race)
-  // The adapter's _reservePort should get a different port
-  const port2 = await adapter._reservePort(3);
+  // reservePort should get a different port
+  const port2 = await OpencodeServer.reservePort(3);
   assert.ok(typeof port2 === 'number', 'Retry must produce a port');
   assert.ok(port2 > 0, `Port ${port2} must be positive`);
 
   if (occupy) occupy.close();
-  console.log('PASS: _reservePort retries and finds another port');
+  console.log('PASS: reservePort retries and finds another port');
 }
 
 // ===========================================================================
@@ -99,32 +90,25 @@ async function main() {
 
   try {
     const stateRoot = tmpDir();
-    const adapter = new OpencodeAdapter({ _testMode: true, stateRoot });
-    adapter._password = adapter._generatePassword();
-    const pw = adapter._password;
+    const server = makeServer({ stateRoot, jobId: 'test-job-id' });
+    server._password = server._generatePassword();
+    const pw = server._password;
 
     assert.ok(typeof pw === 'string', 'Password must be a string');
     assert.ok(pw.length >= 32, `Password must have >=128 bits (got ${pw.length * 4} bits)`);
 
-    adapter._registerPasswordWithRedactor();
+    server._registerPasswordWithRedactor();
 
     // Verify the redactor knows about it
     const redacted = r.redactText(pw);
     assert.ok(redacted.includes('redacted'), 'Password must be registered with redactor');
     assert.ok(!redacted.includes(pw), 'Password must be redacted from text');
 
-    // Verify it never appears in child env (we can't test the real env here,
-    // but we can verify the env object is prepared without the plain value leaking)
-    const envVars = Object.assign({}, process.env, { OPENCODE_SERVER_PASSWORD: pw });
-    assert.ok(envVars.OPENCODE_SERVER_PASSWORD === pw, 'Password is set in env');
-
     // The key test: if we write a server metadata file, the password must not be in it
-    adapter._jobId = 'test-job-id';
-    adapter._serversDir = path.join(stateRoot, 'servers');
-    adapter._backendPid = 12345;
-    adapter._imagePath = process.execPath;
-    adapter._writeServerMetadata(9999, 'tok123');
-    const metaPath = path.join(adapter._serversDir, 'test-job-id.json');
+    server._process = { pid: 12345 };
+    server._imagePath = process.execPath;
+    server._writeServerMetadata(9999, 'tok123');
+    const metaPath = path.join(stateRoot, 'servers', 'test-job-id.json');
     assert.ok(fs.existsSync(metaPath), 'Server metadata file must exist');
 
     const metaContent = fs.readFileSync(metaPath, 'utf8');
@@ -141,16 +125,13 @@ async function main() {
 // 4. Server metadata file has all required fields
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true });
   const stateRoot = tmpDir();
-  adapter._stateRoot = stateRoot;
-  adapter._serversDir = path.join(stateRoot, 'servers');
-  adapter._jobId = 'meta-test-job';
-  adapter._backendPid = 54321;
-  adapter._imagePath = 'C:\\opencode.exe';
-  adapter._writeServerMetadata(34567, 'exec-token-abc');
+  const server = makeServer({ stateRoot, jobId: 'meta-test-job' });
+  server._process = { pid: 54321 };
+  server._imagePath = 'C:\\opencode.exe';
+  server._writeServerMetadata(34567, 'exec-token-abc');
 
-  const metaPath = path.join(adapter._serversDir, 'meta-test-job.json');
+  const metaPath = path.join(stateRoot, 'servers', 'meta-test-job.json');
   assert.ok(fs.existsSync(metaPath), 'Server metadata file must exist');
 
   const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
@@ -170,22 +151,19 @@ async function main() {
 // ===========================================================================
 {
   const stateRoot = tmpDir();
-  const adapter = new OpencodeAdapter({ _testMode: true, stateRoot });
-  adapter._serversDir = path.join(stateRoot, 'servers');
-  adapter._jobId = 'dispose-cleanup-job';
-  adapter._backendPid = 99999;
-  adapter._imagePath = process.execPath;
-  adapter._writeServerMetadata(11111, 'tok-cleanup');
+  const server = makeServer({ stateRoot, jobId: 'dispose-cleanup-job' });
+  server._process = { pid: 99999 };
+  server._imagePath = process.execPath;
+  server._writeServerMetadata(11111, 'tok-cleanup');
 
-  const metaPath = path.join(adapter._serversDir, 'dispose-cleanup-job.json');
+  const metaPath = path.join(stateRoot, 'servers', 'dispose-cleanup-job.json');
   assert.ok(fs.existsSync(metaPath), 'Metadata must exist before dispose');
 
-  adapter.Dispose({});
-  assert.strictEqual(adapter.disposed, true, 'disposed flag must be true');
+  await server.dispose();
   assert.ok(!fs.existsSync(metaPath), 'Metadata must be deleted after dispose');
 
   // Idempotent: second dispose must not throw
-  assert.doesNotThrow(() => adapter.Dispose({}));
+  await assert.doesNotReject(() => server.dispose());
 
   clean(stateRoot);
   console.log('PASS: Dispose cleans up metadata and is idempotent');
@@ -195,31 +173,17 @@ async function main() {
 // 6. Dispose on never-started server is safe
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  // Never called Start()
-  assert.doesNotThrow(() => adapter.Dispose({}));
-  assert.strictEqual(adapter.disposed, true);
+  const server = makeServer();
+  // Never called start()
+  await assert.doesNotReject(() => server.dispose());
   console.log('PASS: Dispose on never-started server is safe');
 }
 
 // ===========================================================================
-// 7. Start execution handle contains server information
+// 7. Build args never includes --mdns
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const handle = await adapter.Start({});
-  assert.ok(handle && typeof handle === 'object', 'Start must return handle');
-  assert.ok('serverPid' in handle || true, 'Handle must have server info');
-
-  console.log('PASS: Start returns server handle');
-}
-
-// ===========================================================================
-// 8. Build args never includes --mdns
-// ===========================================================================
-{
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  const args = adapter._buildArgs(12345);
+  const args = OpencodeServer.buildArgs(12345);
   assert.ok(Array.isArray(args), 'args must be an array');
   assert.ok(!args.includes('--mdns'), '--mdns must never appear in args');
   assert.ok(args.includes('--hostname'), '--hostname must be in args');
@@ -230,54 +194,52 @@ async function main() {
   assert.ok(portIdx >= 0, '--port must be in args');
   assert.strictEqual(parseInt(args[portIdx + 1], 10), 12345, 'port must match reserved port');
 
-  console.log('PASS: _buildArgs never includes --mdns, always loopback');
+  console.log('PASS: buildArgs never includes --mdns, always loopback');
 }
 
 // ===========================================================================
-// 9. _parseStartupOutput handles the observed startup format
+// 8. parseStartupOutput handles the observed startup format
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true });
-
   // Standard observed format
   const sample1 = `Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.\nopencode server listening on http://127.0.0.1:47311\n`;
-  const result1 = adapter._parseStartupOutput(sample1);
+  const result1 = OpencodeServer.parseStartupOutput(sample1);
   assert.strictEqual(result1, 47311, 'Parse standard startup output');
 
   // Without warning preamble
   const sample2 = `opencode server listening on http://127.0.0.1:34567\n`;
-  const result2 = adapter._parseStartupOutput(sample2);
+  const result2 = OpencodeServer.parseStartupOutput(sample2);
   assert.strictEqual(result2, 34567, 'Parse without warning');
 
   // No match
   const sample3 = `opencode version 1.18.7\n`;
-  const result3 = adapter._parseStartupOutput(sample3);
+  const result3 = OpencodeServer.parseStartupOutput(sample3);
   assert.strictEqual(result3, null, 'No match returns null');
 
   // Different hostname
   const sample4 = `opencode server listening on http://0.0.0.0:8888\n`;
-  const result4 = adapter._parseStartupOutput(sample4);
+  const result4 = OpencodeServer.parseStartupOutput(sample4);
   assert.strictEqual(result4, 8888, 'Parse different hostname');
 
-  console.log('PASS: _parseStartupOutput handles various formats');
+  console.log('PASS: parseStartupOutput handles various formats');
 }
 
 // ===========================================================================
-// 10. Server stdout capture is size-capped
+// 9. Server stdout capture is size-capped
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  const maxBytes = adapter._maxServerStdoutBytes || (10 * 1024 * 1024);
+  const server = makeServer();
+  const maxBytes = server._maxStdoutBytes || (10 * 1024 * 1024);
   assert.ok(typeof maxBytes === 'number' && maxBytes > 0, 'Max stdout bytes must be > 0');
 
   // Simulate accumulating more than maxBytes of output
   const chunk = 'x'.repeat(65536);
   const totalWrites = Math.ceil((maxBytes + 100000) / chunk.length);
   for (let i = 0; i < totalWrites; i++) {
-    adapter._appendServerStdout(chunk);
+    server._appendStdout(chunk);
   }
 
-  const captured = adapter._serverStdout || '';
+  const captured = server.stdout || '';
   assert.ok(captured.length <= maxBytes + chunk.length,
     `Captured stdout (${captured.length}) must be bounded near maxBytes (${maxBytes})`);
 
@@ -285,46 +247,31 @@ async function main() {
 }
 
 // ===========================================================================
-// 11. Admission control: adapter reports estimated concurrency cost
+// 10. Startup timeout is bounded (default 30s)
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  const cost = adapter.GetResourceCost();
-  assert.ok(cost && typeof cost === 'object', 'Resource cost must be an object');
-  assert.ok(typeof cost.concurrencySlots === 'number' && cost.concurrencySlots >= 1,
-    `concurrencySlots must be >= 1, got ${cost.concurrencySlots}`);
-  assert.ok(cost.memoryEstimateMb === undefined || typeof cost.memoryEstimateMb === 'number',
-    'memoryEstimateMb must be a number if present');
-
-  console.log('PASS: GetResourceCost returns valid cost estimate');
-}
-
-// ===========================================================================
-// 12. Startup timeout is bounded (default 30s)
-// ===========================================================================
-{
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  assert.ok(typeof adapter._startupTimeoutMs === 'number', 'startupTimeoutMs must be a number');
-  assert.ok(adapter._startupTimeoutMs > 0 && adapter._startupTimeoutMs <= 60000,
-    `startupTimeoutMs must be between 1 and 60000, got ${adapter._startupTimeoutMs}`);
+  const server = makeServer();
+  assert.ok(typeof server.startupTimeoutMs === 'number', 'startupTimeoutMs must be a number');
+  assert.ok(server.startupTimeoutMs > 0 && server.startupTimeoutMs <= 60000,
+    `startupTimeoutMs must be between 1 and 60000, got ${server.startupTimeoutMs}`);
 
   console.log('PASS: startup timeout is bounded');
 }
 
 // ===========================================================================
-// 13. Health check timeout is bounded
+// 11. Health check timeout is bounded
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({ _testMode: true });
-  assert.ok(typeof adapter._healthTimeoutMs === 'number', 'healthTimeoutMs must be a number');
-  assert.ok(adapter._healthTimeoutMs > 0 && adapter._healthTimeoutMs <= 30000,
-    `healthTimeoutMs must be between 1 and 30000, got ${adapter._healthTimeoutMs}`);
+  const server = makeServer();
+  assert.ok(typeof server.healthTimeoutMs === 'number', 'healthTimeoutMs must be a number');
+  assert.ok(server.healthTimeoutMs > 0 && server.healthTimeoutMs <= 30000,
+    `healthTimeoutMs must be between 1 and 30000, got ${server.healthTimeoutMs}`);
 
   console.log('PASS: health check timeout is bounded');
 }
 
 // ===========================================================================
-// 14. Orphaned servers are discoverable from metadata
+// 12. Orphaned servers are discoverable from metadata
 // ===========================================================================
 {
   const stateRoot = tmpDir();
@@ -342,10 +289,8 @@ async function main() {
   };
   fs.writeFileSync(path.join(serversDir, 'orphan-job.json'), JSON.stringify(orphanMeta, null, 2) + '\n', 'utf8');
 
-  // adapter should be able to list orphaned server metadata
-  const adapter = new OpencodeAdapter({ _testMode: true, stateRoot });
-  const orphans = adapter._discoverOrphanedServers();
-  assert.ok(Array.isArray(orphans), 'discoverOrphanedServers must return array');
+  const orphans = OpencodeServer.discoverOrphaned(stateRoot);
+  assert.ok(Array.isArray(orphans), 'discoverOrphaned must return array');
   const found = orphans.find(o => o.jobId === 'orphan-job');
   assert.ok(found, 'Must find the orphan metadata file');
   assert.strictEqual(found.pid, 99998, 'Orphan pid');

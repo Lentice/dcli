@@ -1,14 +1,13 @@
-// Real-server coverage for the opencode adapter's HTTP transport.
+// Real-server coverage for the opencode transport seam (ticket 100).
 //
-// Every other opencode test drives _transportRequest through a test-mode
-// override, so httpRequest itself is executed by nothing. It carries the
-// contract the failure classifier and the 404 probes depend on — parsed JSON
-// on 2xx, statusCode/body on the error, classHint on a CreditsError, and a
-// bounded timeout — so it gets one test against an actual socket.
-
+// The production HttpTransport + requestJson are exercised against an actual
+// socket. requestJson carries the contract the failure classifier and the
+// 404 probes depend on — parsed JSON on 2xx, statusCode/body on the error,
+// classHint on a CreditsError, and a bounded timeout — and the transport
+// itself rejects an unbounded call.
 const assert = require('node:assert');
 const http = require('node:http');
-const { httpRequest } = require('../../../adapters/opencode/adapter');
+const { HttpTransport, requestJson } = require('../../../adapters/opencode/transport');
 
 function listen(handler) {
   const server = http.createServer(handler);
@@ -35,7 +34,8 @@ async function main() {
       });
     });
     try {
-      const out = await httpRequest('POST', `http://127.0.0.1:${port}/session`, { parts: [1] }, 5000, 'pw');
+      const transport = new HttpTransport({ baseUrl: `http://127.0.0.1:${port}`, password: 'pw' });
+      const out = await requestJson(transport, { method: 'POST', path: '/session', body: { parts: [1] }, timeoutMs: 5000 });
       assert.deepStrictEqual(out, { id: 'ses_1' }, 'JSON body must be parsed');
       assert.strictEqual(seen.method, 'POST');
       assert.strictEqual(seen.body, '{"parts":[1]}', 'request body must be sent as JSON');
@@ -51,7 +51,8 @@ async function main() {
   {
     const { server, port } = await listen((req, res) => { res.writeHead(204); res.end(); });
     try {
-      const out = await httpRequest('POST', `http://127.0.0.1:${port}/prompt_async`, { a: 1 }, 5000, null);
+      const transport = new HttpTransport({ baseUrl: `http://127.0.0.1:${port}` });
+      const out = await requestJson(transport, { method: 'POST', path: '/prompt_async', body: { a: 1 }, timeoutMs: 5000 });
       assert.strictEqual(out, '', '204 must yield the empty raw body, not a throw');
     } finally {
       await close(server);
@@ -66,8 +67,9 @@ async function main() {
       res.end('{"error":"nope"}');
     });
     try {
+      const transport = new HttpTransport({ baseUrl: `http://127.0.0.1:${port}` });
       await assert.rejects(
-        () => httpRequest('GET', `http://127.0.0.1:${port}/session/x`, null, 5000, null),
+        () => requestJson(transport, { method: 'GET', path: '/session/x', timeoutMs: 5000 }),
         (err) => {
           assert.ok(!(err instanceof ReferenceError) && !(err instanceof TypeError),
             `programmer error, not the failure under test: ${err && err.stack}`);
@@ -90,8 +92,9 @@ async function main() {
       res.end(JSON.stringify({ error: { type: 'CreditsError' } }));
     });
     try {
+      const transport = new HttpTransport({ baseUrl: `http://127.0.0.1:${port}` });
       await assert.rejects(
-        () => httpRequest('GET', `http://127.0.0.1:${port}/x`, null, 5000, null),
+        () => requestJson(transport, { method: 'GET', path: '/x', timeoutMs: 5000 }),
         (err) => {
           assert.strictEqual(err.classHint, 'quota_or_rate_limit');
           return true;
@@ -108,9 +111,10 @@ async function main() {
     const sockets = [];
     const { server, port } = await listen((req, res) => { sockets.push(res); /* never respond */ });
     try {
+      const transport = new HttpTransport({ baseUrl: `http://127.0.0.1:${port}` });
       const started = Date.now();
       await assert.rejects(
-        () => httpRequest('GET', `http://127.0.0.1:${port}/hang`, null, 300, null),
+        () => requestJson(transport, { method: 'GET', path: '/hang', timeoutMs: 300 }),
         (err) => {
           assert.ok(!(err instanceof ReferenceError) && !(err instanceof TypeError),
             `programmer error, not the failure under test: ${err && err.stack}`);
@@ -126,7 +130,18 @@ async function main() {
     console.log('PASS: unresponsive server bounded by supplied timeout');
   }
 
-  console.log('\nAll opencode httpRequest tests passed.');
+  // 6. The transport rejects a request without a signal (invariant 3)
+  {
+    const transport = new HttpTransport({ baseUrl: 'http://127.0.0.1:1' });
+    await assert.rejects(
+      () => transport.request({ method: 'GET', path: '/x' }),
+      /requires a signal/,
+      'an unbounded request must be rejected at the transport boundary'
+    );
+    console.log('PASS: unbounded transport request is rejected');
+  }
+
+  console.log('\nAll opencode transport tests passed.');
 }
 
 main().catch(err => { console.error(err); process.exit(1); });

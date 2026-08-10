@@ -7,6 +7,7 @@ const { runContractSuite } = require('./suite');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
 const { CodexAdapter } = require('../../adapters/codex/adapter');
+const { FakeTransport } = require('../../tests/fixtures/fake-transport');
 const { writeVersionShim } = require('../../tests/fixtures/version-shim');
 
 // ===========================================================================
@@ -26,26 +27,25 @@ const makeFake = () => new FakeAdapter({
 });
 
 const makeOpencode = () => new OpencodeAdapter({
-  _testMode: true,
-  _mockVersion: '1.18.8',
-  _mockFacts: [
-    { type: 'started', backend_pid: 42, backend_session_id: 'ses_contract' },
-    { type: 'assistant_text', message_id: 'msg_1', text: 'Contract test result from opencode' },
-    { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-    { type: 'process_exited', code: 0 },
-  ],
-  _mockExitCode: 0,
+  transport: new FakeTransport({
+    script: {
+      '/permission/test-id/reply': true,
+    },
+  }),
 });
 
 const makeCodex = () => new CodexAdapter();
 
 console.log('--- Contract parity suite ---');
-// DetectVersion runs the backend's --version probe for real; point CODEX_PATH
-// at a version-printing fixture so the parity gate needs no live codex.
+// DetectVersion runs the backend's --version probe for real; point OPENCODE_PATH
+// and CODEX_PATH at version-printing fixtures so the parity gate needs no live
+// backend. One shim serves both (each probe only runs its own env var).
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-parity-codex-'));
 const shim = writeVersionShim(tmpDir, '0.145.0');
 const savedCodexPath = process.env.CODEX_PATH;
+const savedOpencodePath = process.env.OPENCODE_PATH;
 process.env.CODEX_PATH = shim;
+process.env.OPENCODE_PATH = shim;
 let results;
 try {
   results = [
@@ -56,6 +56,8 @@ try {
 } finally {
   if (savedCodexPath === undefined) delete process.env.CODEX_PATH;
   else process.env.CODEX_PATH = savedCodexPath;
+  if (savedOpencodePath === undefined) delete process.env.OPENCODE_PATH;
+  else process.env.OPENCODE_PATH = savedOpencodePath;
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 }
 console.log('---');

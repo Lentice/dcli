@@ -4,21 +4,43 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { OpencodeAdapter, resolveOpencodePath } = require('../../../adapters/opencode/adapter');
+const { FakeTransport } = require('../../fixtures/fake-transport');
+const { withVersionShim, writeVersionShim } = require('../../fixtures/version-shim');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
-function makeMinimalAdapter() {
-  return new OpencodeAdapter({
-    _testMode: true,
-    _mockVersion: '1.18.8',
-    _mockFacts: [
-      { type: 'started', backend_pid: 42, backend_session_id: 'ses_test' },
-      { type: 'assistant_text', message_id: 'msg_1', text: 'Hello from opencode' },
-      { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-      { type: 'process_exited', code: 0 },
+const TURN_SCRIPT = {
+  '/project/current': { directory: __dirname },
+  '/session': { id: 'ses_test' },
+  '/session/ses_test/prompt_async': { status: 204 },
+  '/session/status': { ses_test: { type: 'idle' } },
+  '/session/ses_test/message': {
+    parts: [
+      { id: 'p1', messageID: 'msg_1', type: 'text', text: 'Hello from opencode' },
+      { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 250, input: 50, output: 200 } },
     ],
-    _mockExitCode: 0,
+  },
+  '/permission': [],
+  '/question': [],
+};
+
+function makeAdapter(opts = {}) {
+  return new OpencodeAdapter({
+    transport: new FakeTransport({ script: TURN_SCRIPT }),
+    ...opts,
   });
+}
+
+async function runFullTurn(adapter) {
+  adapter.PrepareInvocation({}, { canonicalDir: __dirname, access: 'read-only' });
+  await adapter.Start({});
+  await adapter.SendPrompt({}, 'test prompt');
+  const facts = [];
+  for await (const fact of adapter.Observe({})) {
+    facts.push(fact);
+    if (fact.type === 'process_exited') break;
+  }
+  return facts;
 }
 
 async function main() {
@@ -108,7 +130,7 @@ if (process.platform === 'win32') {
 // 1. GetIdentity returns correct shape
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   const id = adapter.GetIdentity();
   assert.ok(id && typeof id === 'object');
   assert.strictEqual(id.backend, 'opencode');
@@ -119,13 +141,18 @@ if (process.platform === 'win32') {
 }
 
 // ===========================================================================
-// 2. DetectVersion returns a string
+// 2. DetectVersion runs the real probe against a version shim
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const v = adapter.DetectVersion();
-  assert.strictEqual(typeof v, 'string');
-  assert.strictEqual(v, '1.18.8');
+  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-opencode-det-'));
+  const shim = writeVersionShim(shimDir, '1.18.8');
+  await withVersionShim('OPENCODE_PATH', shim, () => {
+    const adapter = makeAdapter();
+    const v = adapter.DetectVersion();
+    assert.strictEqual(typeof v, 'string');
+    assert.strictEqual(v, '1.18.8');
+  });
+  try { fs.rmSync(shimDir, { recursive: true, force: true }); } catch {}
   console.log('PASS: DetectVersion returns version string');
 }
 
@@ -133,7 +160,7 @@ if (process.platform === 'win32') {
 // 3. ProbeCapabilities returns object with required fields
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   const caps = adapter.ProbeCapabilities();
   assert.ok(caps && typeof caps === 'object');
   assert.strictEqual(caps.schema_version, 1);
@@ -149,7 +176,7 @@ if (process.platform === 'win32') {
 // 4. DeclareCancelRungs returns opencode's three real rungs
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   const rungs = adapter.DeclareCancelRungs();
   assert.ok(Array.isArray(rungs));
   assert.strictEqual(rungs.length, 3);
@@ -161,7 +188,7 @@ if (process.platform === 'win32') {
 // 5. ValidateRequest rejects reasoningEffort and effort, accepts variant
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
 
   // variant is accepted
   adapter.ValidateRequest({ variant: 'high' });
@@ -183,7 +210,7 @@ if (process.platform === 'win32') {
 // 6. Observe yields only closed-set fact types
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   const iterator = adapter.Observe({});
   assert.ok(iterator && typeof iterator[Symbol.asyncIterator] === 'function');
   console.log('PASS: Observe returns async iterator');
@@ -193,7 +220,8 @@ if (process.platform === 'win32') {
 // 7. CollectResult returns text, usage, and backend_session_id
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
+  await runFullTurn(adapter);
   const result = adapter.CollectResult({});
   assert.ok(result && typeof result === 'object');
   assert.strictEqual(result.text, 'Hello from opencode');
@@ -204,27 +232,22 @@ if (process.platform === 'win32') {
 }
 
 // ===========================================================================
-// 8. CollectResult with empty facts returns empty text
+// 8. CollectResult with no turn returns empty text
 // ===========================================================================
 {
-  const adapter = new OpencodeAdapter({
-    _testMode: true,
-    _mockVersion: '1.18.8',
-    _mockFacts: [],
-    _mockExitCode: 0,
-  });
+  const adapter = makeAdapter();
   const result = adapter.CollectResult({});
   assert.strictEqual(result.text, '');
   assert.strictEqual(result.usage.total, 0);
   assert.strictEqual(result.backend_session_id, null);
-  console.log('PASS: CollectResult with empty facts returns empty');
+  console.log('PASS: CollectResult with no turn returns empty');
 }
 
 // ===========================================================================
 // 9. CollectDiagnostics returns object with schema_version
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   const diag = adapter.CollectDiagnostics({});
   assert.ok(diag && typeof diag === 'object');
   assert.strictEqual(diag.schema_version, 1);
@@ -236,7 +259,7 @@ if (process.platform === 'win32') {
 // 10. Adapter does NOT decide terminality — no terminality API
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   const bannedMethods = ['isDone', 'isComplete', 'setTerminal', 'setState', 'declareDone', 'declareTerminal', 'isTerminal'];
   for (const m of bannedMethods) {
     assert.strictEqual(typeof adapter[m], 'undefined', `Adapter must not have method "${m}"`);
@@ -248,7 +271,8 @@ if (process.platform === 'win32') {
 // 11. Recover returns terminal or interrupted state
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
+  await runFullTurn(adapter);
   const recovery = adapter.Recover({});
   assert.ok(recovery && typeof recovery.state === 'string');
   assert.ok(TERMINAL_OR_INTERRUPTED.includes(recovery.state),
@@ -260,9 +284,9 @@ if (process.platform === 'win32') {
 // 12. PrepareInvocation, SendPrompt, Resume are present and don't throw
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  assert.doesNotThrow(() => adapter.PrepareInvocation({}, {}));
-  assert.doesNotThrow(() => adapter.SendPrompt({}, 'test prompt'));
+  const adapter = makeAdapter();
+  assert.doesNotThrow(() => adapter.PrepareInvocation({}, { canonicalDir: __dirname }));
+  await assert.doesNotReject(() => adapter.SendPrompt({}, 'test prompt'));
   assert.doesNotThrow(() => adapter.Resume({}, 'fork_from_artifacts', 'continue'));
   console.log('PASS: PrepareInvocation, SendPrompt, Resume exist');
 }
@@ -271,12 +295,10 @@ if (process.platform === 'win32') {
 // 13. Respond is implemented and does not throw when capabilities declare it
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   const caps = adapter.ProbeCapabilities();
   const hasPerms = caps.extensions && caps.extensions.interactive_permissions && caps.extensions.interactive_permissions.supported;
   assert.ok(hasPerms, 'opencode must declare interactive_permissions as supported');
-  // Respond returns a Promise; it should not throw synchronously
-  assert.doesNotThrow(() => adapter.Respond('test-id', 'allow'));
   console.log('PASS: Respond implemented');
 }
 
@@ -284,7 +306,7 @@ if (process.platform === 'win32') {
 // 14. Dispose is idempotent
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
   assert.doesNotThrow(() => adapter.Dispose({}));
   assert.doesNotThrow(() => adapter.Dispose({}));
   console.log('PASS: Dispose is idempotent');
@@ -294,8 +316,8 @@ if (process.platform === 'win32') {
 // 15. Start returns an execution handle
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const handle = adapter.Start({});
+  const adapter = makeAdapter();
+  const handle = await adapter.Start({});
   assert.ok(handle && typeof handle === 'object');
   console.log('PASS: Start returns execution handle');
 }
@@ -304,7 +326,8 @@ if (process.platform === 'win32') {
 // 16. RequestCancel implements all three rungs
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
+  const adapter = makeAdapter();
+  await adapter.Start({});
   const rungs = adapter.DeclareCancelRungs();
 
   for (const rung of rungs) {

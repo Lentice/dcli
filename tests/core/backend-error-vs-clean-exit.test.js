@@ -12,8 +12,9 @@
 //      session missing from /session/status as "unknown" rather than finished,
 //      so the job was polled until the hard timeout instead.
 //
-// The adapter assertions stub _transportRequest by injection rather than
-// setting _testMode: the mapping under test lives below the test-mode guard.
+// The adapter assertions drive the production turn module through the
+// ticket-100 transport seam (scripted HTTP responses), not through mocks:
+// the mapping under test lives in the turn's reconciliation logic.
 const assert = require('node:assert');
 const { reduce } = require('../../core/reducer');
 
@@ -60,37 +61,85 @@ async function main() {
 // 2. A session absent from /session/status means the turn is over
 // ===========================================================================
 {
-  const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
-  const adapter = new OpencodeAdapter({ jobId: 'j1' });
-  adapter._sessionId = 'ses_1';
-  adapter._transportRequest = async () => ({});
+  const { OpencodeTurn } = require('../../adapters/opencode/turn');
+  const { FakeTransport } = require('../fixtures/fake-transport');
 
-  // Nothing has been sent yet: absence proves nothing.
-  assert.strictEqual(await adapter._fetchSessionStatus(), 'unknown',
-    'a session that was never prompted must not be reported as finished');
+  const FAST = {
+    pollIntervalMs: 0,
+    interactionPollMs: 1000000,
+    idleConfirmMs: 1,
+    unresolvedStatusLimitMs: 0,
+  };
 
-  // Prompt just sent, still inside the registration grace period.
-  adapter._promptSentAt = Date.now();
-  assert.strictEqual(await adapter._fetchSessionStatus(), 'unknown',
-    'a session that has not yet registered must not be reported as finished');
+  async function collect(transport, promptSentAt) {
+    const turn = new OpencodeTurn({ transport, buildPath: (ep) => ep, timings: FAST });
+    const facts = [];
+    for await (const fact of turn.run({
+      session: { id: 'ses_1', promptSentAt, backendPid: 7 },
+      policy: null,
+      deadline: null,
+    })) {
+      facts.push(fact);
+      if (fact.type === 'process_exited') break;
+    }
+    return { turn, facts };
+  }
+
+  // Nothing has been sent yet: absence proves nothing. A just-prompted session
+  // inside the registration grace period must not read as finished either —
+  // both are the "unresolved" bound, never an implicit idle.
+  for (const promptSentAt of [null, Date.now()]) {
+    const transport = new FakeTransport({
+      script: { '/session/status': {} },
+    });
+    const { facts } = await collect(transport, promptSentAt);
+    const err = facts.find(f => f.type === 'backend_error');
+    assert.ok(err, 'absence without grace must be bounded, not read as idle');
+    assert.strictEqual(err.class_hint, 'backend_status_unresolved');
+  }
 
   // Grace elapsed: absence now means the turn is over, which is the only way
   // the reconciliation loop ever terminates.
-  adapter._promptSentAt = Date.now() - 60000;
-  assert.strictEqual(await adapter._fetchSessionStatus(), 'idle',
-    'an absent session past the grace period must read as finished');
+  {
+    const transport = new FakeTransport({
+      script: {
+        '/session/status': {},
+        '/session/ses_1/message': {
+          parts: [
+            { id: 'p1', messageID: 'msg_1', type: 'text', text: 'finished' },
+            { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 5, input: 3, output: 2 } },
+          ],
+        },
+      },
+    });
+    const { turn, facts } = await collect(transport, Date.now() - 60000);
+    assert.ok(!facts.some(f => f.type === 'backend_error' && f.class_hint === 'backend_status_unresolved'),
+      'an absent session past the grace period must read as finished');
+    assert.strictEqual(turn.result.text, 'finished');
+  }
 
   // Having seen it live once is the strong signal and needs no grace period.
-  const seen = new OpencodeAdapter({ jobId: 'j2' });
-  seen._sessionId = 'ses_2';
-  let first = true;
-  seen._transportRequest = async () => {
-    if (first) { first = false; return { ses_2: { type: 'busy' } }; }
-    return {};
-  };
-  assert.strictEqual(await seen._fetchSessionStatus(), 'busy');
-  assert.strictEqual(await seen._fetchSessionStatus(), 'idle',
-    'a session observed live and then absent must read as finished');
+  {
+    const seq = [{ ses_1: { type: 'busy' } }, {}];
+    let i = 0;
+    const transport = new FakeTransport({
+      script: {
+        '/session/status': () => seq[Math.min(i++, seq.length - 1)],
+        '/session/ses_1/message': {
+          parts: [
+            { id: 'p1', messageID: 'msg_1', type: 'text', text: 'seen live' },
+            { id: 'p2', messageID: 'msg_1', type: 'step-finish', reason: 'stop', tokens: { total: 5, input: 3, output: 2 } },
+          ],
+        },
+      },
+    });
+    const { turn, facts } = await collect(transport, null);
+    const statuses = facts.filter(f => f.type === 'backend_status').map(f => f.state);
+    assert.ok(statuses.includes('busy'), 'the live busy status is observed');
+    assert.ok(!facts.some(f => f.type === 'backend_error' && f.class_hint === 'backend_status_unresolved'),
+      'a session observed live and then absent must read as finished');
+    assert.strictEqual(turn.result.text, 'seen live');
+  }
 
   console.log('PASS: absent session status maps to idle, guarded');
 }
@@ -99,36 +148,73 @@ async function main() {
 // 3. The error on a failed assistant message is found
 // ===========================================================================
 {
-  const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
-  const adapter = new OpencodeAdapter({ jobId: 'j1' });
+  const { OpencodeTurn } = require('../../adapters/opencode/turn');
+  const { FakeTransport } = require('../fixtures/fake-transport');
 
-  const msgs = [
-    { info: { id: 'm1', role: 'user' }, parts: [{ type: 'text', text: 'hi' }] },
-    {
-      info: {
-        id: 'm2', role: 'assistant',
-        error: { name: 'APIError', data: { message: 'region locked', statusCode: 403 } },
+  async function collectWithMessages(messages) {
+    const transport = new FakeTransport({
+      script: {
+        '/session/status': { ses_1: { type: 'idle' } },
+        '/session/ses_1/message': messages,
+        '/permission': [],
+        '/question': [],
       },
-      parts: [],
-    },
-  ];
-  const found = adapter._findMessageError(msgs);
-  assert.ok(found, 'a message carrying info.error must be found');
-  assert.strictEqual(found.message, 'region locked');
-  assert.strictEqual(found.statusCode, 403);
-  assert.strictEqual(found.name, 'APIError');
-  assert.strictEqual(found.class_hint, 'provider_error');
+    });
+    const turn = new OpencodeTurn({
+      transport,
+      buildPath: (ep) => ep,
+      timings: { pollIntervalMs: 0, interactionPollMs: 1000000, idleConfirmMs: 1 },
+    });
+    const facts = [];
+    for await (const fact of turn.run({
+      session: { id: 'ses_1', promptSentAt: Date.now(), backendPid: 7 },
+      policy: null,
+      deadline: null,
+    })) {
+      facts.push(fact);
+      if (fact.type === 'process_exited') break;
+    }
+    return { turn, facts };
+  }
 
-  assert.strictEqual(adapter._findMessageError([{ info: { id: 'm1' }, parts: [] }]), null,
-    'a clean transcript must not report an error');
-  assert.strictEqual(adapter._findMessageError(null), null);
+  // A message carrying info.error surfaces as backend_error, not silence.
+  {
+    const { facts } = await collectWithMessages([
+      { info: { id: 'm1', role: 'user' }, parts: [{ type: 'text', text: 'hi' }] },
+      {
+        info: {
+          id: 'm2', role: 'assistant',
+          error: { name: 'APIError', data: { message: 'region locked', statusCode: 403 } },
+        },
+        parts: [],
+      },
+    ]);
+    const err = facts.find(f => f.type === 'backend_error');
+    assert.ok(err, 'a message carrying info.error must be emitted as backend_error');
+    assert.strictEqual(err.structured_payload.message, 'region locked');
+    assert.strictEqual(err.structured_payload.status_code, 403);
+    assert.strictEqual(err.structured_payload.name, 'APIError');
+    assert.strictEqual(err.class_hint, 'provider_error');
+  }
+
+  // A clean transcript must not report an error.
+  {
+    const { facts } = await collectWithMessages([
+      { info: { id: 'm1', role: 'user' }, parts: [{ type: 'text', text: 'hi' }] },
+      { info: { id: 'm2', role: 'assistant' }, parts: [{ type: 'text', text: 'ok' }] },
+    ]);
+    assert.ok(!facts.some(f => f.type === 'backend_error' && f.class_hint === 'provider_error'),
+      'a clean transcript must not report an error');
+  }
 
   // A credits failure keeps its more specific class.
-  const credits = adapter._findMessageError([{
-    info: { id: 'm1', error: { name: 'CreditsError', data: { message: 'out of credits' } } },
-    parts: [],
-  }]);
-  assert.strictEqual(credits.class_hint, 'quota_or_rate_limit');
+  {
+    const { facts } = await collectWithMessages([
+      { info: { id: 'm1', error: { name: 'CreditsError', data: { message: 'out of credits' } } }, parts: [] },
+    ]);
+    const err = facts.find(f => f.type === 'backend_error');
+    assert.strictEqual(err.class_hint, 'quota_or_rate_limit');
+  }
 
   console.log('PASS: message-level error is surfaced');
 }
