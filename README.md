@@ -139,11 +139,20 @@ that are. Records are per repository, so read a job with the same `--repo` you s
   reports `ok`, `coverage`, and `live_smoke_timeout_sec` in its JSON envelope. Use
   `--live-smoke-timeout-sec 0` only for an explicit static-only check; the output reports that reduced coverage.
 
-## One thing it deliberately does not promise
+## Two things it deliberately does not promise
 
-**Running jobs do not survive a wrapper crash.** If the controlling process dies, the job's process tree is killed
-and the attempt is marked `interrupted`; `resume` then starts a *new* attempt from durable inputs. The alternative
-would require a reconnectable process supervisor, and that complexity was judged worse than the honest limitation.
+**Running jobs do not survive a wrapper crash.** If the controlling process dies, the attempt is marked
+`interrupted`; `resume` then starts a *new* attempt from durable inputs, and never reattaches to a running backend.
+The alternative would require a reconnectable process supervisor, and that complexity was judged worse than the
+honest limitation.
+
+**A budget bounds the wrapper's wait, not the backend's process tree.** `--hard-timeout-sec` and `--timeout-sec`
+both bound what *dcli* does: the attempt is ended, the record is written, and control returns to you. dcli does not
+currently contain the backend's process tree, so a backend that ignores cancellation — or a tool it spawned — can
+outlive the job that started it. The record says so rather than claiming otherwise: a hard timeout writes
+`kill_skipped: "not_contained"`, and a cancel whose rungs all fail records
+`cancel_rung_reached: "containment_unavailable"`. Neither ever reports a kill that did not happen. If a job matters
+enough that a survivor would be a problem, check for one before re-running it.
 
 ## Documentation
 

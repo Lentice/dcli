@@ -461,6 +461,71 @@ stable identifier for a new meaning, even if the old meaning appears obsolete.**
 
 ---
 
+## ADR-010 — Termination is a declared capability ladder, not a guarantee
+
+**Status:** accepted 2026-08-10. **Supersedes** the all-or-nothing framing of §14's 2026-08-02 amendment
+and of ticket 78. Does **not** supersede ADR-003, ADR-007 or ADR-008 — the Job Object remains the top rung,
+the adapter still declares the cancel rungs, and the guardian model is unchanged.
+
+**The problem.** Ticket 78 posed containment as one binary choice: wire the native Job Object helper, or
+have nothing. It was closed unimplemented because the helper discards stdin data while codex and claude
+deliver the prompt on the child's stdin. The decision to close was correct on its evidence. Its *shape* was
+not: a single closed ticket became the repository's only record of a standing architectural position, so the
+question is re-opened by every architecture review that reads the code. It was re-proposed on 2026-08-10 by
+one of three independent reviewers, which is the evidence that a closed ticket cannot carry this weight.
+
+Meanwhile the framing hid two cheaper mechanisms behind the expensive one:
+
+- **Unix process groups are unimplemented and unblocked.** §14 already specifies them. The adapters spawn the
+  backend without `detached: true` and terminate it with `child.kill('SIGKILL')`, which reaches the direct
+  child only. `detached: true` plus `process.kill(-pgid)` is a real guarantee on that platform, and the
+  native helper has nothing to do with it.
+- **Verified descendant enumeration plus `taskkill /T /F` is already sanctioned** by §14 as the Windows
+  fallback when Job Object assignment fails. Ticket 78's line "a pid-based tree kill is not an alternative"
+  is a narrower claim than it reads: it is about the *helper's* `terminate` command, which acts solely on the
+  Job Object that helper instance created. It is not an argument against dcli performing its own walk.
+
+**Decision.** Termination is a ladder. Each platform occupies a declared rung; the rung is recorded in the
+job record; a rung is climbed only when its mechanism exists and is tested.
+
+| Rung | Mechanism | Guarantee | Record |
+|---|---|---|---|
+| 0 — none | direct-child `SIGKILL` only | none for descendants | `kill_skipped: 'not_contained'` |
+| 1 — process group (Unix) | `detached: true`, `SIGTERM` → grace → `SIGKILL` to the group | the group dies | `containment.kind: 'process-group'`, `degraded: false` |
+| 2 — degraded tree kill (Windows) | verified descendant enumeration + `taskkill /T /F`, against the exact enumerated pid set | best effort, survivors named | `containment.degraded: true`, survivors reported |
+| 3 — Job Object (Windows) | ADR-003's helper, kill-on-close | the tree dies, including on controller death | `containment.kind: 'job-object'`, `degraded: false` |
+
+Rung 3 stays the target. Rungs 1 and 2 are not consolation prizes: rung 1 is a full guarantee on its
+platform, and rung 2 buys most of the *outcome* of rung 3 at a fraction of the cost, while being honest that
+it does not buy the *proof*.
+
+**The line that does not move.** A rung may never report a kill it did not achieve. Rung 2 in particular
+introduces a mechanism that *could* claim success it cannot verify — a descendant spawned between
+enumeration and termination escapes, and pid reuse is reduced by `pid + creation time + image path` but never
+disproved (ADR-008). So rung 2 must verify against its own enumerated set and report the survivors, ending in
+exit 21 with a named survivor set rather than a clean cancellation. Reporting uncertainty is always
+preferable to reporting a kill. This is the rule §14's 2026-08-02 amendment established — `kill_skipped:
+'not_contained'` and `cancel_rung_reached: 'containment_unavailable'` exist precisely so rung 0 never lies —
+and it is the only reason the current rung-0 state is defensible at all.
+
+**Why this order.** Rung 1 costs one spawn option and one signal call, and §18 makes cross-platform a
+requirement rather than a hypothetical. Rung 2 is bounded work in the wrapper with no native protocol
+involved. Rung 3 requires designing stdin forwarding and a bounded EOF drain into the helper's protocol —
+a native-code project whose entire payoff is a proof on one platform. Climbing from the bottom delivers most
+of the value long before that cost is paid, and each rung is independently shippable and independently
+honest.
+
+**Consequences.**
+
+- User documentation states the non-guarantee where the budgets are described, not only in the spec.
+- Proposing containment work means proposing a specific rung with its evidence, not re-opening "should we
+  have containment".
+- **Rung 3 is reopened only on evidence**: rung 2 shipped, and observed survivors in practice that rung 2
+  could not reach. Absent that evidence, ticket 78's closure stands and this ADR is the answer to anyone who
+  proposes reversing it.
+
+---
+
 ## Amendments
 
 ### ADR-002 amendment (2026-07-28)

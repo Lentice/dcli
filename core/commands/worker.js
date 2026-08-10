@@ -288,8 +288,9 @@ async function main() {
   // backend with a plain `spawn`, so the tree is not inside a Job Object, and the native
   // helper can only terminate a Job Object it created itself (see core/containment.js).
   // Recording an escalation we did not perform is the failure mode AGENTS.md Mistake #5
-  // describes, so we record that the kill was skipped and why. Ticket 78 removes the
-  // limitation by containing the tree at spawn time; then this becomes context.terminate().
+  // describes, so we record that the kill was skipped and why. Ticket 78 (contain the tree in
+  // a Job Object at spawn time) is closed unimplemented; ADR-010 replaces it with a capability
+  // ladder, and tickets 102/103 raise this site to a rung that can actually terminate a tree.
   hardTimeoutTimer = setTimeout(async () => {
     hardTimedOut = true;
     await requestCancelRungs();

@@ -2,8 +2,9 @@
 
 Date: 2026-07-28. Status: implemented: core commands, lifecycle/state contracts, worktree/review/apply,
 resume lineage, all three adapters, generated integration, installer, redaction, admission, and bounded test
-runner. Ticket 78 is closed by decision and remains an explicit limitation: containment is specified but not
-wired into production adapter launches.
+runner. Containment is specified but not wired into production adapter launches: ticket 78 (the Job Object
+path) is closed by decision, and **ADR-010** replaces it with a declared capability ladder — see §14's
+2026-08-10 amendment before relying on any termination guarantee.
 Companion documents: [CLI study](reference/opencode-study.md) (cited *study §n*),
 [ADRs](architecture-decisions.md) (cited *ADR-n*),
 [engineering notes](engineering/).
@@ -676,11 +677,22 @@ recorded here so timeout and cancellation promises are not overstated:
   `containment.degraded` record, and the fail-closed rule are all **specified but absent**.
 - A Job Object cannot adopt an already-running tree, and the native helper's protocol has no
   terminate-by-pid command (only `spawn` and `terminate`, the latter acting solely on the Job Object that
-  helper instance created). So the gap cannot be closed from the `cancel`/`worker` side — the tree must be
-  contained at spawn time. That is **ticket 78**, blocked on the native helper's stdin/EOF protocol.
-- Until then, the honest record is the contract: a hard timeout writes `kill_skipped: 'not_contained'` on the
-  `timed_out` detail, and an all-rungs-failed cancel records `cancel_rung_reached: 'containment_unavailable'`
-  rather than reusing the adapter rung name `hard_kill`. Neither ever reports a kill that did not happen.
+  helper instance created). So the *Job Object* gap cannot be closed from the `cancel`/`worker` side — the
+  tree must be contained at spawn time. That was **ticket 78**, which is **closed, not implemented**: the
+  helper discards stdin data while codex and claude deliver the prompt on the child's stdin, so routing
+  them through it would hang.
+- Until a mechanism lands, the honest record is the contract: a hard timeout writes
+  `kill_skipped: 'not_contained'` on the `timed_out` detail, and an all-rungs-failed cancel records
+  `cancel_rung_reached: 'containment_unavailable'` rather than reusing the adapter rung name `hard_kill`.
+  Neither ever reports a kill that did not happen.
+
+### Amendment 2026-08-10 — termination is a declared capability ladder
+
+**ADR-010** supersedes the all-or-nothing framing above. Containment is not one switch that is either wired
+or absent: each platform occupies a rung, the rung is declared in the job record, and a rung is climbed only
+when the mechanism for it exists and is tested. The Job Object path in this section remains the top rung and
+the eventual target; it is no longer the only thing that counts as containment. Read ADR-010 before
+proposing containment work — it records why the intermediate rungs come first.
 
 ---
 

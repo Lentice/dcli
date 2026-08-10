@@ -144,6 +144,23 @@ observed condition — not a theoretical one. So:
   An unbounded wait once consumed an entire working session while the backend's
   result had been sitting complete for minutes.
 
+## A budget bounds the wrapper, not the backend
+
+`--hard-timeout-sec` and `--timeout-sec` bound what **dcli** does — they end the
+attempt, write the record, and return control to you. dcli does not currently
+contain the backend's process tree, so a backend that ignores cancellation, or a
+tool the backend spawned, can outlive the job that started it.
+
+The record states this rather than claiming otherwise:
+
+- A hard timeout writes `kill_skipped: "not_contained"` on the `timed_out` detail.
+- A cancel whose declared rungs all fail records
+  `cancel_rung_reached: "containment_unavailable"` — never the rung name `hard_kill`.
+
+So: exit 24 and exit 21 mean the wrapper stopped waiting and recorded honestly,
+not that a process was killed. If a survivor would be a problem — it holds a lock,
+a port, or a worktree — check for one before re-running the job.
+
 ## Cancelling and cleaning up
 
 - **Preview before deleting.** Run `cleanup --dry-run` first and read what it
@@ -185,7 +202,7 @@ adopt an unverified finding to close the loop.
 | 21 | Cancellation unconfirmed | Check job status manually. |
 | 22 | Session expired | Start a fresh job with `fork_from_artifacts` or `retry_attempt`. |
 | 23 | Repo/worktree preparation failure | Check repo health, run `doctor`. |
-| 24 | Hard timeout | Process tree killed. Increase `--hard-timeout-sec` if the task legitimately needs more time. |
+| 24 | Hard timeout | The execution budget elapsed and the attempt was ended. The backend's process tree is **not** guaranteed to be dead — see "A budget bounds the wrapper, not the backend" below. Increase `--hard-timeout-sec` if the task legitimately needs more time. Never retry unchanged. |
 | 25 | Apply conflict | Main repo verified restored. Resolve and retry. |
 | 26 | Protocol incompatible | Requires a compatibility update. Run `doctor`. |
 
