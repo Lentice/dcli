@@ -3,6 +3,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { resolveDeadline } = require('../deadlines');
 const { isAvailable, resolveHelperPath } = require('../containment');
+const { failureClassToExitCode } = require('../failure-class');
 
 const PROBE_TIMEOUT_MS = 10000;
 
@@ -134,14 +135,7 @@ function classifySmokeFailure(err) {
 }
 
 function smokeExitCode(failureClass) {
-  return {
-    environment: 12,
-    authentication: 13,
-    quota_or_rate_limit: 14,
-    permission_or_sandbox: 15,
-    network_error: 16,
-    protocol: 26,
-  }[failureClass] || 12;
+  return failureClassToExitCode(failureClass) ?? 12;
 }
 
 async function probeContainmentHelper() {

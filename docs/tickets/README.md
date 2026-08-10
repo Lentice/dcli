@@ -47,7 +47,6 @@ recommended order.
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
 | [92 — one attempt driver](92-one-attempt-driver.md) | ready | — | The detached worker and the foreground path stop being two copies of one algorithm; closes four verified behaviour divergences, including that `dcli cancel` does not reach a foreground `run` |
-| [93 — one failure-class table](93-one-failure-class-exit-code-table.md) | ready | — | The class ↔ exit-code mapping exists three times (`commands/index.js`, `doctor.js`, `reducer.js`); one module owns both directions |
 | [94 — `submit --mode` ignored](94-submit-mode-is-silently-ignored.md) | ready | — | `submit --mode implement` is validated, accepted, and silently run in `run` mode; honour it or reject with exit `2` |
 | [95 — one job-creation preamble](95-one-job-creation-preamble.md) | ready | — | `run`/`resume`/`submit` write the same acquire-or-release-everything setup three times; `openAttempt()` owns it |
 | [96 — job-store owns scanning](96-job-store-owns-record-scanning.md) | ready | — | Four commands reach into `store._stateRoot`; three rebuild the jobs walk and disagree on what exit `17` means |
@@ -80,6 +79,7 @@ recommended order.
 | [91 — headless containment test](91-containment-test-headless-safe.md) | **done** (2026-08-09) | — | Keep containment coverage reliable and explicit without a desktop dependency |
 | [105 — the suite is not reliably green](105-full-suite-is-not-reliably-green.md) | **done** (2026-08-10) | — | Misleading `ETIMEDOUT`-as-crash diagnostics fixed, load-sensitive internal budgets derived from the runner's cap, near-cap runs reported; default concurrency kept — green on ten consecutive runs |
 | [104 — generate this table](104-generate-the-ticket-tracker.md) | done | — | The tracker's own documented trigger fired at more than ten open tickets; ticket files become the source of status, with a regenerate-and-compare gate in `npm run check` |
+| [93 — one failure-class table](93-one-failure-class-exit-code-table.md) | done | — | The class ↔ exit-code mapping exists three times (`commands/index.js`, `doctor.js`, `reducer.js`); one module owns both directions |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

@@ -3,6 +3,7 @@ const path = require('path');
 const { isJobId } = require('../job-id');
 const { resolveDeadline } = require('../deadlines');
 const { parseDuration } = require('./cleanup');
+const { classifyTerminalFailure, terminalExitCode, NO_RESULT_BYTE_THRESHOLD } = require('../failure-class');
 
 /**
  * Load a job's status, or throw the canonical exit-3 "not found" error.
@@ -111,12 +112,6 @@ const COMMANDS = new Set(['run', 'submit', 'status', 'wait', 'read', 'list', 'ca
 
 const { KNOWN_BACKENDS } = require('../../adapters/registry');
 
-// Threshold below which a non-zero-exit result is treated as "no usable
-// result produced" (the backend emitted only a few dozen bytes of
-// "I'll dispatch..." boilerplate before exiting 1). Conservative: every real review/analysis result observed in
-// production is well above this size.
-const NO_RESULT_BYTE_THRESHOLD = 512;
-
 // Advisory patterns for prompts that ask for tool dispatch a read-only job
 // cannot satisfy (subagent / Task tool / file writes). Conservative — only
 // verb-led constructions of the direct object ("dispatch a subagent",
@@ -127,59 +122,6 @@ const ACCESS_HINT_PATTERNS = [
   /\btask\s+tool\b/i,
   /\b(?:write|create|edit|modify|delete|remove)\s+(?:a\s+|the\s+|some\s+)?file\b/i,
 ];
-
-/**
- * Derive the journal-ready failure_reason / failure for a terminal attempt
- * from the reducer's projection plus a byte-size heuristic. When the reducer
- * already supplied a failure_reason (e.g. 'hard_timeout'), it is preserved —
- * the no-result heuristic only fills in for otherwise-unexplained non-zero
- * exits with an unusably small result.
- *
- * @param {{ exitCode:number|null, resultBytes:number, reducerResult:Object }} args
- * @returns {{ failure_reason:string|null, failure:Object|null }}
- */
-function classifyTerminalFailure({ exitCode, resultBytes, reducerResult, resultStatus }) {
-  const failure_reason = (reducerResult && reducerResult.failure_reason) || null;
-  const failure = (reducerResult && reducerResult.failure) || null;
-  // A hard kill commonly races the result-file write. Preserve an intentional
-  // cancellation instead of relabelling it as a backend artifact failure.
-  if (reducerResult && (reducerResult.state === 'cancelled' || reducerResult.state === 'timed_out')) {
-    return { failure_reason, failure };
-  }
-  if (typeof resultBytes === 'number' && resultBytes > 0) {
-    return { failure_reason, failure };
-  }
-  // The adapter could not read back the result the backend was told to write.
-  // A backend that exits 0 having produced nothing is not a clean run, and
-  // reporting it as one is the "a failure must never read as a clean result"
-  // defect: the caller gets `done` with an empty result and no reason.
-  if (resultStatus === 'missing') {
-    return {
-      failure_reason: failure_reason || 'result_missing',
-      failure: failure || { class: 'artifact_persistence', message: 'Backend produced no result file' },
-      terminalState: 'failed',
-    };
-  }
-  if (exitCode && exitCode !== 0 &&
-      typeof resultBytes === 'number' && resultBytes < NO_RESULT_BYTE_THRESHOLD) {
-    if (!failure_reason) return { failure_reason: 'backend_exited_no_result', failure };
-  }
-  return { failure_reason, failure };
-}
-
-const FAILURE_EXIT_CODES = Object.freeze({
-  authentication: 13,
-  quota_or_rate_limit: 14,
-  permission_or_sandbox: 15,
-  network_error: 16,
-});
-
-function terminalExitCode(state, failure, failureReason) {
-  if (state === 'done' || state === 'interrupted' || state === 'cancelled') return 0;
-  if (failureReason === 'hard_timeout') return 24;
-  if (failureReason === 'result_persistence_failed') return 11;
-  return FAILURE_EXIT_CODES[(failure && (failure.class || failure.class_hint)) || failureReason] || 1;
-}
 
 /**
  * Cheap advisory check: if no --access was supplied (default is read-only) and

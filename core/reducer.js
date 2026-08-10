@@ -14,6 +14,7 @@
 
 const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
 const STREAM_CLOSED_ERROR_REASONS = new Set(['sse_disconnect', 'interaction_reject_failed', 'finalization_error']);
+const { exitCodeToFailureClass } = require('./failure-class');
 
 /**
  * Engine-owned lifecycle reducer. Takes current state + adapter facts + durable
@@ -186,12 +187,7 @@ function reduce(state, facts, evidence) {
         ? ev.sentinelExitCode
         : ev.commandExitCode;
       const lostResult = ev.sentinelState === 'failed' && sentinelExitCode === null;
-      const failureClass = {
-        13: 'authentication',
-        14: 'quota_or_rate_limit',
-        15: 'permission_or_sandbox',
-        16: 'network_error',
-      }[sentinelExitCode] || null;
+      const failureClass = exitCodeToFailureClass(sentinelExitCode);
       return {
         state: ev.sentinelState,
         phase: 'terminal',

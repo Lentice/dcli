@@ -1,6 +1,6 @@
 # 93 — One table owns failure class ↔ exit code; today there are three
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Correctness of a binding, append-only contract. The exit-code mapping is what agent callers
 branch on, and it is currently three unconnected constant tables that must be kept in sync by hand.
@@ -181,4 +181,50 @@ ticket 93: one module owns failure class to exit code
 
 ## Notes
 
-(Left empty by the author.)
+**The three tables, side by side, before any change:**
+
+| Class | `commands/index.js` | `commands/doctor.js` | `reducer.js` | Agree? |
+|---|---|---|---|---|
+| `environment` | — | `12` | — | doctor-only |
+| `authentication` | `13` | `13` | `13` | ✓ |
+| `quota_or_rate_limit` | `14` | `14` | `14` | ✓ |
+| `permission_or_sandbox` | `15` | `15` | `15` | ✓ |
+| `network_error` | `16` | `16` | `16` | ✓ |
+| `protocol` | — | `26` | — | doctor-only |
+
+Every entry the three share agrees exactly. `doctor.js` carries two extra entries — `environment: 12` and
+`protocol: 26` — that the other two do not; both are real contract values from `design-spec.md` §7, so per
+the ticket they were brought into the shared table as the union, not dropped. No disagreement anywhere, so
+there was no winner to pick.
+
+**The shared table (`core/failure-class.js`)** is the union:
+
+```js
+FAILURE_CLASS_TO_EXIT_CODE = Object.freeze({
+  environment: 12, authentication: 13, quota_or_rate_limit: 14,
+  permission_or_sandbox: 15, network_error: 16, protocol: 26,
+});
+```
+
+`FAILURE_CLASSES`, `failureClassToExitCode`, `exitCodeToFailureClass`, and the inverse map are all derived
+from that one literal, so the two directions cannot disagree.
+
+**Discoveries:**
+
+- `smokeExitCode()`'s `|| 12` fallback for an unknown class was preserved as
+  `failureClassToExitCode(cls) ?? 12` — `classifySmokeFailure` only ever yields one of the six known
+  classes, so the fallback is defensive, and `doctor.test.js:281` still pins environment → 12.
+- `NO_RESULT_BYTE_THRESHOLD` (512) lived in `commands/index.js` and is referenced inside
+  `classifyTerminalFailure`; it moved into `failure-class.js` and is re-exported from `commands/index.js`
+  so the public export (imported by `tests/core/backend-failure-reason.test.js`) is unchanged.
+- `terminalExitCode`'s lookup previously covered only 13–16; with the union table, `environment` and
+  `protocol` now map to 12/26 where they used to fall through to `|| 1`. No adapter emits those classes in
+  the job path today (opencode's `_classifyBackendError` emits only `quota_or_rate_limit`), and no existing
+  test pins them through `terminalExitCode`, so this is a latent contract fix, not a test break. The
+  reducer's inverse map gains `12`/`26` entries too; a worker completion sentinel can only carry codes
+  `terminalExitCode` itself publishes (0/1/11/24/13/14/15/16), so no behavior change there.
+- The re-export from `core/commands/index.js` is intentionally left in place for one commit —
+  `attempt.js`, `worker.js`, and the test suite import `classifyTerminalFailure` / `terminalExitCode` from
+  `./index`. Ticket 98 owns removing it.
+- Round-trip proof lives in the new `tests/core/failure-class.test.js`; no existing test's expected exit
+  code was edited (`git diff --stat -- tests/` is empty apart from the added file).
