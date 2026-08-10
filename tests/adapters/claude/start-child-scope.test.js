@@ -1,9 +1,9 @@
 // @suite quick
-// Covers the non-test-mode Start() path in adapters/claude/adapter.js.
+// Covers the real Start() path in adapters/claude/adapter.js.
 //
-// Every adapter's Start() opens with `if (this._testMode) { ...; return }`, and
-// every existing adapter test sets _testMode, so the 80 lines below that guard
-// were executed by nothing in the suite. That blind spot is what let a
+// The adapter used to open Start() with `if (this._testMode) { ...; return }`,
+// and every adapter test set _testMode, so the code below that guard was
+// executed by nothing in the suite. That blind spot is what let a
 // `ReferenceError: child is not defined` ship in the codex adapter and break
 // every job. This test walks the real spawn path so the same class of defect
 // cannot reach a release here.
@@ -47,7 +47,7 @@ async function main() {
 // ===========================================================================
 {
   const { ClaudeAdapter } = require('../../../adapters/claude/adapter');
-  const adapter = new ClaudeAdapter({ _testMode: false, _mockVersion: '2.1.220' });
+  const adapter = new ClaudeAdapter({});
 
   const { result, error } = await startWithStubBinary(adapter);
 
@@ -92,7 +92,7 @@ async function main() {
 // ===========================================================================
 {
   const { ClaudeAdapter } = require('../../../adapters/claude/adapter');
-  const adapter = new ClaudeAdapter({ _testMode: false, _mockVersion: '2.1.220' });
+  const adapter = new ClaudeAdapter({});
 
   const parentWorkerBefore = process.env.DCLI_WORKER;
   const { error } = await startWithStubBinary(adapter, { DCLI_DEPTH: '2' });

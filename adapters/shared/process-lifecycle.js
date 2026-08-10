@@ -13,8 +13,9 @@
  *
  * Required instance fields: _facts, _liveFactsResolve, _exitResolve,
  * _observedExited, _childProcess, _cancelled, _cancelRungReached,
- * _stdoutClosed, _stderrClosed, _drainTimedOut, _mockExitCode.
+ * _stdoutClosed, _stderrClosed, _drainTimedOut.
  */
+const { spawn } = require('node:child_process');
 
 // How often a parked live-fact drain re-checks its own terminal condition.
 // This bound is not a performance knob: the timer behind it is the only refed
@@ -25,6 +26,21 @@ const LIVE_DRAIN_RECHECK_MS = 250;
 const POST_EXIT_DRAIN_MS = 3000;
 
 const methods = {
+  /**
+   * The one seam at the process boundary. A test overrides this on the adapter
+   * instance with a scripted fake child (an EventEmitter carrying stdout/stderr
+   * streams, a pid and a kill()) so that everything downstream — stream
+   * framing, the drain, exit ordering, fact classification — runs for real.
+   * The default is the adapter's own spawn call: the options the adapter
+   * assembled in Start() are handed through verbatim, never re-derived here.
+   *
+   * @param {{ command: string, args: string[], options: object }} invocation
+   * @returns {import('node:child_process').ChildProcess}
+   */
+  _spawn(invocation) {
+    return spawn(invocation.command, invocation.args, invocation.options);
+  },
+
   DeclareCancelRungs() {
     return ['hard_kill'];
   },
@@ -130,7 +146,6 @@ const methods = {
   },
 
   _resolveExitCode() {
-    if (this._mockExitCode !== null) return this._mockExitCode;
     const facts = this._facts || [];
     for (let i = facts.length - 1; i >= 0; i--) {
       if (facts[i].type === 'process_exited') {

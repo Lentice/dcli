@@ -1,4 +1,3 @@
-const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -174,20 +173,7 @@ function buildArgv(opts) {
 }
 
 class CodexAdapter {
-  /**
-   * @param {object} [options]
-   * @param {boolean} [options._testMode]
-   * @param {string} [options._mockVersion]
-   * @param {Array} [options._mockFacts]
-   * @param {number} [options._mockExitCode]
-   */
-  constructor(options) {
-    const opts = options || {};
-    this._testMode = !!opts._testMode;
-    this._mockVersion = opts._mockVersion || null;
-    this._mockFacts = opts._mockFacts || [];
-    this._mockExitCode = opts._mockExitCode !== undefined ? opts._mockExitCode : null;
-
+  constructor() {
     this._childProcess = null;
     this._processPid = null;
     this._facts = [];
@@ -230,7 +216,6 @@ class CodexAdapter {
   // -----------------------------------------------------------------------
 
   DetectVersion() {
-    if (this._testMode) return this._mockVersion || '0.145.0';
     if (this._detectedVersion) return this._detectedVersion;
 
     const codexPath = resolveCodexPath();
@@ -293,12 +278,6 @@ class CodexAdapter {
   }
 
   async Start(attempt) {
-    if (this._testMode) {
-      this._processPid = 42;
-      this._facts = [...this._mockFacts];
-      return { handle: 'codex-test-handle' };
-    }
-
     // Create temp directory for result file
     this._tmpDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-'));
 
@@ -337,13 +316,17 @@ class CodexAdapter {
         cwd: workDir,
       });
 
-      child = spawn(invocation.command, invocation.args, {
-        cwd: invocation.cwd,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: invocation.windowsHide,
-        // Forward the invocation's own value: it is the single source of truth
-        // for how its command line is quoted (adapters/codex/cmd-quoting.js).
-        windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+      child = this._spawn({
+        command: invocation.command,
+        args: invocation.args,
+        options: {
+          cwd: invocation.cwd,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: invocation.windowsHide,
+          // Forward the invocation's own value: it is the single source of truth
+          // for how its command line is quoted (adapters/codex/cmd-quoting.js).
+          windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+        },
       });
 
       this._childProcess = child;
@@ -402,8 +385,6 @@ class CodexAdapter {
   }
 
   async SendPrompt(attempt, prompt) {
-    if (this._testMode) return;
-
     if (!this._childProcess || !this._childProcess.stdin) {
       throw new Error('Cannot send prompt: no child process');
     }
@@ -417,13 +398,6 @@ class CodexAdapter {
   }
 
   async *Observe(attempt) {
-    if (this._testMode) {
-      for (const fact of this._mockFacts) {
-        yield { ...fact };
-      }
-      return;
-    }
-
     yield* this._drainLiveQueue();
 
     await this._waitForExit();
@@ -494,21 +468,6 @@ class CodexAdapter {
 
   CollectResult(attempt) {
     if (this._collectedResult) return this._collectedResult;
-
-    if (this._testMode) {
-      let lastText = '';
-      let usage = { input: 0, output: 0, total: 0 };
-      let backendSessionId = null;
-
-      for (const f of this._mockFacts) {
-        if (f.type === 'assistant_text') lastText = f.text;
-        if (f.type === 'usage_reported' && f.tokens) usage = { ...f.tokens };
-        if (f.type === 'started' && f.backend_session_id) backendSessionId = f.backend_session_id;
-      }
-
-      this._collectedResult = { text: lastText, usage, backend_session_id: backendSessionId };
-      return this._collectedResult;
-    }
 
     // Read the --output-last-message file
     if (this._resultFilePath) {
@@ -588,7 +547,6 @@ class CodexAdapter {
   // -----------------------------------------------------------------------
 
   async LiveSmoke(timeoutMs) {
-    if (this._testMode) return;
     const codexPath = resolveCodexPath();
     if (!codexPath) {
       throw new Error('codex executable not found');
@@ -628,7 +586,6 @@ class CodexAdapter {
   }
 
   async LiveSmokeRequest(timeoutMs, repoPath) {
-    if (this._testMode) return;
     return runAdapterSmoke(this, repoPath);
   }
 

@@ -21,7 +21,7 @@ async function main() {
 {
   const { CodexAdapter } = require('../../../adapters/codex/adapter');
 
-  const adapter = new CodexAdapter({ _testMode: false, _mockVersion: '0.145.0' });
+  const adapter = new CodexAdapter({});
 
   // Use a cmd.exe path as CODEX_PATH to avoid PATH resolution
   const savedPath = process.env.CODEX_PATH;
@@ -67,7 +67,7 @@ async function main() {
 // ===========================================================================
 {
   const { CodexAdapter } = require('../../../adapters/codex/adapter');
-  const adapter = new CodexAdapter({ _testMode: false, _mockVersion: '0.145.0' });
+  const adapter = new CodexAdapter({});
 
   // Directly test the cleanup: create temp dir, then simulate sync failure
   adapter._tmpDirPath = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-'));
@@ -91,7 +91,7 @@ async function main() {
 // ===========================================================================
 {
   const { CodexAdapter } = require('../../../adapters/codex/adapter');
-  const adapter = new CodexAdapter({ _testMode: false, _mockVersion: '0.145.0' });
+  const adapter = new CodexAdapter({});
   adapter._tmpDirPath = null;
   assert.doesNotThrow(() => adapter.Dispose({}));
   console.log('PASS: Dispose safe when no temp dir was created');

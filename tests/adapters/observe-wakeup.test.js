@@ -10,10 +10,10 @@
 // `for await` — no result, no error. `dcli-codex run` returned exit 0 with zero
 // bytes on both streams.
 //
-// These tests must not take the `_testMode` short-circuit: `Observe()` returns
-// the mock facts and returns before reaching `_drainLiveQueue` at all, so a
-// test-mode test cannot see this class of defect (AGENTS.md, "a mocked-out path
-// is an uncovered path").
+// These tests drive a real child (a silent .cmd fixture) so the missed-wake-up
+// path runs for real: `Observe()` reaches `_drainLiveQueue` and the exit
+// handlers, which is the code where this defect lived (AGENTS.md, "a mocked-out
+// path is an uncovered path").
 //
 // Every wait below is bounded by the test itself, so a regression fails loudly
 // with a named assertion instead of hanging the suite.
@@ -73,13 +73,12 @@ async function runRealObserve({ AdapterClass, pathEnvVar, exitCode }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-t79-'));
   const fixture = writeSilentFixture(tmp, exitCode);
 
-  const adapter = new AdapterClass({ _testMode: false, _mockVersion: '0.145.0' });
+  const adapter = new AdapterClass({});
   const saved = process.env[pathEnvVar];
   process.env[pathEnvVar] = fixture;
 
   try {
     await adapter.Start({});
-    assert.strictEqual(adapter._testMode, false, 'this test must not take the _testMode short-circuit');
     await adapter.SendPrompt({}, 'Reply with exactly PONG.');
     return await collectFacts(adapter, OBSERVE_BUDGET_MS);
   } finally {
@@ -129,7 +128,7 @@ for (const spec of [
   { name: 'claude', mod: '../../adapters/claude/adapter', cls: 'ClaudeAdapter' },
 ]) {
   const AdapterClass = require(spec.mod)[spec.cls];
-  const adapter = new AdapterClass({ _testMode: false });
+  const adapter = new AdapterClass({});
 
   // Drive _drainLiveQueue directly: no child, so nothing can wake it but the
   // bounded re-check the fix must introduce.

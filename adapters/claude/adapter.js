@@ -1,4 +1,3 @@
-const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
 const { applyProcessLifecycle } = require('../shared/process-lifecycle');
@@ -77,13 +76,7 @@ function buildArgv(opts) {
 }
 
 class ClaudeAdapter {
-  constructor(options) {
-    const opts = options || {};
-    this._testMode = !!opts._testMode;
-    this._mockVersion = opts._mockVersion || null;
-    this._mockFacts = opts._mockFacts || [];
-    this._mockExitCode = opts._mockExitCode !== undefined ? opts._mockExitCode : null;
-
+  constructor() {
     this._childProcess = null;
     this._processPid = null;
     this._facts = [];
@@ -118,7 +111,6 @@ class ClaudeAdapter {
   }
 
   DetectVersion() {
-    if (this._testMode) return this._mockVersion || '2.1.220';
     if (this._detectedVersion) return this._detectedVersion;
 
     const claudePath = resolveClaudePath();
@@ -182,12 +174,6 @@ class ClaudeAdapter {
   }
 
   async Start(attempt) {
-    if (this._testMode) {
-      this._processPid = 42;
-      this._facts = [...this._mockFacts];
-      return { handle: 'claude-test-handle' };
-    }
-
     const claudePath = resolveClaudePath();
 
     const request = this._lastRequest || {};
@@ -231,14 +217,18 @@ class ClaudeAdapter {
     childEnv.DCLI_WORKER = '1';
     childEnv.DCLI_DEPTH = String(currentDepth + 1);
 
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: invocation.windowsHide,
-      // Forward the invocation's own value: it is the single source of truth
-      // for how its command line is quoted (adapters/codex/cmd-quoting.js).
-      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-      env: childEnv,
+    const child = this._spawn({
+      command: invocation.command,
+      args: invocation.args,
+      options: {
+        cwd: invocation.cwd,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: invocation.windowsHide,
+        // Forward the invocation's own value: it is the single source of truth
+        // for how its command line is quoted (adapters/codex/cmd-quoting.js).
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+        env: childEnv,
+      },
     });
 
     this._childProcess = child;
@@ -292,8 +282,6 @@ class ClaudeAdapter {
   }
 
   async SendPrompt(attempt, prompt) {
-    if (this._testMode) return;
-
     if (!this._childProcess || !this._childProcess.stdin) {
       throw new Error('Cannot send prompt: no child process');
     }
@@ -305,13 +293,6 @@ class ClaudeAdapter {
   }
 
   async *Observe(attempt) {
-    if (this._testMode) {
-      for (const fact of this._mockFacts) {
-        yield { ...fact };
-      }
-      return;
-    }
-
     yield* this._drainLiveQueue();
 
     await this._waitForExit();
@@ -359,24 +340,6 @@ class ClaudeAdapter {
 
   CollectResult(attempt) {
     if (this._collectedResult) return this._collectedResult;
-
-    if (this._testMode) {
-      let lastText = '';
-      let usage = { input: 0, output: 0, total: 0 };
-      let backendSessionId = null;
-
-      for (const f of this._mockFacts) {
-        if (f.type === 'assistant_text') lastText = f.text;
-        if (f.type === 'usage_reported' && f.tokens) usage = { ...f.tokens };
-        if (f.type === 'started' && f.backend_session_id) backendSessionId = f.backend_session_id;
-      }
-
-      this._collectedResult = {
-        text: lastText, usage, backend_session_id: backendSessionId,
-        result_status: this._mockFacts.some(f => f.type === 'result') ? 'present' : 'missing',
-      };
-      return this._collectedResult;
-    }
 
     const collected = this._collectResultFromEvents();
     this._collectedResult = collected;
@@ -451,7 +414,6 @@ class ClaudeAdapter {
   }
 
   async LiveSmoke(timeoutMs) {
-    if (this._testMode) return;
     const claudePath = resolveClaudePath();
     if (!claudePath) {
       throw new Error('claude executable not found');
@@ -470,7 +432,6 @@ class ClaudeAdapter {
   }
 
   async LiveSmokeRequest(timeoutMs, repoPath) {
-    if (this._testMode) return;
     return runAdapterSmoke(this, repoPath);
   }
 

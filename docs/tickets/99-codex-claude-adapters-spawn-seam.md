@@ -1,6 +1,6 @@
 # 99 — Codex and Claude adapters: an injected spawn seam replaces the inline `_testMode` double
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Test quality. The `_testMode` branch is the *first statement* of the methods that matter, so
 an adapter test that sets it exercises approximately none of the adapter — and the code it skips is
@@ -183,4 +183,75 @@ ticket 99: codex and claude adapters spawn through an injected seam
 
 ## Notes
 
-(Left empty by the author.)
+### What each `_testMode` branch bypassed (the coverage gained)
+
+Both adapters had the same eight branches, each at the top of a method that
+matters; a test that set `_testMode` skipped all of the following:
+
+- **Constructor options** (`_testMode`, `_mockVersion`, `_mockFacts`,
+  `_mockExitCode`) — the fake itself, shipping in production code.
+- **`DetectVersion`** — the `execSync` `--version` probe and its error path.
+  Never exercised by any test until now; tests now point `CODEX_PATH` /
+  `CLAUDE_PATH` at a version-printing `.cmd` fixture
+  (`tests/fixtures/version-shim.js`) and the real probe runs.
+- **`Start`** — executable resolution, temp-dir lifecycle, argv construction
+  (`buildArgv` + `buildCmdInvocation`), the spawn call and its options, stream
+  wiring, the `exit`/`error`/`stdin.error` handlers, and the sync-failure
+  temp-dir cleanup.
+- **`SendPrompt`** — the no-child guard, the `started` fact, stdin write+end.
+- **`Observe`** — the whole drain: live-fact queue, park-with-recheck
+  (`LIVE_DRAIN_RECHECK_MS`), exit wait, bounded stream drain, stderr failure
+  classification, final line-buffer flush, ordered terminal facts. This is the
+  code that needed the four fixes in `docs/engineering/lessons.md` §3.
+- **`CollectResult`** — the real result path: codex's `-o` file read with
+  empty/oversize/missing classification; claude's `_collectResultFromEvents`
+  (text/usage/session/`result_status`).
+- **`LiveSmoke` / `LiveSmokeRequest`** — the version probe and `runAdapterSmoke`.
+
+Shared: `_resolveExitCode` in `process-lifecycle.js` honoured `_mockExitCode`.
+Removing the constructor option would have turned that branch into a live bug
+(`undefined !== null` → returns `undefined`), so the branch was removed in the
+same change; it was production-dead before (nothing ever set the option in
+production).
+
+### The seam
+
+`_spawn(invocation)` lives in `adapters/shared/process-lifecycle.js`, so both
+adapters inherit it. The default is exactly today's call:
+`spawn(invocation.command, invocation.args, invocation.options)` — the
+`options` object is the one the adapter assembled in `Start()` (cwd, stdio,
+windowsHide, windowsVerbatimArguments, and claude's env), passed through
+verbatim. A test overrides it on the instance with a scripted fake child.
+
+### The three new tests (criterion D)
+
+`tests/adapters/scripted-child.test.js`, run against **both** adapters through
+the seam, so framing, drain, exit ordering and classification execute for real:
+
+1. **Split partial line** — two `stdout` chunks tearing one JSON value
+   (`'{"type":"assistant_text","content":"hel'` + `'lo"}\n'`) frame into
+   exactly one `assistant_text` fact. Also asserts the first chunk sits
+   unparsed in `_lineBuffer` before the newline arrives.
+2. **Output after exit** — `exit` fires, then stdout data arrives, then the
+   streams close. The bounded drain waits on stream close and the final
+   line-buffer flush delivers the fragment; for claude, `CollectResult` also
+   carries the drained text.
+3. **Missed wake-up** — the drain parks, its stored resolver is discarded (the
+   original bug), then the child exits; completion comes from the refed
+   re-check timer, never from the (dropped) wake.
+
+Each of these would have been skipped by the `_testMode` branch.
+
+### Discoveries
+
+- The ticket's Agent-check grep `grep -rn "spawn("` matches the seam's own
+  name `_spawn(` at every call site. The real check is that the only actual
+  `child_process.spawn` call is inside the default `_spawn` in
+  `process-lifecycle.js` — verified, one occurrence.
+- `DetectVersion` and `LiveSmoke` still use `execSync`, not the seam: the seam
+  is at the `spawn` boundary only, and those methods were left exactly as they
+  were (criterion F).
+- The contract suite for codex now constructs the **real** adapter (previously
+  test-mode) and runs its 14 assertions unchanged; `tests/contract/suite.js`
+  itself is untouched and its source is byte-identical (parity gate's
+  adapter-name scan still passes).

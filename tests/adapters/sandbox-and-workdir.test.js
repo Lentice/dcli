@@ -14,8 +14,8 @@
 //    implement-mode job ran against the invoking shell's directory and left
 //    the job's worktree untouched — `diff` reported nothing changed.
 //
-// The workDir assertions deliberately do not take the `_testMode`
-// short-circuit: the bug lived below it. They assert the child's own argv, not
+// The workDir assertions deliberately do not go through a stub: the bug lived
+// below the process boundary. They assert the child's own argv, not
 // that spawn didn't throw.
 const assert = require('node:assert');
 
@@ -62,7 +62,7 @@ async function main() {
 // ===========================================================================
 {
   const { CodexAdapter } = require('../../adapters/codex/adapter');
-  const adapter = new CodexAdapter({ _testMode: false, _mockVersion: '0.146.0' });
+  const adapter = new CodexAdapter({});
   const savedPath = process.env.CODEX_PATH;
   process.env.CODEX_PATH = process.env.ComSpec || 'cmd.exe';
 
@@ -89,7 +89,7 @@ async function main() {
 // ===========================================================================
 {
   const { ClaudeAdapter } = require('../../adapters/claude/adapter');
-  const adapter = new ClaudeAdapter({ _testMode: false, _mockVersion: '2.0.0' });
+  const adapter = new ClaudeAdapter({});
   const savedPath = process.env.CLAUDE_PATH;
   process.env.CLAUDE_PATH = process.env.ComSpec || 'cmd.exe';
 

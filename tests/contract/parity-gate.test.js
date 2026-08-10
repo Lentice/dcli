@@ -1,11 +1,13 @@
 // @suite full
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { runContractSuite } = require('./suite');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { OpencodeAdapter } = require('../../adapters/opencode/adapter');
 const { CodexAdapter } = require('../../adapters/codex/adapter');
+const { writeVersionShim } = require('../../tests/fixtures/version-shim');
 
 // ===========================================================================
 // 1. Parity suite — identical contract over all three adapters
@@ -35,24 +37,27 @@ const makeOpencode = () => new OpencodeAdapter({
   _mockExitCode: 0,
 });
 
-const makeCodex = () => new CodexAdapter({
-  _testMode: true,
-  _mockVersion: '0.145.0',
-  _mockFacts: [
-    { type: 'started', backend_pid: 42, backend_session_id: 'ses_contract' },
-    { type: 'assistant_text', message_id: 'msg_1', text: 'Contract test result from codex' },
-    { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-    { type: 'process_exited', code: 0 },
-  ],
-  _mockExitCode: 0,
-});
+const makeCodex = () => new CodexAdapter();
 
 console.log('--- Contract parity suite ---');
-const results = [
-  runContractSuite(makeFake, 'fake'),
-  runContractSuite(makeOpencode, 'opencode'),
-  runContractSuite(makeCodex, 'codex'),
-];
+// DetectVersion runs the backend's --version probe for real; point CODEX_PATH
+// at a version-printing fixture so the parity gate needs no live codex.
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-parity-codex-'));
+const shim = writeVersionShim(tmpDir, '0.145.0');
+const savedCodexPath = process.env.CODEX_PATH;
+process.env.CODEX_PATH = shim;
+let results;
+try {
+  results = [
+    runContractSuite(makeFake, 'fake'),
+    runContractSuite(makeOpencode, 'opencode'),
+    runContractSuite(makeCodex, 'codex'),
+  ];
+} finally {
+  if (savedCodexPath === undefined) delete process.env.CODEX_PATH;
+  else process.env.CODEX_PATH = savedCodexPath;
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+}
 console.log('---');
 
 // All three must pass
@@ -135,11 +140,10 @@ console.log(`All three adapters passed the same ${results[0].passed} assertions.
   console.log('Cancel rungs: opencode=3, codex=1 (expected asymmetry).');
 }
 
-// 3d. Codex mock facts must not include backend_status
+// 3d. Codex must not emit backend_status
 {
-  for (const f of new CodexAdapter({ _testMode: true, _mockVersion: '0.145.0', _mockFacts: [], _mockExitCode: 0 })._mockFacts) {
-    assert.notStrictEqual(f.type, 'backend_status', 'Codex must not emit backend_status');
-  }
+  const parsed = makeCodex()._parseJsonlEvent('{"type":"backend_status","state":"busy"}');
+  assert.strictEqual(parsed, null, 'Codex must not emit backend_status facts');
   console.log('Codex does not emit backend_status facts.');
 }
 

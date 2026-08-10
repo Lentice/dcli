@@ -4,21 +4,23 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { ClaudeAdapter, buildArgv, resolveClaudePath, EFFORT_LEVELS } = require('../../../adapters/claude/adapter');
+const { ScriptedChild } = require('../../../tests/fixtures/scripted-child');
+const { writeVersionShim, withVersionShim } = require('../../../tests/fixtures/version-shim');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
+// Tests that only need an adapter instance use a plain adapter. Tests that need
+// facts or a child drive a scripted fake child through the `_spawn` seam, so
+// framing, drain and exit ordering run for real.
 function makeMinimalAdapter() {
-  return new ClaudeAdapter({
-    _testMode: true,
-    _mockVersion: '2.1.220',
-    _mockFacts: [
-      { type: 'started', backend_pid: 42, backend_session_id: 'ses_test' },
-      { type: 'assistant_text', message_id: 'msg_1', text: 'Hello from claude' },
-      { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-      { type: 'process_exited', code: 0 },
-    ],
-    _mockExitCode: 0,
-  });
+  return new ClaudeAdapter();
+}
+
+function makeScriptedAdapter() {
+  const adapter = new ClaudeAdapter();
+  const fake = new ScriptedChild();
+  adapter._spawn = () => fake;
+  return { adapter, fake };
 }
 
 async function main() {
@@ -65,13 +67,22 @@ if (process.platform === 'win32') {
 }
 
 // ===========================================================================
-// 2. DetectVersion returns version string
+// 2. DetectVersion probes the installed CLI and returns a version string
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const v = adapter.DetectVersion();
-  assert.strictEqual(typeof v, 'string');
-  assert.ok(v.length > 0);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-claude-ver-'));
+  try {
+    const shim = writeVersionShim(tmpDir, '2.1.220');
+    await withVersionShim('CLAUDE_PATH', shim, () => {
+      const adapter = makeMinimalAdapter();
+      const v = adapter.DetectVersion();
+      assert.strictEqual(typeof v, 'string');
+      assert.ok(v.length > 0);
+      assert.strictEqual(v, '2.1.220');
+    });
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
   console.log('PASS: DetectVersion returns version');
 }
 
@@ -144,10 +155,18 @@ if (process.platform === 'win32') {
 // 8. Start returns handle with sessionId
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const handle = await adapter.Start({});
-  assert.ok(handle, 'Start must return handle');
-  assert.ok(handle.handle, 'Handle must have a handle property');
+  const { adapter, fake } = makeScriptedAdapter();
+  try {
+    const handle = await adapter.Start({});
+    assert.ok(handle, 'Start must return handle');
+    assert.ok(handle.handle, 'Handle must have a handle property');
+    assert.strictEqual(handle.handle, 'claude-process');
+    assert.strictEqual(handle.pid, fake.pid, 'handle must carry the spawned child pid');
+    assert.ok(handle.sessionId, 'Start mints a session id when the request carries none');
+    assert.strictEqual(adapter._sessionId, handle.sessionId);
+  } finally {
+    try { adapter.Dispose({}); } catch {}
+  }
   console.log('PASS: Start returns handle');
 }
 
@@ -155,12 +174,27 @@ if (process.platform === 'win32') {
 // 9. Observe yields facts
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const facts = [];
-  for await (const fact of adapter.Observe({})) {
-    facts.push(fact);
+  const { adapter, fake } = makeScriptedAdapter();
+  try {
+    await adapter.Start({});
+    await adapter.SendPrompt({}, 'hi');
+    fake.pushStdout('{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"Hello from claude"}]}}\n');
+    await new Promise(r => setTimeout(r, 10));
+    fake.emitExit(0);
+    fake.closeStreams();
+
+    const facts = [];
+    for await (const fact of adapter.Observe({})) {
+      facts.push(fact);
+    }
+    assert.ok(facts.length > 0, 'Must yield at least one fact');
+    assert.ok(facts.some(f => f.type === 'assistant_text' && f.text === 'Hello from claude'),
+      'the assistant message must frame into an assistant_text fact');
+    assert.strictEqual(facts[facts.length - 1].type, 'process_exited');
+    assert.strictEqual(facts[facts.length - 1].code, 0);
+  } finally {
+    try { adapter.Dispose({}); } catch {}
   }
-  assert.ok(facts.length > 0, 'Must yield at least one fact');
   console.log('PASS: Observe yields facts');
 }
 

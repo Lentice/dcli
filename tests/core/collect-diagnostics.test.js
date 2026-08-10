@@ -20,11 +20,11 @@ async function main() {
 }
 
 // ===========================================================================
-// 2. CodexAdapter in test mode: exit_code from _resolveExitCode
-//    With _mockExitCode null and no facts, returns null
+// 2. CodexAdapter: exit_code from _resolveExitCode
+//    With no process_exited fact, returns null
 // ===========================================================================
 {
-  const adapter = new CodexAdapter({ _testMode: true, _mockVersion: '0.145.0' });
+  const adapter = new CodexAdapter();
   const diag = adapter.CollectDiagnostics({});
   assert.strictEqual(diag.exit_code, null,
     `Without process_exited fact, exit_code must be null, got ${diag.exit_code}`);
@@ -32,21 +32,25 @@ async function main() {
 }
 
 // ===========================================================================
-// 3. CodexAdapter in test mode: _mockExitCode overrides facts
+// 3. CodexAdapter: _resolveExitCode reads the process_exited fact
 // ===========================================================================
 {
-  const adapter = new CodexAdapter({ _testMode: true, _mockExitCode: 137, _mockVersion: '0.145.0' });
+  const adapter = new CodexAdapter();
+  adapter._facts = [
+    { type: 'started', backend_pid: 1, backend_session_id: null },
+    { type: 'process_exited', code: 137 },
+  ];
   const diag = adapter.CollectDiagnostics({});
   assert.strictEqual(diag.exit_code, 137,
-    `_mockExitCode 137 must be honoured, got ${diag.exit_code}`);
-  console.log('PASS: CodexAdapter honours _mockExitCode');
+    `exit code 137 from facts must be honoured, got ${diag.exit_code}`);
+  console.log('PASS: CodexAdapter honours the process_exited fact');
 }
 
 // ===========================================================================
 // 4. ClaudeAdapter: null when no process_exited fact
 // ===========================================================================
 {
-  const adapter = new ClaudeAdapter({ _testMode: true, _mockVersion: '1.0.0' });
+  const adapter = new ClaudeAdapter();
   const diag = adapter.CollectDiagnostics({});
   assert.strictEqual(diag.exit_code, null,
     `Without process_exited, claude exit_code must be null, got ${diag.exit_code}`);
@@ -54,14 +58,18 @@ async function main() {
 }
 
 // ===========================================================================
-// 5. ClaudeAdapter honours _mockExitCode
+// 5. ClaudeAdapter honours the process_exited fact
 // ===========================================================================
 {
-  const adapter = new ClaudeAdapter({ _testMode: true, _mockExitCode: 130, _mockVersion: '1.0.0' });
+  const adapter = new ClaudeAdapter();
+  adapter._facts = [
+    { type: 'started', backend_pid: 1, backend_session_id: null },
+    { type: 'process_exited', code: 130 },
+  ];
   const diag = adapter.CollectDiagnostics({});
   assert.strictEqual(diag.exit_code, 130,
-    `_mockExitCode 130 must be honoured, got ${diag.exit_code}`);
-  console.log('PASS: ClaudeAdapter honours _mockExitCode');
+    `exit code 130 from facts must be honoured, got ${diag.exit_code}`);
+  console.log('PASS: ClaudeAdapter honours the process_exited fact');
 }
 
 // ===========================================================================
@@ -90,10 +98,9 @@ async function main() {
 // 8. CodexAdapter: _resolveExitCode reads from _facts
 // ===========================================================================
 {
-  const adapter = new CodexAdapter({ _testMode: true, _mockVersion: '0.145.0' });
-  adapter.CollectResult = function () { return { text: '' }; };
+  const adapter = new CodexAdapter();
   adapter._facts = [
-    { type: 'started', backend_pid: 1, backend_session_id: 's' },
+    { type: 'started', backend_pid: 1, backend_session_id: null },
     { type: 'process_exited', code: 2 },
   ];
   const diag = adapter.CollectDiagnostics({});

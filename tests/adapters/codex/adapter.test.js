@@ -6,21 +6,24 @@ const os = require('node:os');
 const { CodexAdapter, buildArgv, resolveCodexPath } = require('../../../adapters/codex/adapter');
 const { executableNames, resolveExecutablePath } = require('../../../adapters/shared/resolve-executable');
 const { validateFact } = require('../../../core/fact-types');
+const { ScriptedChild } = require('../../../tests/fixtures/scripted-child');
+const { writeVersionShim, withVersionShim } = require('../../../tests/fixtures/version-shim');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
+// Tests that only need an adapter instance (identity, capabilities, validation,
+// argv) use a plain adapter. Tests that need facts or a child drive a scripted
+// fake child through the `_spawn` seam, so framing, drain and exit ordering
+// run for real.
 function makeMinimalAdapter() {
-  return new CodexAdapter({
-    _testMode: true,
-    _mockVersion: '0.145.0',
-    _mockFacts: [
-      { type: 'started', backend_pid: 42, backend_session_id: 'ses_test' },
-      { type: 'assistant_text', message_id: 'msg_1', text: 'Hello from codex' },
-      { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-      { type: 'process_exited', code: 0 },
-    ],
-    _mockExitCode: 0,
-  });
+  return new CodexAdapter();
+}
+
+function makeScriptedAdapter() {
+  const adapter = new CodexAdapter();
+  const fake = new ScriptedChild();
+  adapter._spawn = () => fake;
+  return { adapter, fake };
 }
 
 async function main() {
@@ -181,13 +184,21 @@ if (process.platform !== 'win32') {
 }
 
 // ===========================================================================
-// 2. DetectVersion returns a string
+// 2. DetectVersion probes the installed CLI and returns a version string
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const v = adapter.DetectVersion();
-  assert.strictEqual(typeof v, 'string');
-  assert.strictEqual(v, '0.145.0');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-ver-'));
+  try {
+    const shim = writeVersionShim(tmpDir, '0.145.0');
+    await withVersionShim('CODEX_PATH', shim, () => {
+      const adapter = makeMinimalAdapter();
+      const v = adapter.DetectVersion();
+      assert.strictEqual(typeof v, 'string');
+      assert.strictEqual(v, '0.145.0');
+    });
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
   console.log('PASS: DetectVersion returns version string');
 }
 
@@ -253,34 +264,37 @@ if (process.platform !== 'win32') {
 }
 
 // ===========================================================================
-// 7. CollectResult returns text, usage, and backend_session_id
+// 7. CollectResult returns the -o result file's text with zeroed usage
+// ===========================================================================
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-test-'));
+  try {
+    const resultFile = path.join(tmpDir, 'result.txt');
+    fs.writeFileSync(resultFile, 'Hello from codex', 'utf8');
+    const adapter = makeMinimalAdapter();
+    adapter._resultFilePath = resultFile;
+    const result = adapter.CollectResult({});
+    assert.ok(result && typeof result === 'object');
+    assert.strictEqual(result.text, 'Hello from codex');
+    assert.ok(result.usage && typeof result.usage === 'object');
+    assert.strictEqual(result.usage.total, 0);
+    assert.strictEqual(result.backend_session_id, null);
+    console.log('PASS: CollectResult returns the result file text');
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// ===========================================================================
+// 8. CollectResult with no result file returns empty text
 // ===========================================================================
 {
   const adapter = makeMinimalAdapter();
   const result = adapter.CollectResult({});
-  assert.ok(result && typeof result === 'object');
-  assert.strictEqual(result.text, 'Hello from codex');
-  assert.ok(result.usage && typeof result.usage === 'object');
-  assert.strictEqual(result.usage.total, 250);
-  assert.strictEqual(result.backend_session_id, 'ses_test');
-  console.log('PASS: CollectResult returns text, usage, session');
-}
-
-// ===========================================================================
-// 8. CollectResult with empty facts returns empty text
-// ===========================================================================
-{
-  const adapter = new CodexAdapter({
-    _testMode: true,
-    _mockVersion: '0.145.0',
-    _mockFacts: [],
-    _mockExitCode: 0,
-  });
-  const result = adapter.CollectResult({});
   assert.strictEqual(result.text, '');
   assert.strictEqual(result.usage.total, 0);
   assert.strictEqual(result.backend_session_id, null);
-  console.log('PASS: CollectResult with empty facts returns empty');
+  console.log('PASS: CollectResult with no result file returns empty');
 }
 
 // ===========================================================================
@@ -291,7 +305,7 @@ if (process.platform !== 'win32') {
   try {
     const resultFile = path.join(tmpDir, 'result.txt');
     fs.writeFileSync(resultFile, '');
-    const adapter = new CodexAdapter({ _testMode: false });
+    const adapter = new CodexAdapter();
     // Inject the result file path as if Start had created it
     adapter._resultFilePath = resultFile;
     const result = adapter.CollectResult({});
@@ -309,7 +323,7 @@ if (process.platform !== 'win32') {
 // 10. Non-existent result file produces empty result
 // ===========================================================================
 {
-  const adapter = new CodexAdapter({ _testMode: false });
+  const adapter = new CodexAdapter();
   adapter._resultFilePath = path.join(os.tmpdir(), 'dcli-codex-test-nonexistent-' + Date.now() + '.txt');
   const result = adapter.CollectResult({});
   assert.strictEqual(result.text, '',
@@ -357,10 +371,15 @@ if (process.platform !== 'win32') {
 // 14. PrepareInvocation, SendPrompt, Resume are present and don't throw
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  assert.doesNotThrow(() => adapter.PrepareInvocation({}, {}));
-  assert.doesNotThrow(() => adapter.SendPrompt({}, 'test prompt'));
-  assert.doesNotThrow(() => adapter.Resume({}, 'fork_from_artifacts', 'continue'));
+  const { adapter } = makeScriptedAdapter();
+  try {
+    await adapter.Start({});
+    assert.doesNotThrow(() => adapter.PrepareInvocation({}, {}));
+    assert.doesNotThrow(() => adapter.SendPrompt({}, 'test prompt'));
+    assert.doesNotThrow(() => adapter.Resume({}, 'fork_from_artifacts', 'continue'));
+  } finally {
+    try { adapter.Dispose({}); } catch {}
+  }
   console.log('PASS: PrepareInvocation, SendPrompt, Resume exist');
 }
 
@@ -384,12 +403,19 @@ if (process.platform !== 'win32') {
 }
 
 // ===========================================================================
-// 17. Start returns an execution handle
+// 17. Start returns an execution handle carrying the child pid
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const handle = adapter.Start({});
-  assert.ok(handle && typeof handle === 'object');
+  const { adapter, fake } = makeScriptedAdapter();
+  try {
+    const handle = await adapter.Start({});
+    assert.ok(handle && typeof handle === 'object');
+    assert.strictEqual(handle.handle, 'codex-process');
+    assert.strictEqual(handle.pid, fake.pid, 'handle must carry the spawned child pid');
+    assert.ok(handle.resultFile, 'handle must carry the result file path');
+  } finally {
+    try { adapter.Dispose({}); } catch {}
+  }
   console.log('PASS: Start returns execution handle');
 }
 
@@ -418,10 +444,9 @@ if (process.platform !== 'win32') {
 // ===========================================================================
 {
   const adapter = makeMinimalAdapter();
-  const facts = adapter._mockFacts;
-  const hasBackendStatus = facts.some(f => f.type === 'backend_status');
-  assert.strictEqual(hasBackendStatus, false,
-    'Codex adapter must not emit backend_status');
+  const parsed = adapter._parseJsonlEvent('{"type":"backend_status","state":"busy"}');
+  assert.strictEqual(parsed, null,
+    'backend_status is not a codex fact and must be skipped by the parser');
   console.log('PASS: Adapter does not emit backend_status');
 }
 
@@ -489,15 +514,26 @@ if (process.platform !== 'win32') {
 }
 
 // ===========================================================================
-// 22. No backend_status in facts from real execution path
+// 22. Facts from a real scripted run pass validation
 // ===========================================================================
 {
-  const adapter = makeMinimalAdapter();
-  const facts = adapter._mockFacts;
-  for (const f of facts) {
-    if (f.type !== 'process_exited') {
-      validateFact(f);
-    }
+  const { adapter, fake } = makeScriptedAdapter();
+  try {
+    await adapter.Start({});
+    await adapter.SendPrompt({}, 'hi');
+    fake.pushStdout('{"type":"assistant_text","content":"ok"}\n');
+    fake.pushStdout('{"type":"tool_use","name":"Bash","summary":"run a command"}\n');
+    fake.pushStdout('{"type":"usage","input_tokens":10,"output_tokens":20}\n');
+    await new Promise(r => setTimeout(r, 10));
+    fake.emitExit(0);
+    fake.closeStreams();
+    const facts = [];
+    for await (const f of adapter.Observe({})) facts.push(f);
+    for (const f of facts) validateFact(f);
+    assert.ok(facts.some(f => f.type === 'assistant_text'), 'assistant_text must be parsed');
+    assert.strictEqual(facts[facts.length - 1].type, 'process_exited');
+  } finally {
+    try { adapter.Dispose({}); } catch {}
   }
   console.log('PASS: Facts pass validation');
 }
@@ -506,9 +542,15 @@ if (process.platform !== 'win32') {
 // 23. SendPrompt arms output readers before writing (structural check)
 // ===========================================================================
 {
-  // In test mode, SendPrompt should not throw
-  const adapter = makeMinimalAdapter();
-  assert.doesNotThrow(() => adapter.SendPrompt({}, 'A'.repeat(100_000)));
+  const { adapter } = makeScriptedAdapter();
+  try {
+    await adapter.Start({});
+    assert.ok(adapter._childProcess.stdout.listenerCount('data') > 0,
+      'stdout data reader must be armed in Start, before any stdin write');
+    assert.doesNotThrow(() => adapter.SendPrompt({}, 'A'.repeat(100_000)));
+  } finally {
+    try { adapter.Dispose({}); } catch {}
+  }
   console.log('PASS: SendPrompt handles large prompts without issue (readers armed)');
 }
 
@@ -571,30 +613,33 @@ if (process.platform !== 'win32') {
 // 22. Observe yields facts in temporal order (process_exited last)
 // ===========================================================================
 {
-  const adapter = new CodexAdapter({ _testMode: true, _mockFacts: [
-    { type: 'started', backend_pid: 1 },
-    { type: 'assistant_text', message_id: 'm1', text: 'chunk 1' },
-    { type: 'assistant_text', message_id: 'm2', text: 'chunk 2' },
-    { type: 'usage_reported', tokens: { input: 10, output: 20, total: 30 } },
-    { type: 'process_exited', code: 0 },
-  ], _mockExitCode: 0 });
+  const { adapter, fake } = makeScriptedAdapter();
+  try {
+    await adapter.Start({});
+    await adapter.SendPrompt({}, 'hi');
+    fake.pushStdout('{"type":"assistant_text","content":"chunk 1"}\n');
+    fake.pushStdout('{"type":"assistant_text","content":"chunk 2"}\n');
+    fake.pushStdout('{"type":"usage","input_tokens":10,"output_tokens":20}\n');
+    await new Promise(r => setTimeout(r, 10));
+    fake.emitExit(0);
+    fake.closeStreams();
 
-  const facts = [];
-  for await (const f of adapter.Observe({})) {
-    facts.push(f);
+    const facts = [];
+    for await (const f of adapter.Observe({})) {
+      facts.push(f);
+    }
+
+    const textFacts = facts.filter(f => f.type === 'assistant_text');
+    assert.ok(textFacts.length >= 2,
+      `Must yield >= 2 assistant_text facts, got ${textFacts.length}`);
+    assert.strictEqual(textFacts[0].text, 'chunk 1');
+    assert.strictEqual(textFacts[1].text, 'chunk 2');
+    assert.strictEqual(facts[facts.length - 1].type, 'process_exited',
+      `process_exited must be last, got ${facts[facts.length - 1].type}`);
+    assert.strictEqual(facts[facts.length - 1].code, 0);
+  } finally {
+    try { adapter.Dispose({}); } catch {}
   }
-
-  assert.strictEqual(facts.length, 5, `Should yield exactly 5 facts, got ${facts.length}`);
-  assert.strictEqual(facts[0].type, 'started');
-  assert.strictEqual(facts[1].type, 'assistant_text');
-  assert.strictEqual(facts[2].type, 'assistant_text');
-  assert.strictEqual(facts[3].type, 'usage_reported');
-  assert.strictEqual(facts[4].type, 'process_exited',
-    `process_exited must be last, got ${facts[4].type}`);
-
-  const textFacts = facts.filter(f => f.type === 'assistant_text');
-  assert.ok(textFacts.length >= 2,
-    `Must yield >= 2 assistant_text facts, got ${textFacts.length}`);
 
   console.log('PASS: Observe yields facts in temporal order (process_exited last)');
 }

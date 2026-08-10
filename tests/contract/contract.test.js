@@ -1,9 +1,13 @@
 // @suite full
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { validateFact, isKnownFactType, FACT_TYPES } = require('../../core/fact-types');
 const { InteractionOutcome, validateInteractionOutcome } = require('../../core/interaction-outcome');
 const { runContractSuite } = require('./suite');
+const { writeVersionShim } = require('../../tests/fixtures/version-shim');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
@@ -353,28 +357,30 @@ runContractSuite(() => new FakeAdapter({
 }
 
 // ---------------------------------------------------------------------------
-// Run contract suite against the codex adapter (test mode)
+// Run contract suite against the codex adapter
 // ---------------------------------------------------------------------------
 
 {
   const { CodexAdapter } = require('../../adapters/codex/adapter');
-  runContractSuite(() => new CodexAdapter({
-    _testMode: true,
-    _mockVersion: '0.145.0',
-    _mockFacts: [
-      { type: 'started', backend_pid: 42, backend_session_id: 'ses_contract' },
-      { type: 'assistant_text', message_id: 'msg_1', text: 'Contract test result from codex' },
-      { type: 'usage_reported', tokens: { input: 50, output: 200, total: 250 } },
-      { type: 'process_exited', code: 0 },
-    ],
-    _mockExitCode: 0,
-  }), 'codex');
+  // DetectVersion runs the backend's --version probe for real; point CODEX_PATH
+  // at a version-printing fixture so the contract suite needs no live codex.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-contract-codex-'));
+  const shim = writeVersionShim(tmpDir, '0.145.0');
+  const savedCodexPath = process.env.CODEX_PATH;
+  process.env.CODEX_PATH = shim;
+  try {
+    runContractSuite(() => new CodexAdapter(), 'codex');
+  } finally {
+    if (savedCodexPath === undefined) delete process.env.CODEX_PATH;
+    else process.env.CODEX_PATH = savedCodexPath;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
 }
 
 // Also test codex-specific contract: DeclareCancelRungs returns exactly 1 rung
 {
   const { CodexAdapter } = require('../../adapters/codex/adapter');
-  const adapter = new CodexAdapter({ _testMode: true, _mockVersion: '0.145.0', _mockFacts: [], _mockExitCode: 0 });
+  const adapter = new CodexAdapter();
   const rungs = adapter.DeclareCancelRungs();
   assert.strictEqual(rungs.length, 1);
   assert.deepStrictEqual(rungs, ['hard_kill']);

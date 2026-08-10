@@ -30,7 +30,7 @@ async function main() {
 // ===========================================================================
 {
   const { CodexAdapter } = require('../../../adapters/codex/adapter');
-  const adapter = new CodexAdapter({ _testMode: false, _mockVersion: '0.145.0' });
+  const adapter = new CodexAdapter({});
 
   const savedPath = process.env.CODEX_PATH;
   // cmd.exe spawns successfully; it is not codex, but Start() only has to
@@ -84,7 +84,7 @@ async function main() {
 // ===========================================================================
 {
   const { CodexAdapter } = require('../../../adapters/codex/adapter');
-  const adapter = new CodexAdapter({ _testMode: false, _mockVersion: '0.145.0' });
+  const adapter = new CodexAdapter({});
 
   const savedPath = process.env.CODEX_PATH;
   // A directory is not executable, so this forces a spawn failure.

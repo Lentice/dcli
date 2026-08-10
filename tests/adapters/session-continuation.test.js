@@ -49,7 +49,7 @@ async function main() {
 // ===========================================================================
 {
   const { ClaudeAdapter } = require('../../adapters/claude/adapter');
-  const adapter = new ClaudeAdapter({ _testMode: false, _mockVersion: '2.0.0' });
+  const adapter = new ClaudeAdapter({});
   const savedPath = process.env.CLAUDE_PATH;
   process.env.CLAUDE_PATH = process.env.ComSpec || 'cmd.exe';
 
