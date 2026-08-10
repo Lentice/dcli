@@ -1,6 +1,5 @@
 const { isVersionInRange } = require('./index');
 const { DEFAULT_BACKEND } = require('../../adapters/registry');
-const { removeWorktree } = require('../worktree');
 
 /**
  * Validate the request against the backend, check its version against the
@@ -43,24 +42,4 @@ function prepareBackend({ adapter, request }) {
   };
 }
 
-/**
- * Release the resources a run/resume command acquired before the handoff to
- * driveAttempt(). Called only on setup failure: after a successful handoff,
- * driveAttempt owns the worktree and slot and finalizes both itself. Track
- * worktreeCreated rather than worktreePath alone: createDetachedWorktree
- * throws "path already exists" for a pre-existing directory, and calling
- * removeWorktree for it would delete a directory setup never created.
- *
- * @param {Object}   a
- * @param {string}   a.repoRoot
- * @param {string|null} a.worktreePath
- * @param {boolean}  a.worktreeCreated
- * @param {Object|null} a.admission
- * @param {string|null} a.acquiredSlotId
- */
-function releaseSetupResources({ repoRoot, worktreePath = null, worktreeCreated = false, admission = null, acquiredSlotId = null }) {
-  if (worktreeCreated && worktreePath) removeWorktree(repoRoot, worktreePath);
-  if (admission && acquiredSlotId) admission.releaseSlot(acquiredSlotId);
-}
-
-module.exports = { prepareBackend, releaseSetupResources };
+module.exports = { prepareBackend };

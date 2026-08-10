@@ -47,7 +47,6 @@ recommended order.
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
 | [94 — `submit --mode` ignored](94-submit-mode-is-silently-ignored.md) | ready | — | `submit --mode implement` is validated, accepted, and silently run in `run` mode; honour it or reject with exit `2` |
-| [95 — one job-creation preamble](95-one-job-creation-preamble.md) | ready | — | `run`/`resume`/`submit` write the same acquire-or-release-everything setup three times; `openAttempt()` owns it |
 | [96 — job-store owns scanning](96-job-store-owns-record-scanning.md) | ready | — | Four commands reach into `store._stateRoot`; three rebuild the jobs walk and disagree on what exit `17` means |
 | [97 — one worker spawn path](97-one-worker-spawn-path.md) | ready | — | The initial submit and the queued relaunch spawn the worker separately, with different environments |
 | [98 — split `commands/index.js`](98-split-the-commands-index-grab-bag.md) | blocked | 93 | Five unrelated subjects in one 576-line file that every module imports; also deletes the dead `KNOWN_FLAGS` export |
@@ -80,6 +79,7 @@ recommended order.
 | [104 — generate this table](104-generate-the-ticket-tracker.md) | done | — | The tracker's own documented trigger fired at more than ten open tickets; ticket files become the source of status, with a regenerate-and-compare gate in `npm run check` |
 | [93 — one failure-class table](93-one-failure-class-exit-code-table.md) | done | — | The class ↔ exit-code mapping exists three times (`commands/index.js`, `doctor.js`, `reducer.js`); one module owns both directions |
 | [92 — one attempt driver](92-one-attempt-driver.md) | done | — | The detached worker and the foreground path stop being two copies of one algorithm; closes four verified behaviour divergences, including that `dcli cancel` does not reach a foreground `run` |
+| [95 — one job-creation preamble](95-one-job-creation-preamble.md) | done | — | `run`/`resume`/`submit` write the same acquire-or-release-everything setup three times; `openAttempt()` owns it |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

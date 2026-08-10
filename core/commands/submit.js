@@ -1,17 +1,14 @@
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
-const { generateJobId } = require('../job-id');
 const { loadJobOrThrow } = require('./index');
-const { prepareBackend } = require('./attempt');
+const { openAttempt } = require('../job-setup');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
-const { persistInitFiles } = require('../result-artifact');
 const { generateExecutionToken } = require('../process-identity');
 
 async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, stateRoot, backend }) {
   stateRoot = stateRoot || store._stateRoot;
   repoRoot = repoRoot || process.cwd();
-  const jobId = generateJobId();
 
   let parentStatus = null;
   let parentRootJobId = null;
@@ -26,35 +23,28 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
   }
 
   const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
-  const {
-    manifest: capabilitiesSnapshot,
-    backend: resolvedBackend,
-    backendVersion,
-    adapterVersion,
-  } = prepareBackend({ adapter, request });
-  const effectiveAccess = access || 'read-only';
-
   const inheritedGroup = group || (parentStatus ? parentStatus.group : null);
   const inheritedLabel = label || (parentStatus ? parentStatus.label : null);
   const inheritedAccess = access || (parentStatus ? parentStatus.access : null) || 'read-only';
   const executionToken = generateExecutionToken();
 
-  store.createJob({
-    jobId, repoKey, repoRoot,
-    backend: resolvedBackend,
-    backendVersion,
-    adapterVersion,
-    mode: 'submit',
-    access: inheritedAccess,
-    group: inheritedGroup,
-    label: inheritedLabel,
-    model,
-    hardTimeoutSec,
-    capabilitiesSnapshot,
-    parentJobId: resumeJobId || null,
-    rootJobId: parentRootJobId || null,
-    sessionStrategy: resumeJobId ? 'fork_from_artifacts' : null,
+  const attempt = await openAttempt({
+    store, adapter, request, prompt,
+    repoKey, repoRoot, mode: 'submit', access: inheritedAccess,
+    group: inheritedGroup, label: inheritedLabel, model,
+    hardTimeoutSec, stateRoot,
+    lineage: resumeJobId
+      ? { parentJobId: resumeJobId, sessionStrategy: 'fork_from_artifacts', rootJobId: parentRootJobId || null }
+      : null,
+    // The detached worker owns the admission slot, and it journals the attempt
+    // launch; openAttempt must neither acquire a slot nor journal for submit.
+    admission: null,
+    commandMode: 'run',
+    hardTimeoutMs: hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0,
+    durableIdentity: { executionToken },
+    journalLaunch: false,
   });
+  const jobId = attempt.jobId;
 
   // Persist prompt and run params to the job directory for the worker
   const jobDir = store.getJobDir(repoKey, jobId);
@@ -76,29 +66,9 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     _adapterScript: adapter.script || null,
   });
 
-  // Also write prompt.md and command.json to the attempt directory
-  const attemptNum = 1;
-  try {
-    store.createAttemptDir({ repoKey, jobId, attemptNum });
-  } catch {
-    // Attempt dir may already exist from a previous submit — safe to ignore
-  }
-  persistInitFiles({
-    store, repoKey, jobId, attemptNum, prompt,
-    commandParams: {
-      model,
-      access: inheritedAccess,
-      mode: 'run',
-      hardTimeoutMs: hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0,
-      reasoningEffort: reasoningEffort || null,
-      variant: variant || null,
-      effort: effort || null,
-    },
-  });
-
   // Spawn detached worker (admission slot acquired by the worker itself)
   await spawnWorker({
-    store, stateRoot, backend: backend || resolvedBackend, jobId, repoKey, repoRoot, hardTimeoutSec,
+    store, stateRoot, backend: backend || attempt.backend, jobId, repoKey, repoRoot, hardTimeoutSec,
     executionToken,
   });
 

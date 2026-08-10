@@ -1,6 +1,6 @@
 # 95 — One job-creation preamble: `run`, `resume` and `submit` stop writing it three times
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Correctness. The ownership boundary that releases a worktree and an admission slot on setup
 failure exists in three near-copies. Ticket 90 had to fix that leak once; the next fix will have to be
@@ -115,15 +115,15 @@ commands.
 
 ## Acceptance criteria
 
-- [ ] **A.** `core/job-setup.js` exists and is the only place `store.createJob` is called from a command.
-- [ ] **B.** The "Setup ownership boundary" comment appears exactly once in the repository.
-- [ ] **C.** `run.js`, `resume.js` and `submit.js` each contain no `acquireSlot` / `releaseSlot` pair;
+- [x] **A.** `core/job-setup.js` exists and is the only place `store.createJob` is called from a command.
+- [x] **B.** The "Setup ownership boundary" comment appears exactly once in the repository.
+- [x] **C.** `run.js`, `resume.js` and `submit.js` each contain no `acquireSlot` / `releaseSlot` pair;
   release-on-failure lives in `job-setup.js`.
-- [ ] **D.** For each of the five setup-failure cases, no worktree directory and no held admission slot
+- [x] **D.** For each of the five setup-failure cases, no worktree directory and no held admission slot
   remain afterwards. Asserted directly against the state root.
-- [ ] **E.** The journal produced by `run`, `resume` and `submit` is byte-identical to the journal
+- [x] **E.** The journal produced by `run`, `resume` and `submit` is byte-identical to the journal
   produced before this change, for one representative job each.
-- [ ] **Z.** `npm run check` green; docs updated only if a user-visible message changed (it should not).
+- [x] **Z.** `npm run check` green; docs updated only if a user-visible message changed (it should not).
 
 ## Agent checks
 
@@ -192,3 +192,77 @@ ticket 95: one job-creation preamble for run, resume and submit
 ## Notes
 
 (Left empty by the author.)
+
+### Implementation — 2026-08-10, opencode
+
+`core/job-setup.js` owns the whole preamble: implement-mode worktree creation (including resume's seed
+commit), `prepareBackend`, admission acquisition, `createJob`, `createAttemptDir`, `persistInitFiles`,
+and — for foreground runs — the `attempt_created` + `created→running` journal entries, all inside one
+release guard. `run.js` / `resume.js` / `submit.js` are argument suppliers (~20 lines each); the shared
+`releaseSetupResources` was deleted from `core/commands/attempt.js`.
+
+**openAttempt interface** (as shipped, extending the sketch):
+
+```
+openAttempt({ store, adapter, request, prompt, repoKey, repoRoot, mode, access, group, label, model,
+             hardTimeoutSec, stateRoot, lineage, seedCommit, admission, commandMode, hardTimeoutMs,
+             durableIdentity, journalLaunch })
+-> { jobId, attemptNum, backend, backendVersion, adapterVersion, worktree, worktreeBaseCommit,
+     acquiredSlotId, release() }
+```
+
+- `prompt` is needed by `persistInitFiles`; `worktreeBaseCommit` is needed by the `driveAttempt` handoff
+  (the sketch's handle omitted both).
+- `mode` is already effective (`implement` | `run` | `submit`); `request.canonicalDir` is upgraded to
+  the worktree path when a worktree is created.
+- `lineage: { parentJobId, sessionStrategy, rootJobId }` — `rootJobId` added because both resume and
+  submit compute `parentStatus.root_job_id || parentJobId` and `createJob` needs it.
+- `seedCommit` — resume's `fork_from_artifacts` base ref, passed through to `createDetachedWorktree`
+  inside the ownership boundary.
+- `release()` on the handle is the caller's escape hatch for a failure after setup; run/resume hand the
+  resources straight to `driveAttempt` and never call it (driveAttempt owns them), submit holds none.
+- The guard releases worktree then slot (ticket 90's order), rethrows the original error, and never
+  removes a worktree path it did not create.
+
+**Baseline journals (criterion E).** Captured from the pre-change tree with
+`node tests/core/journal-byte-identity.test.js --capture` and committed under
+`tests/fixtures/journal-{run,resume,submit}-baseline.jsonl`. The test replays the same three flows
+against the new code and byte-compares after normalising only run-varying values (timestamps, ids,
+tokens, pids, paths, commit hashes); kinds, keys, values, `seq` and ordering must match exactly. The
+representative jobs: `run` and `resume` in implement mode (covers the worktree detail keys and resume's
+`session_strategy`), `submit` plain. All three byte-identical after the refactor.
+
+**Setup-failure table (criterion D), `tests/core/setup-failure.test.js`** — each case asserted once
+against `openAttempt`, directly against the state root:
+
+| Case | Injected how | Exit | Slot acquire/release | Worktree |
+|---|---|---|---|---|
+| admission full | `backendLimits: { fake: 0 }` | 14 | 1 / 0 | removed |
+| `createJob` throws | patched `store.createJob` | 17 (original) | 1 / 1 | removed |
+| `createAttemptDir` throws | patched `store.createAttemptDir` | 17 (original) | 1 / 1 | removed |
+| `persistInitFiles` throws | patched `store.getJobDir` (module fn, not a store method — its first store call) | 17 (original) | 1 / 1 | removed |
+| worktree already exists | `crypto.randomInt` pinned → deterministic jobId suffix, directory pre-created at the exact path, retried across a second boundary | 23 | 0 / 0 | pre-existing dir left untouched (ticket 90's trap) |
+
+### Discoveries
+
+- **Submit does not journal the launch in the submit process.** The ticket was filed before ticket 92
+  landed; since then the worker journals `attempt_created` + `created→running`. The submit baseline
+  proves the submit command writes only `job_created` + the worker-launch entry (seq 1–2; seq 3–6 are
+  the worker's). `openAttempt` therefore takes `journalLaunch: false` for submit — the ticket's
+  `admission: null` cannot be the journaling signal, because admission-less runs must still journal
+  (attempt-population tests run without an admission controller).
+- **The capacity message differed between run and resume** (`...or use "submit" instead.` vs `Try again
+  later.`). Unified to run's wording (mentions submit). Not journaled, not quoted in any doc; no
+  exit-code or `status.json` change.
+- **Submit's `command.json` diverges from its job mode**: job `mode: 'submit'` but `command.mode:
+  'run'`, and `hardTimeoutMs` is `0` when `--hard-timeout-sec` is absent while run/resume use the
+  `JOB_HARD_TIMEOUT_MS` default. Preserved via `commandMode` and `hardTimeoutMs` options; nothing reads
+  `command.json`, but the fixture keeps it identical anyway.
+- **Ordering change for submit**: `prompt.txt`/`params.json` are now written after `createAttemptDir` +
+  `persistInitFiles` instead of between `createJob` and `createAttemptDir`. No journal impact (proved by
+  the byte-identical baseline); nothing reads those files before the worker starts.
+- **Dead code removed**: `parentMode` in `resume.js` (declared, never used).
+- `tests/core/setup-cleanup.test.js`, `attempt-population.test.js`, `resume.test.js`, `commands.test.js`,
+  `submit-launch-identity.test.js`, `submit-e2e.test.js` and `npm run lint` all green. Per the task
+  brief, the full suite was not run; the touched paths are covered by the suites above plus the two new
+  ones.
