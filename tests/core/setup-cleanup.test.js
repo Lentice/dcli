@@ -14,6 +14,7 @@ const { generateJobId } = require('../../core/job-id');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
 const { executeRun } = require('../../core/commands/run');
 const { executeResume } = require('../../core/commands/resume');
+const { DEFAULT_TIMEOUT } = require('../run-tests');
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-setup-cleanup-'));
@@ -27,7 +28,7 @@ function withTempDir(fn) {
 }
 
 function git(args, cwd) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: DEFAULT_TIMEOUT });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
   return result.stdout.trim();
 }

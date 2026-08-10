@@ -3,12 +3,14 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+const { DEFAULT_TIMEOUT } = require('../run-tests');
+
 function runGit(args, cwd) {
   const result = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 30000,
+    timeout: DEFAULT_TIMEOUT,
   });
   if (result.status !== 0) {
     throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);

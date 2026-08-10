@@ -11,6 +11,10 @@ const MAX_CONCURRENCY = 64;
 const MAX_OUTPUT = 256 * 1024;
 const CLOSE_GUARD_MS = 50;
 const HEADER_LINE_COUNT = 8;
+// A file using this fraction of its budget is treated as load-stressed and
+// reported in the summary, so a run that nearly failed does not look like one
+// that passed comfortably (ticket 105).
+const NEAR_CAP_FRACTION = 0.5;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -71,7 +75,7 @@ async function runTests(opts = {}) {
   return formatResults(fileMeta, allResults, suite);
 }
 
-module.exports = { runTests, createOutputCapture };
+module.exports = { runTests, createOutputCapture, DEFAULT_TIMEOUT };
 
 // ---------------------------------------------------------------------------
 // CLI entry point
@@ -460,6 +464,22 @@ function formatResults(active, results, suite) {
       for (const l of f.stderr.split('\n')) {
         lines.push(`    ${l}`);
       }
+    }
+  }
+
+  const nearCap = results
+    .filter(r => r.timeoutMs > 0 && r.elapsedMs >= r.timeoutMs * NEAR_CAP_FRACTION)
+    .sort((a, b) => b.elapsedMs / b.timeoutMs - a.elapsedMs / a.timeoutMs);
+  if (nearCap.length > 0) {
+    lines.push('');
+    lines.push('--- LOAD ---');
+    lines.push(`The following files used ${Math.round(NEAR_CAP_FRACTION * 100)}% or more of their file budget.`);
+    lines.push('This suite is process-bound; a run this close to its caps is load-sensitive, and under');
+    lines.push('concurrent host load any of these files can be the one that loses. Re-run when the machine');
+    lines.push('is quieter or with a lower --concurrency before trusting the result.');
+    for (const r of nearCap) {
+      const pct = Math.round((r.elapsedMs / r.timeoutMs) * 100);
+      lines.push(`  ${r.rel}  (${r.elapsedMs} ms / ${r.timeoutMs} ms, ${pct}% of budget)`);
     }
   }
 

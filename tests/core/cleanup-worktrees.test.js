@@ -5,13 +5,15 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+const { DEFAULT_TIMEOUT } = require('../run-tests');
+
 const { JobStore } = require('../../core/job-store');
 const { LockManager, LOCK_SCOPES } = require('../../core/locking');
 const { executeCleanup } = require('../../core/commands/cleanup');
 const { loadJobOrThrow } = require('../../core/commands/index');
 
 function git(args, cwd) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: DEFAULT_TIMEOUT });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
   return result.stdout.trim();
 }
@@ -97,7 +99,7 @@ function createExpiredIdentitylessJob(store, { repoKey, jobId, repoRoot, worktre
 
 function cleanupTree(root, repoRoot, worktreePaths) {
   for (const worktreePath of worktreePaths) {
-    try { spawnSync('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, windowsHide: true, timeout: 30000 }); } catch {}
+    try { spawnSync('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, windowsHide: true, timeout: DEFAULT_TIMEOUT }); } catch {}
   }
   try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
 }

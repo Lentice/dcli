@@ -5,6 +5,8 @@ const { spawn, execSync, spawnSync } = require('node:child_process');
 const path = require('path');
 const fs = require('fs');
 
+const { DEFAULT_TIMEOUT } = require('../run-tests');
+
 let Containment, HELPER_PATH;
 
 function loadModule() {
@@ -24,7 +26,7 @@ function getDescendants(pid) {
   try {
     const out = execSync(
       `wmic process where "ParentProcessId=${pid}" get ProcessId /format:csv`,
-      { encoding: 'utf8', timeout: 3000, windowsHide: true }
+      { encoding: 'utf8', timeout: DEFAULT_TIMEOUT, windowsHide: true }
     );
     const ids = [];
     for (const line of out.trim().split('\n').slice(1)) {
@@ -126,10 +128,10 @@ async function main() {
           process.stdout.write(JSON.stringify(r) + '\\n');
         });
         process.stdin.on('data', () => {});
-      `], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, timeout: 5000 });
+      `], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, timeout: DEFAULT_TIMEOUT });
 
       let buf = '';
-      const to = setTimeout(() => reject(new Error('timeout')), 5000);
+      const to = setTimeout(() => reject(new Error('timeout')), DEFAULT_TIMEOUT);
       child.stdout.on('data', (d) => {
         buf += d.toString();
         for (const line of buf.split('\n')) {
@@ -260,7 +262,7 @@ function queryDesktopWindows() {
   const res = spawnSync(
     'powershell', ['-NoProfile', '-Command',
       '(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Measure-Object).Count'],
-    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+    { encoding: 'utf8', timeout: DEFAULT_TIMEOUT, windowsHide: true }
   );
   if (res.error || res.status !== 0) {
     const detail = (res.stderr || (res.error && res.error.message) || '').toString().trim();
@@ -276,7 +278,7 @@ function queryDesktopWindows() {
 function findDescendantWindows(pids) {
   const psScript = `$pids = @(${pids.join(',')}); (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $pids -contains $_.Id } | Select-Object -ExpandProperty Id) -join ','`;
   const res = spawnSync('powershell', ['-NoProfile', '-Command', psScript],
-    { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    { encoding: 'utf8', timeout: DEFAULT_TIMEOUT, windowsHide: true });
   if (res.error || res.status !== 0 || (res.stderr || '').trim()) return null;
   const trimmed = (res.stdout || '').trim();
   if (!trimmed) return [];

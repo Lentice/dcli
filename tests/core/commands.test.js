@@ -8,6 +8,7 @@ const { spawnSync, spawn } = require('child_process');
 
 const { JobStore } = require('../../core/job-store');
 const { FakeAdapter } = require('../../adapters/fake/adapter');
+const { DEFAULT_TIMEOUT } = require('../run-tests');
 
 const CLI = path.resolve(__dirname, '../../cli/dcli.js');
 const TERMINAL = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
@@ -27,7 +28,10 @@ function spawnCli(args, stdin, env) {
   const opts = {
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 15000,
+    // Derived from the runner's own per-file budget (ticket 105): 15 s was a
+    // load-sensitive absolute bound unrelated to what these tests assert, and
+    // a contended CLI invocation could exceed it and read as a hang.
+    timeout: DEFAULT_TIMEOUT,
   };
   if (stdin !== undefined) {
     opts.input = stdin;
@@ -218,13 +222,14 @@ await withTempDir(async (dir) => {
     const killTimer = setTimeout(() => {
       child.kill();
       resolve(null);
-    }, 15000);
+    }, DEFAULT_TIMEOUT);
     child.on('exit', (code) => {
       clearTimeout(killTimer);
       resolve(code);
     });
   });
-  assert.strictEqual(exitCode, 0, `silent pipe must exit 0, got ${exitCode}`);
+  assert.strictEqual(exitCode, 0,
+    `silent pipe must exit 0, got ${exitCode}${exitCode === null ? ` (killed after the ${DEFAULT_TIMEOUT} ms test budget)` : ''}`);
   console.log('PASS: run test 8 — open-but-silent stdin bounded read');
 });
 

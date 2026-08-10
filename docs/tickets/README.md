@@ -59,7 +59,6 @@ recommended order.
 | [102 — unix process-group containment](102-unix-process-group-containment.md) | ready | — | Rung 1 of ADR-010. Backends are spawned without `detached` and killed by pid, so descendants survive; on Unix this is a full guarantee costing one spawn option |
 | [103 — windows degraded tree kill](103-windows-declared-degraded-tree-termination.md) | blocked | 102 | Rung 2 of ADR-010. Verified descendant enumeration + `taskkill /T /F`, `degraded: true`, survivors named and exit `21` — never a kill it did not confirm |
 | [104 — generate this table](104-generate-the-ticket-tracker.md) | ready | — | The tracker's own documented trigger fired at more than ten open tickets; ticket files become the source of status, with a regenerate-and-compare gate in `npm run check` |
-| [105 — the suite is not reliably green](105-full-suite-is-not-reliably-green.md) | ready | — | Two runs of `npm run check` on one unchanged tree failed with different file sets; four `core` suites hit the 120 s cap at the default concurrency and all pass at `--concurrency 4` |
 
 ## Closed
 
@@ -78,6 +77,7 @@ recommended order.
 | [87 — remove unused runtime imports](87-remove-unused-runtime-imports.md) | **done** (2026-08-09) | — | Remove verified unused import bindings from nine runtime modules without changing lint policy or contracts |
 | [90 — setup resource cleanup](90-setup-failure-releases-resources.md) | **done** (2026-08-09) | — | A run/resume setup exception releases the worktree and admission slot it acquired before rethrowing |
 | [91 — headless containment test](91-containment-test-headless-safe.md) | **done** (2026-08-09) | — | Keep containment coverage reliable and explicit without a desktop dependency |
+| [105 — the suite is not reliably green](105-full-suite-is-not-reliably-green.md) | **done** (2026-08-10) | — | Misleading `ETIMEDOUT`-as-crash diagnostics fixed, load-sensitive internal budgets derived from the runner's cap, near-cap runs reported; default concurrency kept — green on ten consecutive runs |
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was
 closed because it was abandoned, with nothing built. The distinction is in the Status column and in each

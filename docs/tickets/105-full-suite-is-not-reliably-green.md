@@ -286,4 +286,143 @@ ticket 105: the full suite is reliably green at its own default
 
 ## Notes
 
-(Left empty by the author.)
+**Implemented 2026-08-10.** Commit `ticket 105: the full suite is reliably green at its own default`.
+All measurements below were taken on the filing machine (Windows, 20 cores, default runner concurrency
+`os.cpus().length - 2` = 18) on an otherwise idle host, per the trap note.
+
+### 1. Measurement (12 full-suite runs: concurrency 1 / 4 / 8 / default, three each)
+
+Every run exited 0. The suite is green at **every** concurrency level on an idle machine, including the
+default. Wall-clock totals:
+
+| Concurrency | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| 1 | 193.2 s | 194.8 s | 200.5 s |
+| 4 | 174.2 s | 170.8 s | 183.4 s |
+| 8 | 198.1 s | 178.5 s | 183.3 s |
+| default (18) | 195.7 s | 181.2 s | 185.1 s |
+
+Longest per-file durations were stable and far below their caps — the four files that hit the 120 s cap
+in the filing runs were 20–60× under it here:
+
+| File | c1 | c4 | default |
+|---|---|---|---|
+| `core/test-runner.test.js` (@serial) | 40.8 s | 40.7 s | 40.9 s |
+| `core/worktree.test.js` (@serial, 180 s cap) | 26–30 s | 24–30 s | 27–33 s |
+| `core/commands.test.js` (@serial) | 15.8 s | 15–16 s | 15.5–16 s |
+| `core/review.test.js` | 9–10 s | 12–16 s | 13–15 s |
+| `core/containment.test.js` (@serial) | 11.6 s | 11.5–11.8 s | 11.7–11.8 s |
+| `core/setup-cleanup.test.js` | 6 s | 9.9–11 s | 11 s |
+| `core/missing-job-exit-3.test.js` | 4.7 s | 4.7–5.6 s | 5.0–5.4 s |
+| `core/job-store.test.js` | 1.2 s | 1.6–1.8 s | 1.8–1.9 s |
+
+No file exceeded ~34% of its budget on any idle run (the worst is always `test-runner.test.js`, which is
+`@serial` and therefore concurrency-independent).
+
+### 2. Which effect dominates
+
+**Neither the cap nor the default concurrency is the defect — the load is, and it arrives from outside
+the suite.** The filing measurements (four files over the 120 s cap at the default) were taken *while the
+author was committing tickets 92–104*, i.e. while other agent sessions were spawning subprocesses on the
+same host — exactly the contention this ticket's trap note warns about. Idle, the same files run in
+1.9–16 s. The suite's own 18-way pool does not push them anywhere near the cap; the filing failures were
+an uncontrolled external load laid on top of it.
+
+The internal 5 s / 15 s `spawnSync` budgets were the *proximate* cause of the two observed "crashes"
+(`locking.test.js` "Child must exit cleanly", `submit-e2e.test.js` "submit exited null"): a hand-picked
+absolute number smaller than the runner's cap that fires under contention, reports `status: null`, and
+was misdiagnosed as a child crash. Those are defects in the tests and were corrected. The four
+cap-hits were a symptom of the same external load, not of the default being wrong.
+
+### 3. Corrections (each argued as correction, not compensation)
+
+- **`tests/run-tests.js` — misleading diagnostics + contention reporting.** Added a `--- LOAD ---`
+  summary section: any file using ≥ 50% of its effective budget is listed with its percentage, so a run
+  that nearly failed never looks identical to one that passed comfortably (acceptance F; the filing
+  trap "the quick suite must name what it skipped" applied to reporting). No retry logic of any kind
+  (acceptance D). `DEFAULT_TIMEOUT` is now exported so tests can derive their bounds from the runner's
+  budget.
+- **`tests/helpers/spawn-assert.js` (new).** One place that distinguishes `error.code === 'ETIMEDOUT'`
+  (the test's own budget expired — name the budget) from a real crash (report status, error code,
+  stderr). Replaces the "Child must exit cleanly"-style assertions (acceptance B).
+- **Budgets derived from the runner's cap** (corrected the load-sensitive absolute numbers; acceptance C):
+  `locking.test.js:186` 5 s→`DEFAULT_TIMEOUT`, `state-root.test.js:52` 5 s→`DEFAULT_TIMEOUT`,
+  `containment.test.js` 3 s/5 s/5 s/5 s→`DEFAULT_TIMEOUT` (wmic, spawn, two powershell queries),
+  `commands.test.js` `spawnCli` 15 s→`DEFAULT_TIMEOUT` plus the open-stdin kill-timer 15 s→`DEFAULT_TIMEOUT`,
+  `job-store.test.js:689` 15 s→`DEFAULT_TIMEOUT`, `submit-e2e.test.js` three 15 s and one 120 s→`DEFAULT_TIMEOUT`,
+  `cleanup-worktrees.test.js` / `setup-cleanup.test.js` / `git-repo-template.js` git ops 30 s→`DEFAULT_TIMEOUT`.
+  None of these asserts anything about duration; each was a hang-stop that fired *before* the runner's own
+  cap would, so leaving it was a smaller bound than the suite's single finite default — removing the
+  discrepancy is a correction, not a weakened assertion. Invariant 3 (finite default) is untouched: the
+  runner's per-file cap is the same finite bound it always was.
+- **`docs/engineering/testing.md`** — added a "Rules learned the hard way" entry recording the convention:
+  test-internal spawn bounds are derived from the runner's budget, never hand-picked, and an `ETIMEDOUT`
+  is reported as the test's budget expiring. The "Do not weaken concurrency, budgets, or assertions to
+  compensate" line is unchanged (acceptance E: concurrency did not change, so the note was updated with
+  the reasoning rather than contradicted).
+
+### 4. Concurrency decision: **unchanged** (acceptance E satisfied by not changing it)
+
+The default stays `max(1, os.cpus().length - 2)`. Argument from the measurements in §1: on an idle
+normal development machine the default is green with the worst file at ~34% of its cap, and the ticket's
+own discriminator ("if files pass at concurrency 4 but durations are still within 2× of the cap, the
+load is the problem") points at load, not at the default. Lowering the default would (a) not fix the
+filing failures, which were caused by uncontrolled *external* load that no suite-internal concurrency
+setting controls, (b) slow an already slow suite, and (c) be the exact compensation the testing note
+forbids. It is not a correction because the number is not wrong for this workload. The remaining failure
+mode — a file pushed past the runner's cap by external load — now fails with a truthful message ("timed
+out after 120000 ms" plus the LOAD listing) instead of a misleading crash report.
+
+### 5. Remaining absolute `timeout:` numbers, per file (acceptance C)
+
+- `tests/core/test-runner.test.js` (×8, 10000 ms): the runner's own usage-error assertions. `@serial`,
+  exercises the import-free parse-error fast path, completes in milliseconds; 10 s is a fast-fail bound
+  so a genuinely hung runner CLI fails in 10 s rather than burning the file's 120 s cap. Assertions now
+  route through `assertSpawnStatus`, which names the budget on `ETIMEDOUT`.
+- `tests/adapters/opencode/*` (`where`/`which` 5000 ms, git 10 s, live run 30–240 s, `http.get` 2 s):
+  env-gated live-backend tests (`DCLI_OPENCODE_LIVE_SMOKE`), all `@serial`, most `@timeout-ms 600000`.
+  They skip in every `npm run check` on a normal machine; the budgets size a real backend run.
+- `tests/adapters/codex/live-smoke.test.js` (10 s probe + `LiveSmoke(30000)`): `@serial`, skips when
+  codex is absent. On this machine codex *is* installed, so it runs a real ~20 s live smoke inside the
+  `npm run check` gate; it is well inside its 120 s file cap and was green on all ten runs. Noted because
+  it is a live dependency inside the gate that pre-dates this ticket — it is not a load-flake.
+- `tests/adapters/opencode/server-kill-tree.test.js` / `server-teardown.test.js`: `@serial` opencode
+  server-tree tests, not part of the observed failure set; green on all ten runs. Left untouched to keep
+  the change scoped to the flake.
+
+### 6. Discoveries (recorded per AGENTS.md)
+
+- **The ticket's "eleven files that already carry `@serial`" is stale.** The tree now has **19**
+  non-fixture test files carrying `@serial` (22 grep hits minus `tests/run-tests.js`'s mention and two
+  fixture files). No serial marker was added or removed here; the existing markers were not the cause.
+- **`state-root.test.js` silently skips its current-user ACL check when `whoami` fails.** With the
+  budget derived it will not skip under load, but the skip-on-failure behaviour is pre-existing and
+  out of scope; recorded for a future ticket.
+- **`review.test.js` carries a redundant `@timeout-ms 120000`** equal to the runner default. Kept as
+  documentation of its load-sensitivity; removing it would change nothing.
+- The filing table's over-cap files are not slow in isolation; the original observation was taken during
+  concurrent agent activity. This is exactly the trap-note caveat, now measured.
+
+### 7. Verification
+
+- `node tests/core/test-runner.test.js` — PASS.
+- `node tests/run-tests.js --suite full --concurrency 4` — exit 0, all groups pass, no LOAD section.
+- Post-fix default run — exit 0, no LOAD section.
+- Agent checks: `grep -rniE "retry|retries|attempt [0-9]|re-?run" tests/run-tests.js` → no matches
+  (no retry); remaining `timeout:` numbers justified above.
+- **Acceptance A: ten consecutive `npm run check` at the default, all green**, on the idle machine:
+
+  | Run | Exit | Duration |
+  |---|---|---|
+  | 1 | 0 | 205.6 s |
+  | 2 | 0 | 200.4 s |
+  | 3 | 0 | 191.5 s |
+  | 4 | 0 | 191.4 s |
+  | 5 | 0 | 191.6 s |
+  | 6 | 0 | 195.7 s |
+  | 7 | 0 | 207.0 s |
+  | 8 | 0 | 184.0 s |
+  | 9 | 0 | 189.9 s |
+  | 10 | 0 | 200.0 s |
+
+  Mean ≈ 195.7 s per run; none printed a LOAD or FAILURES section; nothing newly skipped.

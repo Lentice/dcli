@@ -7,6 +7,7 @@ const { spawnSync } = require('child_process');
 
 const RUNNER = path.resolve(__dirname, '..', 'run-tests.js');
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
+const { assertSpawnStatus } = require('../helpers/spawn-assert');
 // The nested runner starts several child Node processes; 5 s flakes when the
 // outer full suite is concurrently creating git and backend fixtures.
 const FIXTURE_TIMEOUT = 10000;
@@ -110,22 +111,22 @@ async function main() {
     // -----------------------------------------------------------------------
     {
       const r1 = spawnSync(RUNNER_BIN, [RUNNER, '--concurrency', '--suite', 'quick'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r1.status, 2, 'Missing concurrency value must exit 2');
+      assertSpawnStatus(r1, 2, 'Missing concurrency value must exit 2', 10000);
       const r2 = spawnSync(RUNNER_BIN, [RUNNER, '--concurrency', 'abc'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r2.status, 2, 'Non-integer concurrency must exit 2');
+      assertSpawnStatus(r2, 2, 'Non-integer concurrency must exit 2', 10000);
       const r3 = spawnSync(RUNNER_BIN, [RUNNER, '--concurrency', '99'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r3.status, 2, 'Out-of-range concurrency must exit 2');
+      assertSpawnStatus(r3, 2, 'Out-of-range concurrency must exit 2', 10000);
       const r4 = spawnSync(RUNNER_BIN, [RUNNER, '--timeout-ms', '--suite', 'full'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r4.status, 2, 'Missing timeout-ms value must exit 2');
+      assertSpawnStatus(r4, 2, 'Missing timeout-ms value must exit 2', 10000);
       const r5 = spawnSync(RUNNER_BIN, [RUNNER, '--timeout-ms', '999'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r5.status, 2, 'Out-of-range timeout-ms must exit 2');
+      assertSpawnStatus(r5, 2, 'Out-of-range timeout-ms must exit 2', 10000);
       const r6 = spawnSync(RUNNER_BIN, [RUNNER, '--suite'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r6.status, 2, 'Missing suite value must exit 2');
+      assertSpawnStatus(r6, 2, 'Missing suite value must exit 2', 10000);
       const r7 = spawnSync(RUNNER_BIN, [RUNNER, '--suite', 'unknown'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r7.status, 2, 'Bad suite value must exit 2');
+      assertSpawnStatus(r7, 2, 'Bad suite value must exit 2', 10000);
       // Reject positional arguments
       const r8 = spawnSync(RUNNER_BIN, [RUNNER, 'garbage'], { timeout: 10000, windowsHide: true, encoding: 'utf8' });
-      assert.strictEqual(r8.status, 2, 'Positional argument must exit 2');
+      assertSpawnStatus(r8, 2, 'Positional argument must exit 2', 10000);
     }
 
     console.log('PASS: all test-runner tests');

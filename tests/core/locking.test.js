@@ -4,6 +4,9 @@ const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
 
+const { DEFAULT_TIMEOUT } = require('../run-tests');
+const { assertSpawnStatus } = require('../helpers/spawn-assert');
+
 let LockManager, LOCK_SCOPES, LOCK_EXIT_CODE;
 
 function loadModules() {
@@ -183,11 +186,14 @@ console.log('PASS: in-process contention');
   `;
 
   const child = spawnSync(process.execPath, ['-e', childScript], {
-    timeout: 5000,
+    // Derived from the runner's own per-file budget (ticket 105): a hand-picked
+    // 5 s bound is a load-sensitive absolute number unrelated to what this test
+    // asserts, and it misreported a contended child as a crash.
+    timeout: DEFAULT_TIMEOUT,
     windowsHide: true,
     encoding: 'utf8',
   });
-  assert.strictEqual(child.status, 0, 'Child must exit cleanly');
+  assertSpawnStatus(child, 0, 'Child must exit cleanly', DEFAULT_TIMEOUT);
 
   // Child exited, lock file should be stale
   // Parent should be able to reclaim it

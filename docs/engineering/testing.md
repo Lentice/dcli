@@ -115,6 +115,13 @@ Kill the controller at each point and assert the job is recoverable or explicitl
   created.
 - **Synchronize on observed state, not sleeps.** Fixed `sleep` delays make suites slow and load-flaky; use
   ready/release markers.
+- **A test's internal spawn bound is derived from the runner's budget, never hand-picked.** A
+  `spawnSync`/`execSync` `timeout` smaller than the runner's per-file cap is a load-sensitive absolute
+  number that fires under contention long before the runner would, and its `status: null` +
+  `error.code === 'ETIMEDOUT'` is indistinguishable from a crash unless checked. Report the test's own
+  budget expiring, never "the child crashed" — see `tests/helpers/spawn-assert.js`. A budget whose only
+  job is to stop a hang is derived from the runner's budget (`DEFAULT_TIMEOUT`) or dropped so the runner's
+  cap is the single bound (ticket 105).
 - Fault injection comes **before** broad feature tests. Kill the controller at each defined crash point
   and assert the job is terminal or `interrupted` — never stuck `running`, never orphaned.
 - The quick suite must **name** what it skipped. A silently shrinking suite is how coverage rots.

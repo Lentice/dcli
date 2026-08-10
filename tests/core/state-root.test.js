@@ -4,6 +4,8 @@ const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
 
+const { DEFAULT_TIMEOUT } = require('../run-tests');
+
 const { ensureStateRoot, getStateRootAcl, resetCache } = require('../../core/state-root');
 
 function tmpDir() {
@@ -49,7 +51,7 @@ function clean(dir) {
       }
 
       // Verify current user has (OI)(CI)F
-      const whoami = spawnSync('whoami', [], { timeout: 5000, encoding: 'utf8', windowsHide: true });
+      const whoami = spawnSync('whoami', [], { timeout: DEFAULT_TIMEOUT, encoding: 'utf8', windowsHide: true });
       const user = whoami.stdout ? whoami.stdout.trim() : '';
       if (user) {
         const lower = acl.toLowerCase();

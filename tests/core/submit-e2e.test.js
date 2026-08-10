@@ -7,6 +7,8 @@ const { spawnSync } = require('child_process');
 
 const { JobStore } = require('../../core/job-store');
 const { computeRepoKeyWithPath } = require('../../core/repo-key');
+const { DEFAULT_TIMEOUT } = require('../run-tests');
+const { assertSpawnStatus } = require('../helpers/spawn-assert');
 
 const CLI = path.resolve(__dirname, '../../cli/dcli.js');
 const TERMINAL = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
@@ -25,10 +27,10 @@ async function main() {
       const result = spawnSync(process.execPath, [CLI, '--backend', 'fake', 'submit', '--hard-timeout-sec', '60', '--group', 't29', 'background task from test'], {
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 15000,
+        timeout: DEFAULT_TIMEOUT,
         env,
       });
-      assert.strictEqual(result.status, 0, `submit exited ${result.status}: ${result.stderr}`);
+      assertSpawnStatus(result, 0, 'submit must exit 0', DEFAULT_TIMEOUT);
 
       const jobId = result.stdout.trim();
       assert.ok(jobId.length >= 16, `Expected jobId, got: "${jobId}"`);
@@ -66,19 +68,19 @@ async function main() {
       const submitResult = spawnSync(process.execPath, [CLI, '--backend', 'fake', 'submit', '--hard-timeout-sec', '60', '--group', 't29-wait', 'background task'], {
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 15000,
+        timeout: DEFAULT_TIMEOUT,
         env,
       });
-      assert.strictEqual(submitResult.status, 0, `submit exited ${submitResult.status}`);
+      assertSpawnStatus(submitResult, 0, 'submit must exit 0', DEFAULT_TIMEOUT);
 
       // Now wait --all --group should complete (not time out)
       const waitResult = spawnSync(process.execPath, [CLI, '--backend', 'fake', 'wait', '--group', 't29-wait', '--all', '--timeout-sec', '90'], {
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 120000,
+        timeout: DEFAULT_TIMEOUT,
         env,
       });
-      assert.strictEqual(waitResult.status, 0, `wait --all exited ${waitResult.status}: ${waitResult.stderr}`);
+      assertSpawnStatus(waitResult, 0, 'wait --all must exit 0', DEFAULT_TIMEOUT);
       assert.ok(waitResult.stdout.includes('done'), `Expected 'done' in wait output: ${waitResult.stdout}`);
       console.log('PASS: wait --all --group completes for submit-created jobs');
     } finally {
@@ -97,10 +99,10 @@ async function main() {
       const result = spawnSync(process.execPath, [CLI, '--backend', 'fake', 'submit', '--hard-timeout-sec', '60', '--group', 't29-adm', 'another background task'], {
         encoding: 'utf8',
         windowsHide: true,
-        timeout: 15000,
+        timeout: DEFAULT_TIMEOUT,
         env,
       });
-      assert.strictEqual(result.status, 0, `submit exited ${result.status}`);
+      assertSpawnStatus(result, 0, 'submit must exit 0', DEFAULT_TIMEOUT);
       const jobId = result.stdout.trim();
       assert.ok(jobId.length >= 16);
 

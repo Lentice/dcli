@@ -4,6 +4,9 @@ const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
 
+const { DEFAULT_TIMEOUT } = require('../run-tests');
+const { assertSpawnStatus } = require('../helpers/spawn-assert');
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -686,7 +689,7 @@ console.log('PASS: journal replay');
   const readers = [];
   for (let i = 0; i < READER_COUNT; i++) {
     const proc = spawnSync(process.execPath, ['-e', readerScript], {
-      timeout: 15000,
+      timeout: DEFAULT_TIMEOUT,
       windowsHide: true,
       encoding: 'utf8',
     });
@@ -707,10 +710,7 @@ console.log('PASS: journal replay');
   // Wait for readers (they already completed since spawnSync is blocking)
   // Reap results — actually we used spawnSync which already finished
   for (const reader of readers) {
-    if (reader.error) {
-      assert.fail(`Reader process error: ${reader.error.message}`);
-    }
-    assert.strictEqual(reader.status, 0, `Reader exited with code ${reader.status}: ${reader.stderr}`);
+    assertSpawnStatus(reader, 0, 'Reader must exit 0', DEFAULT_TIMEOUT);
   }
   
   clean(root);
