@@ -6,6 +6,7 @@ const { buildCmdInvocation } = require('./cmd-quoting');
 const { applyProcessLifecycle } = require('../shared/process-lifecycle');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 const { runAdapterSmoke } = require('../../core/adapter-smoke');
+const { isGitRepo } = require('../../core/worktree');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
 const STARTUP_SENTINEL_MS = 10000;
@@ -97,7 +98,7 @@ function resolveCodexPath() {
  * @param {string} [opts.effort]
  * @param {string} [opts.reasoningEffort]
  * @param {string[]} [opts.addDirs]
- * @param {boolean} [opts.skipGitRepoCheck]
+ * @param {boolean} [opts.skipGitRepoCheck]  force --skip-git-repo-check; auto-detected otherwise
  * @returns {string[]}
  */
 function buildArgv(opts) {
@@ -140,8 +141,11 @@ function buildArgv(opts) {
   // Result file
   argv.push('-o', opts.resultFilePath);
 
-  // Skip git repo check when outside a git repository
-  if (opts.skipGitRepoCheck) {
+  // Skip git repo check when outside a git repository. The engine allows
+  // run/submit in non-git directories (only apply requires a repo), and codex
+  // refuses to start there unless told otherwise — auto-detect so a plain
+  // directory "just works", with an explicit override for tests/callers.
+  if (opts.skipGitRepoCheck || !isGitRepo(opts.workDir)) {
     argv.push('--skip-git-repo-check');
   }
 

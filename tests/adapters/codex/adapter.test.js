@@ -543,6 +543,20 @@ if (process.platform !== 'win32') {
 }
 
 // ===========================================================================
+// 16b. buildArgv auto-detects a non-git workDir and skips the repo check
+// ===========================================================================
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-nongit-'));
+  try {
+    const argv = buildArgv({ workDir: tmp, resultFilePath: path.join(tmp, 'r.txt') });
+    assert.ok(argv.includes('--skip-git-repo-check'), 'Non-git workDir should auto-add --skip-git-repo-check');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  console.log('PASS: buildArgv auto-detects a non-git workDir');
+}
+
+// ===========================================================================
 // 17. Resume stores kind for continue_backend_session
 // ===========================================================================
 {

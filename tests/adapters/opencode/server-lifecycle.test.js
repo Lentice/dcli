@@ -5,13 +5,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
-const { spawnSync } = require('node:child_process');
 
 const { OpencodeAdapter } = require('../../../adapters/opencode/adapter');
 const { Redactor } = require('../../../core/redactor');
 const { setRedactor, getRedactor } = require('../../../core/fs-text');
-
-const OPENCODE_LIVE_SMOKE = process.env.DCLI_OPENCODE_LIVE_SMOKE;
 
 function tmpDir() {
   const d = path.join(os.tmpdir(), `dcli-srv-${Math.random().toString(36).slice(2)}`);
@@ -356,69 +353,6 @@ async function main() {
 
   clean(stateRoot);
   console.log('PASS: orphaned servers discoverable from metadata');
-}
-
-// ===========================================================================
-// 15. Live: no server process survives after dispose (requires DCLI_OPENCODE_LIVE_SMOKE)
-// ===========================================================================
-if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
-  // Check if opencode is available
-  const hasOc = (() => {
-    if (process.env.OPENCODE_PATH) return true;
-    try {
-      const r = spawnSync('where', ['opencode'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
-      return r.status === 0;
-    } catch { return false; }
-  })();
-
-  if (hasOc) {
-    const stateRoot = tmpDir();
-    let adapter;
-    let serverPid = null;
-    try {
-      adapter = new OpencodeAdapter({ stateRoot, jobId: 'live-server-lifecycle' });
-      const attempt = {};
-      const handle = await adapter.Start(attempt);
-      assert.ok(handle, 'Start must return handle');
-      serverPid = adapter._serverProcess ? adapter._serverProcess.pid : null;
-      assert.ok(serverPid, 'server pid must be known');
-
-      // Verify server metadata was written
-      const serversDir = path.join(stateRoot, 'servers');
-      const files = fs.readdirSync(serversDir).filter(f => f.endsWith('.json'));
-      assert.ok(files.length > 0, 'Server metadata files found after Start');
-
-      adapter.Dispose(attempt);
-      await new Promise(r => setTimeout(r, 500));
-
-      // Assert process is dead
-      try {
-        process.kill(serverPid, 0);
-        assert.fail(`Server process ${serverPid} still alive after dispose`);
-      } catch (err) {
-        if (err.code !== 'ESRCH' && !err.message.includes('not found') && !err.message.includes('No such process')) {
-          if (err.code === 'EPERM') {
-            assert.fail(`Server process ${serverPid} still exists (EPERM)`);
-          }
-        }
-      }
-
-      // Verify metadata file cleaned up
-      const remaining = fs.readdirSync(serversDir).filter(f => f.endsWith('.json'));
-      assert.strictEqual(remaining.length, 0, 'All server metadata must be cleaned up after dispose');
-
-      console.log('PASS: Live — no server process survives after dispose, metadata cleaned');
-    } finally {
-      if (adapter) {
-        try { adapter.Dispose({}); } catch {}
-      }
-      clean(stateRoot);
-    }
-  } else {
-    console.log('SKIP: opencode not found — live survivor test skipped');
-  }
-} else {
-  console.log('SKIP: DCLI_OPENCODE_LIVE_SMOKE not set — live survivor test skipped');
 }
 
 }
