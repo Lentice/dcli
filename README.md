@@ -110,6 +110,10 @@ dcli-codex cleanup --older-than 1d
 dcli-opencode doctor --json
 ```
 
+Both a backgrounded `submit` and a foreground `run`/`resume` respond to `dcli cancel <job-id>`:
+the running attempt watches the same `cancel.request` file `cancel` writes, so the job reaches
+`cancelled` instead of `done` or `timed_out`.
+
 Every recipe carries an execution budget and a wait budget. That is not decoration — an unbounded wait once cost a
 user eight hours. The job hard-timeout default is 1800 seconds; the caller-side `wait` default is 300 seconds.
 They are independent: exit 20 means only that this caller stopped waiting, while the job may still be running.

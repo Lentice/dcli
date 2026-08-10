@@ -1,0 +1,95 @@
+[
+  {
+    "at": "<at>",
+    "attempt": null,
+    "detail": {
+      "access": "read-only",
+      "adapter_version": "1.0.0",
+      "agent": null,
+      "backend": "fake",
+      "backend_version": "1.0.0",
+      "capabilities_snapshot": {
+        "backend": "fake",
+        "backend_version": "1.0.0",
+        "core": {
+          "run": true,
+          "submit": true
+        },
+        "extensions": {},
+        "schema_version": 1
+      },
+      "execution_owner": "wrapper",
+      "group": null,
+      "hard_timeout_sec": 60,
+      "job_id": "<job-id>",
+      "label": null,
+      "mode": "run",
+      "model": null,
+      "parent_job_id": null,
+      "repo_key": "<repo-key>",
+      "repo_root": "<repo-root>",
+      "root_job_id": "<job-id>",
+      "schema_version": 1,
+      "session_strategy": null
+    },
+    "from": null,
+    "kind": "job_created",
+    "to": "created"
+  },
+  {
+    "at": "<at>",
+    "attempt": 1,
+    "detail": {
+      "attempt_id": "attempt-1",
+      "execution_token": "<token>"
+    },
+    "from": null,
+    "kind": "attempt_created",
+    "to": "created"
+  },
+  {
+    "at": "<at>",
+    "attempt": 1,
+    "detail": {
+      "phase": "agent_running",
+      "started_at": "<time>",
+      "worker_identity": "<identity>",
+      "worker_pid": "<pid>"
+    },
+    "from": "created",
+    "kind": "attempt_state_changed",
+    "to": "running"
+  },
+  {
+    "at": "<at>",
+    "attempt": 1,
+    "detail": {
+      "backend_pid": "<pid>",
+      "backend_session_id": "ses_baseline"
+    },
+    "from": "running",
+    "kind": "attempt_state_changed",
+    "to": null
+  },
+  {
+    "at": "<at>",
+    "attempt": 1,
+    "detail": {
+      "backend_session_id": "ses_baseline",
+      "command_exit_code": 0,
+      "failure": null,
+      "failure_reason": null,
+      "finished_at": "<time>",
+      "phase": "terminal",
+      "result_bytes": 15,
+      "tokens": {
+        "input": 1,
+        "output": 2,
+        "total": 3
+      }
+    },
+    "from": "running",
+    "kind": "attempt_state_changed",
+    "to": "done"
+  }
+]

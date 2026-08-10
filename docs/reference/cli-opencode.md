@@ -242,6 +242,10 @@ runs opencode. Not used by the wrapper.
 | native worktree | `/experimental/worktree` — namespaced extension, diagnostics only |
 | native diff/apply | `/vcs/diff`, `/vcs/apply`, `/session/{id}/diff` — extension, diagnostics only |
 
+**`dcli cancel <job-id>` reaches a foreground `run`/`resume` too.** The running
+attempt watches the same `cancel.request` file the detached worker watches, so
+a foreground job and a backgrounded one both end `cancelled`.
+
 ## dcli wrapper cleanup
 
 The wrapper command is:

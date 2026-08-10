@@ -174,6 +174,10 @@ a port, or a worktree — check for one before re-running the job.
 - **A cancel is not confirmed until the state says so.** Exit 21 means
   cancellation could not be confirmed — check `status` rather than assuming the
   job is dead.
+- **A foreground `run`/`resume` responds to `dcli cancel` exactly like a
+  backgrounded `submit` job.** The running attempt watches the same
+  `cancel.request` file the worker watches, reaches `cancelled`, and exits 0.
+  Do not treat a foreground run as uncancellable and wait out its hard budget.
 - **Never clean up a job whose diff you have not yet inspected or applied.** The
   worktree is the artifact; once it is gone the work cannot be recovered.
 

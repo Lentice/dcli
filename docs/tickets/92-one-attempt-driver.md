@@ -1,6 +1,6 @@
 # 92 — One attempt driver: the detached worker and the foreground path stop being two copies
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Correctness and trust. The foreground and background spellings of the same command have
 already drifted into four observable behavioural differences. Every future timeout, cancellation or
@@ -249,4 +249,53 @@ ticket 92: one attempt driver for foreground and detached execution
 
 ## Notes
 
-(Left empty by the author.)
+**Characterization baseline.** `tests/core/attempt-driver.test.js` section 1 runs one job through the
+foreground path (`executeRun`) and one through a real spawned worker (same fake-adapter script), then
+asserts the two journals are byte-identical after normalizing only caller/run-volatile fields
+(`at`, timestamps, `worker_pid`, `worker_identity`, `execution_token`, `backend_pid`, `job_id`,
+`root_job_id`, `repo_key`, `repo_root`) and dropping `heartbeat` lines. The normalized foreground
+journal is snapshotted to `tests/fixtures/attempt-driver/baseline.json`; the test fails if the
+current output drifts from that fixture. It was captured pre-merge and held byte-identical through the
+merge, which is what proves the merge was equivalence-preserving on the ordinary-success path.
+
+**How the four divergences were reconciled** (all in `core/commands/attempt-driver.js`):
+
+- *Worktree finalize:* `finalizeWorktreeSnapshot()` moved into the driver and spread into every
+  terminal detail (`timed_out`, `result_persistence_failed`, `process_exited`, observe-ended). The
+  worker calls `driveAttempt` with `worktreePath: null`, so it contributes nothing there today.
+- *`fallbackSessionId`:* the driver's `resolveSessionId` = `collected.backend_session_id ||
+  fallbackSessionId || null`. The worker passes `params.fallbackSessionId || null`; `submit` now writes
+  `fallbackSessionId: parentStatus.backend_session_id` into `params.json` when `--resume` is used, so a
+  fork of a parent session keeps that provenance. Criterion F is asserted in-process on `driveAttempt`.
+- *`cancel.request` watcher:* the driver polls the injected `cancelSignal` on a 2 s cadence
+  (`checkCancelRequest`, mirroring the worker's old loop) and, on first true, runs the rung walk —
+  including while `iter.next()` is pending, which is the only way a hanging backend breaks. The shared
+  factory `createCancelSignal({ jobDir })` backs both the worker and the foreground (`run`/`resume`
+  now pass one), so `dcli cancel` works on foreground jobs for the first time.
+- *`kill_skipped` on hard timeout:* the driver's single `finishTimedOut` journals
+  `kill_skipped: 'not_contained'` unconditionally. Discovery: the old worker's value was racy — if
+  `raceObserve` won the deadline race against its hard-timeout timer, `hardTimeoutKillSkipped` was
+  still null and the journal recorded `kill_skipped: null`. The driver makes it deterministic.
+
+**One `raceObserve` / one `HARD_TIMEOUT_ERROR`.** Both live only in `attempt-driver.js`; the driver's
+copy keeps the worker's stricter `throw()` forwarding. The per-iteration `setTimeout` stays **refed**
+(lessons.md §3 — an `unref()`-ed timer lets the process exit 0 mid-drain).
+
+**Other deliberate merge choices (not among the four named additions):**
+- On hard timeout the driver flushes partial result/events/findings before the `timed_out` journal
+  (the worker's behaviour; the foreground gains it).
+- Start-phase and observe-loop failures route through the foreground's `abandon()` (`failed` /
+  `adapter_start_failed`, exit 18), replacing the worker's `adapter_error`/`observe_error` +
+  `finish(1)`. No test asserted the old worker values; a throwing `driveAttempt` is caught by the
+  worker's `main().catch` (crash sentinel, exit 1).
+- The worker lost its one-shot startup heartbeat; the driver's 5 s heartbeat cadence (which the
+  foreground already used) covers liveness, within the reducer's 15 s staleness threshold.
+
+**Worker shape.** `worker.js` went from 646 to 296 lines: env validation, params/prompt load,
+admission + queueing, adapter load/validate, `attempt_created` + `running` identity journals,
+`driveAttempt` call, and `finish()`/sentinel plus the crash path. It no longer contains `raceObserve`,
+`HARD_TIMEOUT_ERROR`, `requestCancelRungs`, result persistence, or a terminal `journalTransition`.
+
+**Verified facts that held.** The four named additions are the only journal changes on their
+respective paths; `tests/contract/` and every `worker-*.test.js` pass unchanged. Exit codes,
+`status.json` fields, journal kinds and stdout bytes are unchanged.

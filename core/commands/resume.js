@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const path = require('path');
 const { generateJobId } = require('../job-id');
-const { runAttempt, prepareBackend, releaseSetupResources } = require('./attempt');
+const { prepareBackend, releaseSetupResources } = require('./attempt');
+const { driveAttempt, createCancelSignal } = require('./attempt-driver');
 const { loadJobOrThrow } = require('./index');
 const { resolveHardTimeoutMs } = require('../deadlines');
 const { createDetachedWorktree } = require('../worktree');
@@ -179,7 +180,7 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
     throw err;
   }
 
-  return runAttempt({
+  return driveAttempt({
     store, adapter, repoKey, repoRoot, jobId, attemptNum: 1, prompt, request,
     worktreePath, worktreeBaseCommit, hardTimeoutSec, admission, acquiredSlotId,
     onStarted: kind === 'continue_backend_session'
@@ -187,6 +188,9 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
       : null,
     fallbackSessionId: parentBackendSessionId,
     extraDetail: { session_strategy: kind },
+    // A foreground resume is cancellable like a worker: driveAttempt watches
+    // the same `cancel.request` file `dcli cancel` writes.
+    cancelSignal: createCancelSignal({ jobDir: store.getJobDir(repoKey, jobId) }),
   });
 }
 

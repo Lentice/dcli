@@ -102,7 +102,9 @@ check();
     const fileStatus = statusInFile(id);
     assert.ok(fileStatus, `ticket ${id} must carry a status field`);
     const vocab = fileStatus.split(/\s+\(/)[0];
-    if (id === '98' || id === '103') {
+    if (id === '92') {
+      assert.ok(row.includes(`| done |`), `row for ${id} must render "done": ${row}`);
+    } else if (id === '98' || id === '103') {
       assert.ok(row.includes(`| blocked |`), `row for ${id} must render "blocked": ${row}`);
     } else {
       assert.ok(row.includes(`| ready |`), `row for ${id} must render "ready": ${row}`);

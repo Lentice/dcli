@@ -200,6 +200,10 @@ Note the asymmetry that ADR-004 exists to protect: Codex has **no** graceful can
 runtime permission reply, while opencode has both. A shared `--approval ask` or a shared
 "cancel means abort" promise would be a lie on this backend.
 
+**`dcli cancel <job-id>` reaches a foreground `run`/`resume` too.** The running
+attempt watches the same `cancel.request` file the detached worker watches, so
+a foreground job and a backgrounded one both end `cancelled`.
+
 ## dcli wrapper cleanup
 
 The wrapper command is:

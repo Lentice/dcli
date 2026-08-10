@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const path = require('path');
 const { generateJobId } = require('../job-id');
-const { runAttempt, prepareBackend, releaseSetupResources } = require('./attempt');
+const { prepareBackend, releaseSetupResources } = require('./attempt');
+const { driveAttempt, createCancelSignal } = require('./attempt-driver');
 const { resolveHardTimeoutMs } = require('../deadlines');
 const { createDetachedWorktree } = require('../worktree');
 const { persistInitFiles } = require('../result-artifact');
@@ -107,9 +108,12 @@ async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeo
     throw err;
   }
 
-  return runAttempt({
+  return driveAttempt({
     store, adapter, repoKey, repoRoot, jobId, attemptNum: 1, prompt, request,
     worktreePath, worktreeBaseCommit, hardTimeoutSec, admission, acquiredSlotId,
+    // A foreground run is cancellable like a worker: driveAttempt watches the
+    // same `cancel.request` file `dcli cancel` writes.
+    cancelSignal: createCancelSignal({ jobDir: store.getJobDir(repoKey, jobId) }),
   });
 }
 

@@ -207,6 +207,10 @@ adapter for this backend, not delegated as it can be for Codex.
 | native worktree | `-w/--worktree` — extension, unused |
 | native background jobs | `--bg` + `claude agents` — extension, bypassed |
 
+**`dcli cancel <job-id>` reaches a foreground `run`/`resume` too.** The running
+attempt watches the same `cancel.request` file the detached worker watches, so
+a foreground job and a backgrounded one both end `cancelled`.
+
 ## dcli wrapper cleanup
 
 The wrapper command is:

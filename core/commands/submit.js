@@ -69,6 +69,10 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     mode: 'run',
     hardTimeoutMs: hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0,
     executionToken,
+    // A fork of a parent session records that session as a fallback: when the
+    // backend reports no session id, the worker's terminal detail carries the
+    // parent's, so the fork is not provenance-less (ticket 92).
+    ...(resumeJobId && parentStatus ? { fallbackSessionId: parentStatus.backend_session_id || null } : {}),
     _adapterScript: adapter.script || null,
   });
 
