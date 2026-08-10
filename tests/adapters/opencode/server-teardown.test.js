@@ -2,6 +2,7 @@
 // @serial  tears down live server process trees
 const assert = require('node:assert');
 const fs = require('node:fs');
+const http = require('node:http');
 const path = require('node:path');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
@@ -23,6 +24,7 @@ async function main() {
 
   let adapter;
   let serverPid = null;
+  let serverPort = null;
 
   try {
     adapter = new OpencodeAdapter();
@@ -32,6 +34,7 @@ async function main() {
     assert.ok(handle && typeof handle === 'object', 'Start() must return a handle');
     assert.ok(typeof handle.serverPid === 'number', 'Start() must return serverPid');
     serverPid = handle.serverPid;
+    serverPort = handle.port;
     assert.ok(serverPid > 0, `serverPid must be positive, got ${serverPid}`);
 
     assertIsAlive(serverPid, 'Server must be alive after Start()');
@@ -56,6 +59,7 @@ async function main() {
       await delay(500);
 
       assertIsDead(serverPid, 'Server must be dead after Dispose()');
+      await assertPortClosed(serverPort, 'Server port must be closed after Dispose()');
 
       console.log('PASS: server process verifiably gone after Dispose()');
     } finally {
@@ -113,6 +117,20 @@ function assertIsDead(pid, message) {
 
 function delay(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function assertPortClosed(port, message) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ hostname: '127.0.0.1', port, path: '/global/health', timeout: 2000 }, (response) => {
+      response.resume();
+      reject(new Error(`${message}: received HTTP ${response.statusCode}`));
+    });
+    request.on('error', (err) => {
+      if (['ECONNREFUSED', 'ECONNRESET', 'EPIPE'].includes(err.code)) resolve();
+      else reject(err);
+    });
+    request.on('timeout', () => request.destroy(new Error(`${message}: request timed out`)));
+  });
 }
 
 main().catch(err => {

@@ -1,4 +1,4 @@
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -768,6 +768,15 @@ class OpencodeAdapter {
     if (this._detectedVersion) return this._detectedVersion;
 
     const opencodePath = resolveOpencodePath();
+    const packagePath = path.resolve(path.dirname(opencodePath), '..', 'package.json');
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      if (typeof packageJson.version === 'string' && packageJson.version) {
+        this._detectedVersion = packageJson.version;
+        return this._detectedVersion;
+      }
+    } catch {}
+
     const { execSync } = require('node:child_process');
     try {
       const result = execSync(`"${opencodePath}" --version`, {
@@ -1585,6 +1594,18 @@ class OpencodeAdapter {
 
   _killServer() {
     if (this._serverProcess) {
+      // The Windows Bun shim spawns the real server as a child; ChildProcess.kill()
+      // only reaches the shim, so terminate the whole tree first.
+      if (process.platform === 'win32' && !this._serverProcess.killed && this._serverProcess.exitCode === null &&
+        Number.isInteger(this._serverProcess.pid) && this._serverProcess.pid > 0) {
+        try {
+          spawnSync('taskkill', ['/PID', String(this._serverProcess.pid), '/T', '/F'], {
+            windowsHide: true,
+            stdio: 'ignore',
+            timeout: 5000,
+          });
+        } catch {}
+      }
       try { this._serverProcess.kill('SIGKILL'); } catch {
         try { this._serverProcess.kill(); } catch {}
       }
