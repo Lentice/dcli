@@ -1,5 +1,7 @@
 # 93 — One table owns failure class ↔ exit code; today there are three
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Correctness of a binding, append-only contract. The exit-code mapping is what agent callers
 branch on, and it is currently three unconnected constant tables that must be kept in sync by hand.
 **Filed from:** architecture review, 2026-08-10 (verified by grep against the tree at `adcbac1`).

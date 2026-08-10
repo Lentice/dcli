@@ -1,5 +1,7 @@
 # 104 — Generate the ticket tracker table, with a staleness gate
 
+**Status:** done
+**Blocked by:** —
 **Tier:** Process integrity. The tracker's own stated trigger has fired: twelve tickets are open, past the
 documented threshold of ten. The failure mode it was written to prevent is specific and expensive — a
 sibling project accumulated twelve item files claiming work was still waiting while its tracker had them
@@ -206,4 +208,75 @@ ticket 104: generate the ticket tracker table with a staleness gate
 
 ## Notes
 
-(Left empty by the author.)
+### Status field format (decided before any edit, per Handoff)
+
+A fixed `**Status:** <value>` / `**Blocked by:** <ids>` pair on its own lines directly beneath the
+`# NN — ...` title, before `**Tier:**`. No YAML, no front-matter block — plain markdown, machine-parseable
+by line prefix. The value is one of the fixed vocabulary (`ready`, `in progress`, `blocked`, `done`,
+`closed, not implemented`, `reference`); the blockers value is `—` or a comma-separated ticket-id list
+(e.g. `**Blocked by:** 93`).
+
+The parser accepts three status forms, so no closed ticket is touched:
+
+1. **New** — `**Status:** <vocab value>` with no date. Renders the plain value in the table.
+2. **Frozen 78–86** — `**Status:** done (2026-08-04)` and `**Status:** closed 2026-08-04 — ...`. The
+   `done`/`closed` word plus a date is mapped to the README's `**done** (<date>)` /
+   `**closed, not implemented** (<date>)` cells.
+3. **Absent** — tickets with no status line (00, 87–91, 105) keep their row's existing status cell,
+   because the file cannot supply one. Discovery: the ticket's prose assumes "78–86 carry a frozen
+   status line" and the rest are open; in fact 87–91 and 105 are closed yet carry *no* status line at
+   all. The generator must preserve their README cells or the byte-for-byte requirement is unreachable.
+
+The same three-way rule applies to blockers: a clean `**Blocked by:** —` / `**Blocked by:** <ids>`
+value is derived; the frozen prose forms (78 "native helper stdin forwarding…", 82 "none — can start
+immediately.", 85 "84 (…), and 82 (…)") are preserved from the README — 85's file lists the blockers in
+the opposite order from the table, so deriving would break byte-for-byte.
+
+### Ordering
+
+Both tables keep the row order already present in `docs/tickets/README.md`. The generator reads the
+existing rows to preserve their sequence and the hand-written link text / scope cells, and regenerates
+only the Status and Blocked-by cells (and the header/separator) between the explicit markers. This is
+the only design that satisfies criterion B: the Closed table is not in numeric order (87 sits after 89,
+for instance), so a sort-by-number generator could never reproduce it. The Open table's current order
+*is* the recommended order, so preserving it keeps the recommendation. "Ordering is data" is honoured
+because the generator never imposes its own ordering — the maintainer's sequence is preserved, and a
+newly-added ticket file with no row yet is appended to the end of its table.
+
+### Migration proof (criterion B)
+
+Two-phase, per the Handoff order: the generator was written to reproduce the table as it stood (no
+status fields on 92–104), then the status fields were added. Both phases produced a zero-byte change to
+the rendered rows — `git diff` on `docs/tickets/README.md` after each generator run showed only the
+marker lines and the prose rewrite, never a row. See the Agent checks below for the gate failure
+proofs.
+
+### Discovery worth recording
+
+The ticket's literal first Agent check (`git stash && node scripts/generate-tickets-table.js && git
+diff --exit-code docs/tickets/README.md`) cannot run as written against a single commit: `git stash`
+also reverts the README markers to HEAD, after which the generator finds no markers to rewrite and
+either errors or rewrites prose. The intent of that check — the migration changed no rendered output —
+is what criterion B proves, so it was verified by diffing the rendered table before/after the status
+fields instead (zero-byte change).
+
+### Gate proofs (criteria D and E)
+
+Both failure modes were proven against the working tree and then reverted:
+
+- **D** — `**Status:** ready` → `blocked` on ticket 102, then
+  `node scripts/generate-tickets-table.js --check` printed
+  `STALE: table row for ticket 102 differs from its file` and exited 1. Reverted.
+- **E** — hand-editing row 98's status cell from `blocked` to `ready` in the README, the same check
+  printed `STALE: table row for ticket 98 differs from its file` and exited 1. Reverted.
+
+`npm run lint`, `node tests/integration/generate.test.js` and
+`node tests/integration/generate-tickets-table.test.js` all pass. The full `npm run check` suite was
+not run per the implementation brief, which scoped verification to the generate tests.
+
+### Closing this ticket (the first one the generator closes)
+
+104 is the first ticket closed after the generator landed: its `**Status:**` was set to `done`, the
+generator moved it from the Open to the Closed table (appending after 105), and the README was
+regenerated in the same working tree. New-format closes render a plain `done` cell (no date — the file
+has none), which is the honest difference from the frozen closed rows.

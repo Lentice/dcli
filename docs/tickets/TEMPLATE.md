@@ -1,10 +1,14 @@
 # NN — <one line: the outcome, or the defect in the user's terms>
 
+**Status:** ready
+**Blocked by:** —        (or a comma-separated ticket id list, e.g. `93, 104`)
 **Tier:** <why this matters — trust, correctness, safety, ergonomics — in one or two sentences>
 **Filed from:** <where this came from: a dogfooding run, another ticket's Notes, a review finding>
 
-<!-- Status and "Blocked by" belong in the README table, not here. See "One place owns status" in
-     docs/tickets/README.md. -->
+The status vocabulary is fixed: `ready`, `in progress`, `blocked`, `done`, `closed, not implemented`,
+plus `reference` for `00-onboarding.md`. Status and blockers are owned by this file — the README table is
+generated from them, so never hand-edit a row in [`README.md`](README.md) to say something different.
+New tickets ship `ready` with their blockers; change the value when the state changes and regenerate.
 
 ---
 
@@ -49,8 +53,10 @@ plausible adjacent change with no stated reason to skip it is how a two-day tick
 
 - [ ] **A.** ...
 - [ ] **B.** ...
-- [ ] **Z.** `npm run check` green; `README.md`, `docs/reference/*` and `integration/source/*` updated in
-  the same commit where the change is user-visible or agent-visible.
+- [ ] **Z.** `npm run check` green; the tracker table regenerated via
+  `node scripts/generate-tickets-table.js` whenever this ticket's status or blockers changed; `README.md`,
+  `docs/reference/*` and `integration/source/*` updated in the same commit where the change is
+  user-visible or agent-visible.
 
 Each criterion is a statement about observable behavior that someone else could check. "Handles errors
 properly" is not one.

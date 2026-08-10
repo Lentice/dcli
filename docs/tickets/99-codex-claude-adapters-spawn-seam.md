@@ -1,5 +1,7 @@
 # 99 — Codex and Claude adapters: an injected spawn seam replaces the inline `_testMode` double
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Test quality. The `_testMode` branch is the *first statement* of the methods that matter, so
 an adapter test that sets it exercises approximately none of the adapter — and the code it skips is
 exactly where the drain and wake-up bugs have historically lived.

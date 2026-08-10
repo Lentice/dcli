@@ -47,9 +47,13 @@ the implementer at 2am.
 the file, and confirm no file in this directory already uses it. Do not reserve numbers in advance:
 another agent may be writing tickets in this repository at the same time.
 
-**Status and blockers live in the README table only** — never also in the ticket file. Two copies of the
-same fact drift silently, and drift here is worse than useless: a ticket file that still says `ready`
-after the work shipped tells the next cold reader to build it again.
+**Status and blockers live in the ticket file**, as the `**Status:**` / `**Blocked by:**` pair in
+`TEMPLATE.md`; the README table is *generated* from them by `scripts/generate-tickets-table.js` and is
+not a second copy. This inverts the rule that long forbade a status field in the file — two copies
+drift silently, so the table was removed as a copy and made a rendering. An agent that edits a ticket
+file's status must regenerate the table in the same commit, or `npm run check` fails naming the ticket.
 
-**Commit the ticket with the README row** that announces it, in one commit, e.g.
-`docs: add ticket 87 — <slug>`.
+**Commit the ticket with the regenerated README row** that announces it, in one commit, e.g.
+`docs: add ticket 87 — <slug>`. To place a new ticket in a specific position, add its row by hand where
+you want it, then run the generator — it keeps the README's row order and fills in the status and
+blocker cells from the file. A new ticket ships `ready` (or `blocked` with its blocker listed).

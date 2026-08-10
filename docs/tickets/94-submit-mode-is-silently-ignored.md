@@ -1,5 +1,7 @@
 # 94 — `dcli submit --mode implement` is accepted and silently runs in `run` mode
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Trust. A flag the parser validates and accepts, which then has no effect, is worse than an
 unsupported flag: the caller believes an isolated worktree was created and there is nothing to `diff`.
 **Filed from:** architecture review, 2026-08-10 (verified by reading the call site at `adcbac1`).

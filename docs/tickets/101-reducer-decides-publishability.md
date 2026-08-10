@@ -1,5 +1,7 @@
 # 101 — The reducer decides whether a state may be published; today `JobStore` re-derives it by string match
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Correctness. Invariant 2 says the engine decides state. Half that decision — "may this
 inferred state be written?" — lives in the store and identifies the reducer's outcome by matching a
 `failure.reason` string. Add a branch to the reducer and the guard silently stops covering it.

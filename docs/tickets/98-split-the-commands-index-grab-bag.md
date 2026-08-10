@@ -1,5 +1,7 @@
 # 98 — Split `core/commands/index.js`: five unrelated subjects in one file every module imports
 
+**Status:** blocked
+**Blocked by:** 93
 **Tier:** AI-navigability and testability. The file has no subject, so every change anywhere lands in
 it — it is one of the repository's three hottest files. An agent looking for the exit-code contract has
 to scroll past three flag tables to find it.

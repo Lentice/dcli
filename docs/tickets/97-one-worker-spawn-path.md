@@ -1,5 +1,7 @@
 # 97 — One worker spawn path; the queued relaunch and the initial submit are two copies with different environments
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Correctness. Launch identity is what lets cancellation and reconciliation prove ownership —
 ticket 84 exists because it was once not persisted. That code now exists twice, and the two copies pass
 different environments.

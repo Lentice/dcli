@@ -1,5 +1,7 @@
 # 95 — One job-creation preamble: `run`, `resume` and `submit` stop writing it three times
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Correctness. The ownership boundary that releases a worktree and an admission slot on setup
 failure exists in three near-copies. Ticket 90 had to fix that leak once; the next fix will have to be
 made in three places, and the duplicated explanatory comment is the proof that it already was.

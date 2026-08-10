@@ -1,5 +1,7 @@
 # 102 — Unix: contain the backend in its own process group, so cancel and hard timeout kill the tree
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Trust. `--hard-timeout-sec` and `dcli cancel` currently reach the backend's *direct child only*.
 On Unix the mechanism that fixes this is specified, unblocked, and costs one spawn option plus one signal
 call — it has simply never been implemented. This is rung 1 of ADR-010's ladder, and it is a **full**

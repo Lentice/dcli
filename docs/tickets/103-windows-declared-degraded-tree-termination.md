@@ -1,5 +1,7 @@
 # 103 — Windows: a declared-degraded tree termination that names its survivors
 
+**Status:** blocked
+**Blocked by:** 102
 **Tier:** Trust, and the riskiest ticket in the ladder. This adds a mechanism that *could* claim a kill it
 cannot verify — which is exactly the failure mode the whole containment record was built to prevent. It is
 worth doing because it buys most of the outcome of the Job Object at a fraction of the cost, and it is

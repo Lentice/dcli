@@ -1,5 +1,7 @@
 # 96 — `JobStore` owns record scanning; three commands stop reaching into `store._stateRoot`
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Correctness of the exit-3 / exit-17 contract. "What counts as a corrupt record" is decided
 three times, differently, in three commands that each rebuilt the directory walk by hand.
 **Filed from:** architecture review, 2026-08-10 (two of three reviewers independently; the

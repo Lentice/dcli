@@ -1,5 +1,7 @@
 # 100 — opencode adapter: a transport seam replaces twenty-one `_testMode` branches
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Test quality, in the largest and second-hottest file in the repository. The turn
 reconciliation logic — SSE versus REST, idle confirmation, unknown status — is where opencode's real
 defects live (ticket 81), and it is the logic the mocks bypass.

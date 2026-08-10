@@ -1,5 +1,7 @@
 # 92 — One attempt driver: the detached worker and the foreground path stop being two copies
 
+**Status:** ready
+**Blocked by:** —
 **Tier:** Correctness and trust. The foreground and background spellings of the same command have
 already drifted into four observable behavioural differences. Every future timeout, cancellation or
 terminal-state fix has to be made twice, and history shows the second copy gets forgotten.

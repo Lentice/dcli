@@ -11,24 +11,23 @@ version-pin re-check.
 
 ## One place owns status
 
-**The table below is the only place a ticket's status and blockers are maintained.** A new ticket does
-not repeat them in its own file, because two copies of the same fact drift and nothing here would catch
-it: the sibling project maintaining this same structure accumulated twelve item files claiming work was
-still waiting while the tracker had them finished, and an agent reading one of those files cold would
-have implemented it a second time.
+**A ticket's status and blockers live in its own file**, as a `**Status:** <value>` /
+`**Blocked by:** <ids>` pair beneath the title. The two tables below are **generated** from those files
+by [`scripts/generate-tickets-table.js`](../../scripts/generate-tickets-table.js) and are derived
+output, not a second copy. The failure this structure exists to prevent was the sibling project's: it
+accumulated twelve item files claiming work was still waiting while its tracker had them finished, and
+an agent reading one of those files cold would have implemented it a second time. Here the files are
+the tracker — edit a ticket, run `node scripts/generate-tickets-table.js`, and `npm run check` fails
+naming the drifted ticket if the table was not regenerated.
 
-Tickets 78–86 predate this rule and still carry a `**Status:**` line. Theirs are accurate and frozen —
-all are closed — so they are left as written, per "never edit a closed ticket". New tickets follow
-`TEMPLATE.md`, which has no status field.
+Tickets 78–86 predate the rule and still carry a frozen `**Status:**` line in an older format; they are
+closed and never edited, so the generator reads them as-is. A few closed tickets (87–91 and 105) carry
+no status line at all, so their rows' status cells are kept from the table — their files cannot supply
+one. New tickets follow [`TEMPLATE.md`](TEMPLATE.md), which requires the field.
 
-**When this table becomes a chore, generate it.** The trigger is more than ten open tickets, or the
-first time the table and a ticket file disagree. At that point the ticket files become the source of
-truth and this table is produced from them, with a staleness check in `npm run check` — the same shape
-as the generated-skills gate in `AGENTS.md`. Do not build that machinery before the trigger.
-
-**The trigger fired on 2026-08-10**: more than ten tickets are open. Until
-[ticket 104](104-generate-the-ticket-tracker.md) lands, this table is still maintained by hand and is
-still the only place status lives.
+**When this table becomes a chore, generate it.** The trigger was more than ten open tickets. It fired
+on **2026-08-10**; [ticket 104](104-generate-the-ticket-tracker.md) built the generator and the
+staleness check. The tables below are now produced from the ticket files, not maintained by hand.
 
 | Status | Meaning |
 |---|---|
@@ -44,6 +43,7 @@ Tickets 92–101 came out of the architecture review of 2026-08-10 (three indepe
 claim re-verified against the tree at `adcbac1` before the ticket was written). They are listed in
 recommended order.
 
+<!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
 | [92 — one attempt driver](92-one-attempt-driver.md) | ready | — | The detached worker and the foreground path stop being two copies of one algorithm; closes four verified behaviour divergences, including that `dcli cancel` does not reach a foreground `run` |
@@ -58,10 +58,11 @@ recommended order.
 | [101 — reducer decides publishability](101-reducer-decides-publishability.md) | ready | — | `JobStore` re-derives half the reducer's decision by matching a `failure.reason` string literal |
 | [102 — unix process-group containment](102-unix-process-group-containment.md) | ready | — | Rung 1 of ADR-010. Backends are spawned without `detached` and killed by pid, so descendants survive; on Unix this is a full guarantee costing one spawn option |
 | [103 — windows degraded tree kill](103-windows-declared-degraded-tree-termination.md) | blocked | 102 | Rung 2 of ADR-010. Verified descendant enumeration + `taskkill /T /F`, `degraded: true`, survivors named and exit `21` — never a kill it did not confirm |
-| [104 — generate this table](104-generate-the-ticket-tracker.md) | ready | — | The tracker's own documented trigger fired at more than ten open tickets; ticket files become the source of status, with a regenerate-and-compare gate in `npm run check` |
+<!-- /GENERATED: ticket table -->
 
 ## Closed
 
+<!-- GENERATED: closed ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
 | [00 — onboarding](00-onboarding.md) | reference | — | Repository rules and current job model |
@@ -78,6 +79,8 @@ recommended order.
 | [90 — setup resource cleanup](90-setup-failure-releases-resources.md) | **done** (2026-08-09) | — | A run/resume setup exception releases the worktree and admission slot it acquired before rethrowing |
 | [91 — headless containment test](91-containment-test-headless-safe.md) | **done** (2026-08-09) | — | Keep containment coverage reliable and explicit without a desktop dependency |
 | [105 — the suite is not reliably green](105-full-suite-is-not-reliably-green.md) | **done** (2026-08-10) | — | Misleading `ETIMEDOUT`-as-crash diagnostics fixed, load-sensitive internal budgets derived from the runner's cap, near-cap runs reported; default concurrency kept — green on ten consecutive runs |
+| [104 — generate this table](104-generate-the-ticket-tracker.md) | done | — | The tracker's own documented trigger fired at more than ten open tickets; ticket files become the source of status, with a regenerate-and-compare gate in `npm run check` |
+<!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was
 closed because it was abandoned, with nothing built. The distinction is in the Status column and in each
