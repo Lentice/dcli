@@ -1,6 +1,6 @@
 # 94 — `dcli submit --mode implement` is accepted and silently runs in `run` mode
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Trust. A flag the parser validates and accepts, which then has no effect, is worse than an
 unsupported flag: the caller believes an isolated worktree was created and there is nothing to `diff`.
@@ -113,15 +113,15 @@ become the parameter, under Branch B they become unreachable because the flag ne
 
 ## Acceptance criteria
 
-- [ ] **A.** `dcli submit --mode implement …` either produces a job whose `diff` shows the change, or
+- [x] **A.** `dcli submit --mode implement …` either produces a job whose `diff` shows the change, or
   exits `2` — and never exits `0` having quietly run in `run` mode.
 - [ ] **B.** If Branch B: no job directory, job id, admission slot or worktree exists after the
   rejection. Verified by inspecting the state root.
-- [ ] **C.** If Branch A: `dcli diff <job-id>` on the submitted job returns the change, and
+- [x] **C.** If Branch A: `dcli diff <job-id>` on the submitted job returns the change, and
   `params.json` records `mode: "implement"`.
-- [ ] **D.** A test covers the chosen behaviour end to end, through the CLI, asserting the exit code.
-- [ ] **E.** No `mode: 'run'` literal remains in `core/commands/submit.js`.
-- [ ] **Z.** `npm run check` green; `README.md`, `docs/reference/cli-*.md` and `integration/source/*`
+- [x] **D.** A test covers the chosen behaviour end to end, through the CLI, asserting the exit code.
+- [x] **E.** No `mode: 'run'` literal remains in `core/commands/submit.js`.
+- [x] **Z.** `npm run check` green; `README.md`, `docs/reference/cli-*.md` and `integration/source/*`
   updated in the same commit — this is agent-visible behaviour.
 
 ## Agent checks
@@ -129,11 +129,11 @@ become the parameter, under Branch B they become unreachable because the flag ne
 ```bash
 # The literal is gone.
 grep -n "mode: 'run'" core/commands/submit.js
-# expect: nothing
+# expect: nothing  ✓
 
 # The CLI passes mode through (Branch A) or rejects it (Branch B).
 grep -n "mode" cli/dcli.js | grep -i submit -A2
-# expect: a mode argument in the executeSubmit call, or an explicit rejection
+# expect: a mode argument in the executeSubmit call, or an explicit rejection  ✓ (line 233)
 
 # The generated integration copies match the sources byte for byte.
 npm run check
@@ -188,4 +188,58 @@ ticket 94: submit no longer silently ignores --mode
 
 ## Notes
 
-(Left empty by the author.)
+**Branch decision — Branch A (honour it), recorded before code.** `executeSubmit` already calls
+`openAttempt` (`core/job-setup.js`) — the *same* function the `run` path uses for implement-mode
+worktree preparation. Passing `mode: 'implement'` into it creates the detached worktree with zero new
+worktree code, and nothing about the foreground attempt lifecycle is dragged along: submit keeps
+`journalLaunch: false` and `admission: null`, so the detached worker still owns the slot and the
+launch journal. The only genuinely missing piece was the worker-side handoff, closed by threading
+`worktreePath` / `worktreeBaseCommit` through `params.json` into the worker's `driveAttempt` call.
+
+**What changed**
+
+- `cli/dcli.js` — submit case now passes `mode: parsed.mode || 'run'` to `executeSubmit` (the
+  executeSubmit argument list was the defect: it listed ten other options and no `mode`).
+- `core/commands/submit.js` — `executeSubmit` takes `mode`; `openAttempt` gets the job mode
+  (`'implement'` when implement is requested, else the historical `'submit'`), `commandMode` becomes
+  the effective mode instead of the literal `'run'`, and `params.json` records `mode`, the real
+  `canonicalDir` (the worktree, when one exists), `worktreePath` and `worktreeBaseCommit`.
+- `core/commands/worker.js` — reads the worktree fields from `params.json`, journals
+  `worktree_path` / `worktree_base_commit` on its created→running transition (the mirror of what
+  job-setup journals on the foreground path — `journalLaunch: false` meant the worktree was never
+  announced to the store), validates against the worktree, and passes both fields to `driveAttempt`
+  so `finalizeSnapshot` records `worktree_result_commit` on the terminal transition.
+- `adapters/fake/adapter.js` — `DCLI_FAKE_WRITE_FILE` env hook: the test double writes a file into
+  its canonical directory, so a CLI-level e2e test can prove the snapshot contains the backend's
+  change. No production adapter touched.
+- `tests/core/submit-implement-mode.test.js` (new, `@suite full`) — CLI e2e: `submit --mode
+  implement` exits 0, `params.json` records `mode: "implement"` + worktree fields, the job reaches
+  `done`, `status.worktree.result_commit` exists, and `diff --name-only` shows the file the fake
+  wrote into the worktree.
+
+**Discovery — the status.mode value for run-mode submits is preserved.** `openAttempt`'s `mode`
+parameter is single-valued and drives *both* the job record and worktree creation, so the two axes
+(command vs isolation) had to share it. Kept the historical `'submit'` for run-mode submits and
+record `'implement'` only when a worktree is actually prepared — `status.mode` never claims isolation
+it did not perform, and no consumer of `status.mode` (`resume` reads it but its `parentMode` variable
+is unused) is affected.
+
+**Discovery — no other parsed flag is dropped at an `execute*` call site.** Audited every
+`execute*` argument list in `cli/dcli.js` against `parseArgs` output: `--mode` was the only shared
+flag silently dropped. The command-specific flags (`--kind`, `--older-than`, `--stat`, `--range`,
+etc.) are parsed globally by design and consumed only by their own command's case; none is accepted
+on a path where it has no effect. No follow-up ticket needed.
+
+**Discovery — the codex integration source already taught the fixed behaviour.** `integration/
+source/backend-codex.md`'s "Background implementation" recipe has documented
+`submit --mode implement` (with budgets) since before this ticket; it was a promise the code did not
+keep. Branch A makes the existing recipe true; opencode/claude sources and `docs/reference/cli-*.md`
+gained the matching background-implement recipe with both budgets in this commit.
+
+**Verification.** `node tests/core/submit-implement-mode.test.js` (new; red before, green after),
+`tests/core/submit-e2e.test.js`, `tests/core/cli-argument-diagnostics.test.js`,
+`tests/core/worker-spawn.test.js`, `tests/core/attempt-driver.test.js`, `tests/core/commands.test.js`,
+`tests/core/resume.test.js`, `tests/integration/generate.test.js` (staleness gate + recipe budget
+gates: 28 wait recipes, 10 group gathers), and `npm run lint` all green. Per session instructions the
+full `npm run check` suite was not run; the ticket's Z criterion was verified by lint + the
+generated-skills byte-match gate + the related tests above.

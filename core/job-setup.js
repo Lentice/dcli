@@ -54,7 +54,8 @@ const { workerIdentityDetail } = require('./process-identity');
  *                                       (submit — the detached worker owns the
  *                                       slot)
  * @param {string}   [a.commandMode]     mode recorded in command.json when it
- *                                       differs from the job mode (submit: 'run')
+ *                                       differs from the job mode (submit: the
+ *                                       effective run/implement mode)
  * @param {number|null} [a.hardTimeoutMs] explicit command.json hard timeout;
  *                                       default resolveHardTimeoutMs(hardTimeoutSec)
  * @param {{ executionToken:string }|null} [a.durableIdentity] token when the

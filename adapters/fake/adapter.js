@@ -1,6 +1,9 @@
 // The default script is what `dcli --backend fake <command>` runs on: a single
 // successful turn. It lives here, with the fake, rather than in the CLI entry
 // point, so no real adapter is ever constructed with scripted fixtures.
+const fs = require('fs');
+const path = require('path');
+
 function DEFAULT_FACTS() {
   return [
     { type: 'started', backend_pid: 1, backend_session_id: 'ses_default' },
@@ -32,6 +35,17 @@ class FakeAdapter {
       detectedVersion: '1.0.0',
       ...script,
     };
+    // CLI-level test hook: makes the fake behave like a real implement-mode
+    // backend by writing a file into its canonical directory, so end-to-end
+    // tests can prove worktree isolation produced a diffable snapshot.
+    const writeFile = process.env.DCLI_FAKE_WRITE_FILE;
+    if (writeFile) {
+      this._script.behaviors.onStart = this._script.behaviors.onStart || ((attempt, request) => {
+        if (request && request.canonicalDir) {
+          fs.writeFileSync(path.join(request.canonicalDir, writeFile), 'new feature\n', 'utf8');
+        }
+      });
+    }
     this._cancelled = false;
     this._cancelRungReached = null;
     this._disposed = false;

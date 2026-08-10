@@ -5,9 +5,15 @@ const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { generateExecutionToken } = require('../process-identity');
 const { spawnWorker } = require('../worker-spawn');
 
-async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, stateRoot, backend }) {
+async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, mode, stateRoot, backend }) {
   stateRoot = stateRoot || store._stateRoot;
   repoRoot = repoRoot || process.cwd();
+
+  // The job record keeps 'submit' for run-mode submits (its historical value)
+  // and records 'implement' only when a worktree is actually prepared, so the
+  // status.mode field never lies about isolation.
+  const effectiveMode = mode === 'implement' ? 'implement' : 'run';
+  const jobMode = effectiveMode === 'implement' ? 'implement' : 'submit';
 
   let parentStatus = null;
   let parentRootJobId = null;
@@ -29,7 +35,7 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
 
   const attempt = await openAttempt({
     store, adapter, request, prompt,
-    repoKey, repoRoot, mode: 'submit', access: inheritedAccess,
+    repoKey, repoRoot, mode: jobMode, access: inheritedAccess,
     group: inheritedGroup, label: inheritedLabel, model,
     hardTimeoutSec, stateRoot,
     lineage: resumeJobId
@@ -38,24 +44,29 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     // The detached worker owns the admission slot, and it journals the attempt
     // launch; openAttempt must neither acquire a slot nor journal for submit.
     admission: null,
-    commandMode: 'run',
+    commandMode: effectiveMode,
     hardTimeoutMs: hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0,
     durableIdentity: { executionToken },
     journalLaunch: false,
   });
   const jobId = attempt.jobId;
 
-  // Persist prompt and run params to the job directory for the worker
+  // Persist prompt and run params to the job directory for the worker. The
+  // worker drives the attempt from these: mode decides run-vs-implement and
+  // the worktree fields make the detached process finalize the snapshot the
+  // way the foreground run path does.
   const jobDir = store.getJobDir(repoKey, jobId);
   writeTextFileAtomic(path.join(jobDir, 'prompt.txt'), prompt);
   writeJsonFileAtomic(path.join(jobDir, 'params.json'), {
-    canonicalDir: repoRoot,
+    canonicalDir: attempt.worktree || repoRoot,
     model,
     access: inheritedAccess,
     reasoningEffort: reasoningEffort || null,
     variant: variant || null,
     effort: effort || null,
-    mode: 'run',
+    mode: effectiveMode,
+    worktreePath: attempt.worktree || null,
+    worktreeBaseCommit: attempt.worktreeBaseCommit || null,
     hardTimeoutMs: hardTimeoutSec && hardTimeoutSec > 0 ? hardTimeoutSec * 1000 : 0,
     executionToken,
     // A fork of a parent session records that session as a fallback: when the

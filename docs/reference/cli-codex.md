@@ -219,6 +219,23 @@ worktree, and git registration together. It also discovers orphan worktrees
 under the dcli state root. `--dry-run` names each worktree and reports its
 bytes; worktrees held by `diff` or `apply` are named and skipped.
 
+## Background implementation recipe
+
+`submit --mode implement` is honoured: the worktree is prepared at submit time
+on the same path `run --mode implement` uses, the detached worker runs inside
+it, and `diff`/`apply` work on the submitted job. Execution budget
+`--hard-timeout-sec` and caller-side wait budget `--timeout-sec` are both set:
+
+```powershell
+$budget = 1800
+echo "Refactor the database layer" |
+  dcli-codex submit --mode implement --access workspace --group nightly --hard-timeout-sec $budget
+dcli-codex wait --all --group nightly --timeout-sec $budget --json
+dcli-codex diff <job-id> --stat
+dcli-codex diff <job-id>
+dcli-codex apply --message "refactor: database layer" <job-id>
+```
+
 ---
 
 ## Host quirks (this development machine)

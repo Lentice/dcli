@@ -104,3 +104,18 @@ $budget = 3600
   dcli-claude submit --access workspace --group nightly --hard-timeout-sec $budget
 dcli-claude wait --all --group nightly --timeout-sec 3600 --json
 ```
+
+### Background implementation
+
+`submit --mode implement` honours implement mode: a worktree is prepared at
+submit time, the detached worker runs inside it, and `diff`/`apply` work on
+the job exactly as for `run --mode implement`.
+
+```powershell
+$budget = 1800
+echo "Description" |
+  dcli-claude submit --mode implement --access workspace --group nightly --hard-timeout-sec $budget
+dcli-claude wait --all --group nightly --timeout-sec $budget --json
+dcli-claude diff <job-id>
+dcli-claude apply <job-id>
+```

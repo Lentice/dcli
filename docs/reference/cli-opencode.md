@@ -261,6 +261,23 @@ worktree, and git registration together. It also discovers orphan worktrees
 under the dcli state root. `--dry-run` names each worktree and reports its
 bytes; worktrees held by `diff` or `apply` are named and skipped.
 
+## Background implementation recipe
+
+`submit --mode implement` is honoured: the worktree is prepared at submit time
+on the same path `run --mode implement` uses, the detached worker runs inside
+it, and `diff`/`apply` work on the submitted job. Execution budget
+`--hard-timeout-sec` and caller-side wait budget `--timeout-sec` are both set:
+
+```powershell
+$budget = 1800
+echo "Add input validation to the user registration form" |
+  dcli-opencode submit --mode implement --access workspace --group nightly --hard-timeout-sec $budget
+dcli-opencode wait --all --group nightly --timeout-sec $budget --json
+dcli-opencode diff <job-id> --stat
+dcli-opencode diff <job-id>
+dcli-opencode apply --reset-author --message "feat: add input validation" <job-id>
+```
+
 ## Observed exit codes
 
 | Scenario | Exit |

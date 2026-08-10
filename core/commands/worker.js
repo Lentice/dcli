@@ -52,6 +52,8 @@ async function main() {
     process.exit(1);
   }
   const executionToken = params.executionToken || generateExecutionToken();
+  const worktreePath = params.worktreePath || null;
+  const worktreeBaseCommit = params.worktreeBaseCommit || null;
 
   let prompt;
   try {
@@ -125,7 +127,7 @@ async function main() {
   try {
     adapter.ValidateRequest({
       model: params.model || null,
-      canonicalDir: repoRoot,
+      canonicalDir: worktreePath || repoRoot,
       reasoningEffort: params.reasoningEffort || null,
       variant: params.variant || null,
       effort: params.effort || null,
@@ -173,6 +175,9 @@ async function main() {
   // Persist the launch identity the instant the process exists: this is what
   // lets `cancel` kill something real and reconciliation prove death. Holding
   // it only in the launcher's memory left jobs stuck `running` (AGENTS.md #5).
+  // The implement-mode worktree details are journaled here — the mirror of
+  // what job-setup journals on the foreground path — so diff/apply/cleanup
+  // can find the worktree even though this attempt was launched by the worker.
   store.journalTransition(jobId, repoKey, {
     kind: 'attempt_state_changed',
     attempt: attemptNum,
@@ -182,6 +187,7 @@ async function main() {
       started_at: new Date().toISOString(),
       phase: 'agent_running',
       ...workerIdentityDetail(),
+      ...(worktreePath ? { worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit } : {}),
     },
   });
 
@@ -208,6 +214,7 @@ async function main() {
     store, adapter, repoKey, repoRoot, jobId, attemptNum,
     prompt,
     request: params,
+    worktreePath, worktreeBaseCommit,
     hardTimeoutSec: hardTimeoutMsRaw > 0 ? hardTimeoutMsRaw / 1000 : null,
     admission, acquiredSlotId: slotId,
     cancelSignal: createCancelSignal({ jobDir }),

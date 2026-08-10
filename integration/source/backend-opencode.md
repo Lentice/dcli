@@ -123,6 +123,22 @@ $budget = 3600
 dcli-opencode wait --all --group nightly --timeout-sec 3600 --json
 ```
 
+### Background implementation
+
+`submit --mode implement` honours implement mode: a worktree is prepared at
+submit time, the detached worker runs inside it, and `diff`/`apply` work on
+the job exactly as for `run --mode implement`.
+
+```powershell
+$budget = 1800
+echo "Add input validation to the user registration form" |
+  dcli-opencode submit --mode implement --access workspace --group nightly --hard-timeout-sec $budget
+dcli-opencode wait --all --group nightly --timeout-sec $budget --json
+dcli-opencode diff <job-id> --stat
+dcli-opencode diff <job-id>
+dcli-opencode apply --reset-author --message "feat: add input validation" <job-id>
+```
+
 ### Implement a change, inspect, then apply
 
 ```powershell

@@ -230,6 +230,7 @@ async function main() {
         effort: parsed.effort,
         admission: admissionController,
         resumeJobId: parsed.resume || null,
+        mode: parsed.mode || 'run',
         stateRoot,
         backend,
       });

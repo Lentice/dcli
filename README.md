@@ -90,6 +90,13 @@ dcli-codex diff <job-id> --stat
 dcli-codex diff <job-id>
 dcli-codex apply --reset-author --message "feat: add retry logic" <job-id>
 
+# the same change, in the background — submit honours --mode implement
+"Add retry logic to the fetch helper" | dcli-codex submit --mode implement --access workspace --group nightly --hard-timeout-sec 1800
+dcli-codex wait --all --group nightly --timeout-sec 1800 --json
+dcli-codex diff <job-id> --stat
+dcli-codex diff <job-id>
+dcli-codex apply --reset-author --message "feat: add retry logic" <job-id>
+
 # resume — continue a backend conversation (piped)
 "Now critique your own plan." | dcli-opencode resume <job-id> --kind continue_backend_session --hard-timeout-sec 600
 
