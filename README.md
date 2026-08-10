@@ -152,14 +152,14 @@ and every line of it was paid for by a real bug.
 
 | For | Read |
 |---|---|
-| Historical ticket records | [`docs/tickets/`](docs/tickets/) |
-| Product intent and user stories | [`docs/2026-07-28-spec.md`](docs/2026-07-28-spec.md) |
-| Why the architecture is this way | [`docs/2026-07-28-architecture-decisions.md`](docs/2026-07-28-architecture-decisions.md) |
-| What was challenged, and what changed | [`docs/2026-07-28-architecture-review-record.md`](docs/2026-07-28-architecture-review-record.md) |
-| Binding contracts | [`docs/2026-07-28-design-spec.md`](docs/2026-07-28-design-spec.md) |
-| Development pitfalls and phase order | [`docs/2026-07-28-development-guide.md`](docs/2026-07-28-development-guide.md) |
+| Current and past work items | [`docs/tickets/`](docs/tickets/) |
+| Product intent and user stories | [`docs/product-spec.md`](docs/product-spec.md) |
+| Why the architecture is this way | [`docs/architecture-decisions.md`](docs/architecture-decisions.md) |
+| What was challenged, and what changed | [`docs/architecture-review-record.md`](docs/architecture-review-record.md) |
+| Binding contracts | [`docs/design-spec.md`](docs/design-spec.md) |
+| Engineering notes: lessons, backend traps, testing, spawning | [`docs/engineering/`](docs/engineering/) |
 | What a backend CLI actually accepts | [`docs/reference/`](docs/reference/) |
-| Verified facts about opencode, and what is not verified | [`docs/2026-07-28-opencode-cli-study.md`](docs/2026-07-28-opencode-cli-study.md) |
+| Verified facts about opencode, and what is not verified | [`docs/reference/opencode-study.md`](docs/reference/opencode-study.md) |
 
 ## Running tests
 

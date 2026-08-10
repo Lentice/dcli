@@ -3,7 +3,7 @@
 **What to build:** the three adapters spawn the backend **through** a `ContainmentContext`, so the backend
 tree is inside a Job Object from birth and `context.terminate()` provably kills it — including detached and
 reparented grandchildren. This is not new architecture: it is what
-[`docs/2026-07-28-design-spec.md`](../2026-07-28-design-spec.md) §14 (lines 620-624, 638-641) already
+[`docs/design-spec.md`](../design-spec.md) §14 (lines 620-624, 638-641) already
 specifies and what ADR-003/ADR-008 assume. Today none of it runs.
 
 **Blocked by:** native helper stdin forwarding and bounded EOF draining. The historical implementation ticket was
@@ -91,7 +91,7 @@ forwarding and bounded EOF drain) must land first.
       capability in the job record, never a silent one.
 
 ### E. Docs in the same commit
-- [ ] `docs/2026-07-28-design-spec.md` §14 gets a dated amendment recording that containment moved from
+- [ ] `docs/design-spec.md` §14 gets a dated amendment recording that containment moved from
       specified-but-absent to implemented, and what `containment.degraded` means in the record.
 - [ ] The design spec's hard-timeout amendment is updated in the same change.
 - [ ] Full suite green; `npm run check` green.

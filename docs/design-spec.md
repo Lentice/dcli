@@ -4,9 +4,9 @@ Date: 2026-07-28. Status: implemented: core commands, lifecycle/state contracts,
 resume lineage, all three adapters, generated integration, installer, redaction, admission, and bounded test
 runner. Ticket 78 is closed by decision and remains an explicit limitation: containment is specified but not
 wired into production adapter launches.
-Companion documents: [CLI study](2026-07-28-opencode-cli-study.md) (cited *study §n*),
-[ADRs](2026-07-28-architecture-decisions.md) (cited *ADR-n*),
-[development guide](2026-07-28-development-guide.md).
+Companion documents: [CLI study](reference/opencode-study.md) (cited *study §n*),
+[ADRs](architecture-decisions.md) (cited *ADR-n*),
+[engineering notes](engineering/).
 
 Reference implementation studied: `ccodex` (PowerShell, complete, in production) — its contracts are
 the starting point, not a constraint.

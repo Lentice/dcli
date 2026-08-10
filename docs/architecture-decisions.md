@@ -2,7 +2,7 @@
 
 Date: 2026-07-28. Each ADR records the decision, the evidence, the rejected alternatives, and the
 specific fact that would reverse it. Evidence references are to
-[`2026-07-28-opencode-cli-study.md`](2026-07-28-opencode-cli-study.md) (cited as *study §n*).
+[`reference/opencode-study.md`](reference/opencode-study.md) (cited as *study §n*).
 
 ---
 
@@ -273,7 +273,7 @@ Revisit when a tested opencode version fixes it, and only behind a capability fl
 ## ADR-007 — The adapter contract is fact-based; the engine owns the terminal-state reducer
 
 **Status:** accepted 2026-07-28, after adversarial review by both Codex and opencode
-(see [review record](2026-07-28-architecture-review-record.md) findings 1–3).
+(see [review record](architecture-review-record.md) findings 1–3).
 
 **The problem it fixes.** Both reviewers independently identified the same top risk: building the
 shared engine together with the opencode adapter would make HTTP/session concepts the de facto

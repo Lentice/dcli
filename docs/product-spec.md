@@ -2,8 +2,8 @@
 
 Date: 2026-07-28. Status: implemented. Containment remains an explicit, documented limitation (ticket 78).
 Written to the `/to-spec` template. Technical detail lives in
-[design spec](2026-07-28-design-spec.md) (*spec §n*), [ADRs](2026-07-28-architecture-decisions.md),
-[CLI study](2026-07-28-opencode-cli-study.md) (*study §n*), and
+[design spec](design-spec.md) (*spec §n*), [ADRs](architecture-decisions.md),
+[CLI study](reference/opencode-study.md) (*study §n*), and
 [reference/](reference/). Historical ticket records: [tickets/](tickets/).
 
 ---
@@ -312,8 +312,8 @@ Four, deliberately few:
 `ccodex` is the direct precedent and its approach carries over: plain assertion scripts run directly
 and checked by **exit code**, with no test-runner framework dependency; a quick suite for iteration
 that names what it skipped, and a full suite that must be green before anything is committed. Its
-regression-guarded pitfalls list is reproduced as development-guide §1 — each item is a real bug
-already paid for, and each needs a regression test here.
+regression-guarded pitfalls list is reproduced in [`engineering/lessons.md`](engineering/lessons.md) —
+each item is a real bug already paid for, and each needs a regression test here.
 
 Reporting is **per suite**, so one broken adapter cannot mask the others.
 

@@ -4,7 +4,7 @@ Version studied: **2.1.220** (`claude`). Captured 2026-07-28 on Windows 11.
 
 This is the backend the wrapper is *invoked from*, so it is also the one with the largest overlap
 risk: Claude Code has its own background-agent manager, its own worktree support, and its own
-structured output. See [ADR-005](../2026-07-28-architecture-decisions.md#adr-005) for what the
+structured output. See [ADR-005](../architecture-decisions.md#adr-005) for what the
 wrapper deliberately bypasses.
 
 Re-derive this file on every Claude Code upgrade.

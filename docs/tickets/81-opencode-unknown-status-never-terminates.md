@@ -58,7 +58,7 @@ of these it is, and record the answer in this ticket's Notes:
    nothing — `unknown` actually means "finished, and you missed it".
 2. The poll is hitting a wrong or stale URL/session id after the first success.
 3. The response shape changed and the parse silently yields `unknown` (check against
-   `docs/2026-07-28-opencode-cli-study.md`, and treat any "verified" claim there that disagrees with this
+   `docs/reference/opencode-study.md`, and treat any "verified" claim there that disagrees with this
    machine as a stop-and-ask per AGENTS.md).
 
 Case 1 and case 3 have opposite fixes, and guessing wrong produces a job that reports `done` with an
@@ -86,7 +86,7 @@ empty result — the exact thing that teaches users to distrust the tool.
   over — had already been fixed (`_sawLiveStatus` plus `SESSION_REGISTRATION_GRACE_MS`), and a live
   `run` of the ticket's own PONG prompt now returns `PONG`, exit 0, in seconds, with `result.md` and
   `backend-events.jsonl` both present. Not case 2 (the URL and session id are correct) and not case 3
-  (the shape in `docs/2026-07-28-opencode-cli-study.md` still matches this machine, opencode 1.18.11).
+  (the shape in `docs/reference/opencode-study.md` still matches this machine, opencode 1.18.11).
   What remained was the ambiguity itself: any status the parse could not resolve, and any poll that kept
   throwing, still meant "keep waiting" forever. That is now bounded:
   - `unknown` is no longer emitted as a `backend_status` fact at all — `core/fact-types.js` only ever

@@ -1,7 +1,7 @@
 # Architecture review record
 
-Date: 2026-07-28. The design in [ADRs](2026-07-28-architecture-decisions.md) and
-[design spec](2026-07-28-design-spec.md) was submitted for adversarial review to **two independent
+Date: 2026-07-28. The design in [ADRs](architecture-decisions.md) and
+[design spec](design-spec.md) was submitted for adversarial review to **two independent
 reviewers**: the Codex CLI (`ccodex` job `20260728T090002Z-dti8uldm`) and the **opencode CLI itself**
 (the backend the design is built around). Both were given the same brief and told to attack, not
 endorse.

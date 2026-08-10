@@ -1,7 +1,7 @@
 # CLI reference — opencode
 
 Version studied: **1.18.7** (`C:\Users\lenticetsai\.bun\bin\opencode.exe`, Bun v1.3.14).
-Captured 2026-07-28 on Windows 11. Full behavioral findings: [study](../2026-07-28-opencode-cli-study.md).
+Captured 2026-07-28 on Windows 11. Full behavioral findings: [study](opencode-study.md).
 
 Re-derive this file on every opencode upgrade (see development guide §7).
 
@@ -111,7 +111,7 @@ opencode server listening on http://127.0.0.1:47311
 ```
 
 This is the production backend. The HTTP surface is documented in
-[study §6](../2026-07-28-opencode-cli-study.md#6-opencode-serve--the-http-surface-observed).
+[study §6](opencode-study.md#6-opencode-serve--the-http-surface-observed).
 
 ---
 
