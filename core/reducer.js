@@ -27,7 +27,10 @@ const { exitCodeToFailureClass } = require('./failure-class');
  * @param {Evidence} evidence - Durable evidence about the worker
  * @returns {{ state: string, phase: string|null, failure?: Object|null,
  *            failure_reason?: string|null, backend_session_id?: string|null,
- *            warning?: string|null }}
+ *            warning?: string|null, publishable: boolean }}
+ *   `publishable` is true only on positive evidence that the owner is gone; a
+ *   non-publishable terminal is fine to display but must not be written to the
+ *   journal by a reconciler (see the rule quoted in the body).
  */
 function reduce(state, facts, evidence) {
   if (!state || typeof state !== 'object') {
@@ -53,14 +56,30 @@ function reduce(state, facts, evidence) {
     ev.heartbeatAgeMs > 15000;
   const noCompletionSentinel = ev.completionSentinelPresent !== true;
 
+  // PUBLISHABILITY — the rule that decides whether an inferred state may be
+  // persisted. Decided here, against the same evidence that produced the
+  // state, never by re-identifying the outcome from a reason string:
+  //   "Publish only on POSITIVE evidence that the owner is gone. A stale
+  //    heartbeat with unknown liveness is enough to *display* `interrupted`,
+  //    but not to write it. The sole exception is the explicit legacy-record
+  //    rule in the reducer: its own hard deadline has elapsed, so no worker
+  //    can still be inside the recorded budget."
+  const workerGone = ev.workerAlive === false;
+  const hasSentinel = ev.completionSentinelPresent === true;
+  const publishableOnEvidence = workerGone || hasSentinel;
+
   // 1. Already terminal — idempotent
   if (TERMINAL.has(state.state)) {
-    return pick(state, ['state', 'phase', 'failure', 'failure_reason', 'backend_session_id']);
+    // Already durable; nothing is being inferred, so nothing to gate.
+    return { ...pick(state, ['state', 'phase', 'failure', 'failure_reason', 'backend_session_id']),
+      publishable: true };
   }
 
   // Legacy records may have no proof of which worker owns them. They become
   // decidable only after their own deadline: before then, retiring one could
   // race a still-running backend. This is intentionally not a new age knob.
+  // This branch is the quoted exception: its own hard deadline has elapsed,
+  // so no worker can still be inside the recorded budget.
   if (workerIdentityMissing && (heartbeatMissing || heartbeatStale) &&
       noCompletionSentinel && hardTimeoutElapsed) {
     return {
@@ -69,6 +88,7 @@ function reduce(state, facts, evidence) {
       failure: { reason: 'worker_identity_missing' },
       failure_reason: state.failure_reason || 'worker_identity_missing',
       backend_session_id: state.backend_session_id || null,
+      publishable: true,
     };
   }
 
@@ -82,6 +102,7 @@ function reduce(state, facts, evidence) {
       phase: 'terminal',
       failure_reason: state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
@@ -92,6 +113,7 @@ function reduce(state, facts, evidence) {
       phase: 'terminal',
       failure_reason: state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
@@ -117,6 +139,7 @@ function reduce(state, facts, evidence) {
         : null,
       failure_reason: (processExited.code !== 0 ? classHint : null) || state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
@@ -128,6 +151,7 @@ function reduce(state, facts, evidence) {
       failure: { class: classHint, reason: 'backend_error' },
       failure_reason: classHint || state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
@@ -140,6 +164,7 @@ function reduce(state, facts, evidence) {
         failure: { class: 'stream_closed', reason: streamClosed.reason },
         failure_reason: 'stream_closed',
         backend_session_id: state.backend_session_id || null,
+        publishable: publishableOnEvidence,
       };
     }
   }
@@ -156,9 +181,8 @@ function reduce(state, facts, evidence) {
   }
 
   // Malformed-evidence guard: null evidence fields are treated as absent,
-  // not as confirmations
-  const workerGone = ev.workerAlive === false;
-  const hasSentinel = ev.completionSentinelPresent === true;
+  // not as confirmations. `workerGone`/`hasSentinel` are defined above, with
+  // the publishability rule they implement.
   // PID-reuse safety: if execution token is provided and doesn't match,
   // treat worker as absent even if workerAlive is true
   const tokenMismatch = ev.executionToken !== undefined && ev.executionToken !== null &&
@@ -197,6 +221,7 @@ function reduce(state, facts, evidence) {
             : (state.failure || null),
         failure_reason: failureClass || state.failure_reason || null,
         backend_session_id: state.backend_session_id || null,
+        publishable: publishableOnEvidence,
       };
     }
     const exitCode = (ev.sentinelExitCode !== undefined ? ev.sentinelExitCode : ev.commandExitCode) !== null
@@ -208,6 +233,7 @@ function reduce(state, facts, evidence) {
         phase: 'terminal',
         failure_reason: state.failure_reason || null,
         backend_session_id: state.backend_session_id || null,
+        publishable: publishableOnEvidence,
       };
     }
     return {
@@ -216,6 +242,7 @@ function reduce(state, facts, evidence) {
       failure: { reason: 'worker_lost_no_result' },
       failure_reason: state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
@@ -227,6 +254,7 @@ function reduce(state, facts, evidence) {
       failure: { reason: 'worker_lost' },
       failure_reason: state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
@@ -238,10 +266,13 @@ function reduce(state, facts, evidence) {
       failure: { reason: 'worker_lost' },
       failure_reason: state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
-  // Stale heartbeat + worker gone → interrupted (redundant with above but explicit)
+  // Stale heartbeat + worker gone → interrupted (redundant with above but explicit).
+  // Note this is the one interrupted branch that may fire with unknown liveness
+  // (workerAlive === null): publishable then stays false — display, never write.
   if (heartbeatStale && (effectiveWorkerGone || ev.workerAlive === null)) {
     return {
       state: 'interrupted',
@@ -249,6 +280,7 @@ function reduce(state, facts, evidence) {
       failure: { reason: 'heartbeat_stale' },
       failure_reason: state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
+      publishable: publishableOnEvidence,
     };
   }
 
@@ -265,6 +297,7 @@ function noChange(state) {
     failure: state.failure || null,
     failure_reason: state.failure_reason || null,
     backend_session_id: state.backend_session_id || null,
+    publishable: false,
   };
 }
 

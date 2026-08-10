@@ -553,7 +553,11 @@ class JobStore {
     if (evidence.workerAlive === true) return projected;
 
     const reduced = reduce(projected, [], evidence);
-    if (reduced.state === projected.state) return projected;
+    // The reducer owns publishability: reduce() returns false unless there is
+    // POSITIVE evidence that the owner is gone. A stale heartbeat with unknown
+    // liveness is enough to *display* `interrupted`, but not to write it — the
+    // rule lives in core/reducer.js with the state that produces it.
+    if (reduced.state === projected.state || !reduced.publishable) return projected;
 
     // Publishing requires the writer lock, taken non-blockingly so reads stay
     // zero-wait. Everything above was a lock-free preview; the decision that
@@ -570,17 +574,7 @@ class JobStore {
       const freshEvidence = this.gatherEvidence({ repoKey, jobId, status: fresh });
       if (freshEvidence.workerAlive === true) return fresh;
       const freshReduced = reduce(fresh, [], freshEvidence);
-      // Publish only on POSITIVE evidence that the owner is gone. A stale
-      // heartbeat with unknown liveness is enough to *display* `interrupted`,
-      // but not to write it. The sole exception is the explicit legacy-record
-      // rule in the reducer: its own hard deadline has elapsed, so no worker
-      // can still be inside the recorded budget.
-      const expiredIdentityless = freshEvidence.workerIdentityMissing === true &&
-        freshReduced.state === 'interrupted' &&
-        freshReduced.failure && freshReduced.failure.reason === 'worker_identity_missing';
-      if (freshEvidence.workerAlive !== false && !freshEvidence.completionSentinelPresent &&
-          !expiredIdentityless) return fresh;
-      if (freshReduced.state === fresh.state) return fresh;
+      if (freshReduced.state === fresh.state || !freshReduced.publishable) return fresh;
       return this._publishReconciled({ repoKey, jobId, projected: fresh, reduced: freshReduced, evidence: freshEvidence });
     } finally {
       this._jobLocks.release(lock);

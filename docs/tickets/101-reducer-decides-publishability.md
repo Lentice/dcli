@@ -1,6 +1,6 @@
 # 101 — The reducer decides whether a state may be published; today `JobStore` re-derives it by string match
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Correctness. Invariant 2 says the engine decides state. Half that decision — "may this
 inferred state be written?" — lives in the store and identifies the reducer's outcome by matching a
@@ -197,4 +197,93 @@ ticket 101: the reducer decides whether a state may be published
 
 ## Notes
 
-(Left empty by the author.)
+### How the publishability rule maps to reducer branches
+
+`reduce()` now returns `publishable` on every path. The rule is one predicate,
+`workerGone || hasSentinel`, with the identityless branch as the sole
+exception:
+
+- **Already terminal** — `publishable: true`. Nothing is inferred; the state is
+  already durable, so there is nothing to gate. Never consulted by
+  `reconcileStatus` (it returns early on terminal projections).
+- **Identityless-past-own-deadline** (the ticket-85 rule, unchanged) —
+  `publishable: true`. This branch is the quoted exception: its own recorded
+  hard deadline has elapsed, so no worker can still be inside the budget.
+- **Cancel requested / hard timeout / process_exited / backend_error /
+  stream_closed** — `publishable: workerGone || hasSentinel`. The cancel and
+  hard-timeout branches are reachable with unknown liveness (stale heartbeat,
+  no sentinel): they *display* `cancelled`/`timed_out` but are not written —
+  exactly what the old store guard `workerAlive !== false &&
+  !completionSentinelPresent` enforced.
+- **Reconciliation branches** (worker gone ± sentinel ± heartbeat) — all are
+  gated on `effectiveWorkerGone` (workerAlive `false`), so they are
+  `publishable: true`, **except** the `heartbeat_stale` branch, which may also
+  fire with `workerAlive === null` — unknown liveness is display-only.
+- **Token-mismatch edge** — `effectiveWorkerGone` can be true while
+  `workerAlive === true` (a reused pid the evidence layer flagged). There the
+  predicate stays `false`, which preserves the old behaviour exactly: the store
+  short-circuits on `workerAlive === true` before reduce is even called, so
+  such an `interrupted` was never published before either.
+- **`noChange` / non-terminal** — `publishable: false`.
+
+The predicate is computed from the same evidence booleans (`workerGone`,
+`hasSentinel`) that the branches themselves check — never from the
+`failure.reason` string. The quoted "positive evidence" paragraph is
+documented in `core/reducer.js` at the definition site.
+
+### `reconcileStatus` shape after the change
+
+```
+regenerate → TERMINAL? return → gather → workerAlive === true? return
+  → reduce → state unchanged or !publishable? return
+  → lock (non-blocking) → regenerate → TERMINAL? return → gather
+  → workerAlive === true? return → reduce → state unchanged or !publishable? return
+  → _publishReconciled
+```
+
+`expiredIdentityless` and the `'worker_identity_missing'` string match are
+deleted. The lock-free-preview-then-re-derive-under-lock structure and the
+quoted load-bearing comment are untouched.
+
+### Pure test suite — `tests/core/reducer-publishability.test.js`
+
+No filesystem; each combination asserted directly against `reduce()`:
+
+1. worker alive → `running`, `publishable: false`
+2. worker dead (no sentinel, stale heartbeat) → `interrupted`, `publishable: true`
+3. liveness unknown + stale heartbeat → `interrupted`, `publishable: false`
+4. completion sentinel present → `done`, `publishable: true`
+5. identityless within its own deadline → `running`, `publishable: false`
+6. identityless past its own deadline → `interrupted` +
+   `worker_identity_missing`, `publishable: true`
+7. every `reduce()` result carries a boolean `publishable` (all six combos plus
+   the already-terminal path)
+
+### Discovery — pre-existing failure unrelated to this ticket
+
+`tests/core/worker-liveness.test.js` section 6g fails on the clean tree at
+HEAD (`0ee176c`), before any of this ticket's changes: "a corrupt projection
+must be regenerated, not reported as an unreadable job". `listJobRecords`
+regenerates only when the projection is *stale* (`journal.mtime >=
+status.mtime`); the test writes `status.json` corrupt *after* the journal, so
+the projection is newer, `JSON.parse` fails, and the job lands in `errors`
+instead of `records`. `tests/core/job-store-scan.test.js` (the corruption
+judgement table, same scenario) passes, so this is an mtime/timing edge of
+ticket 96's implementation on this machine, not a 101 regression. The
+identityless regressions (6m/6n/6o) and all other worker-liveness sections
+pass; they were run by splicing the failing 6g section out of a scratch copy,
+which was deleted before committing. Flagged for ticket 96 or 105.
+
+### Verification
+
+- Acceptance A–F and the three Agent-check greps all pass.
+- `npm run check` was **not** run in full (per operating instruction); the
+  relevant suites — `reducer`, `reducer-backstop`, `reducer-publishability`
+  (new), `job-store`, `job-store-scan`, `cleanup-worktrees`,
+  `submit-launch-identity` (ticket 84 regression), `worker-liveness` (all but
+  the pre-existing 6g) — plus `npm run lint` are green.
+- Behaviour is unchanged: 6i (never publish for a live worker), 6k (a dead
+  worker is not reported as `cancelled`), 6m/6n/6o (identityless rule), and
+  ticket 84's launch-identity regression all pass unchanged.
+- `publishable` is a reducer return value only; greps confirm nothing writes it
+  to `status.json` or the journal.
