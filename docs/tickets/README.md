@@ -26,6 +26,10 @@ first time the table and a ticket file disagree. At that point the ticket files 
 truth and this table is produced from them, with a staleness check in `npm run check` — the same shape
 as the generated-skills gate in `AGENTS.md`. Do not build that machinery before the trigger.
 
+**The trigger fired on 2026-08-10**: more than ten tickets are open. Until
+[ticket 104](104-generate-the-ticket-tracker.md) lands, this table is still maintained by hand and is
+still the only place status lives.
+
 | Status | Meaning |
 |---|---|
 | `ready` | Blockers are done; can be handed to an implementer |
@@ -36,15 +40,32 @@ as the generated-skills gate in `AGENTS.md`. Do not build that machinery before 
 
 ## Open
 
+Tickets 92–101 came out of the architecture review of 2026-08-10 (three independent reviewers; every
+claim re-verified against the tree at `adcbac1` before the ticket was written). They are listed in
+recommended order.
+
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
+| [92 — one attempt driver](92-one-attempt-driver.md) | ready | — | The detached worker and the foreground path stop being two copies of one algorithm; closes four verified behaviour divergences, including that `dcli cancel` does not reach a foreground `run` |
+| [93 — one failure-class table](93-one-failure-class-exit-code-table.md) | ready | — | The class ↔ exit-code mapping exists three times (`commands/index.js`, `doctor.js`, `reducer.js`); one module owns both directions |
+| [94 — `submit --mode` ignored](94-submit-mode-is-silently-ignored.md) | ready | — | `submit --mode implement` is validated, accepted, and silently run in `run` mode; honour it or reject with exit `2` |
+| [95 — one job-creation preamble](95-one-job-creation-preamble.md) | ready | — | `run`/`resume`/`submit` write the same acquire-or-release-everything setup three times; `openAttempt()` owns it |
+| [96 — job-store owns scanning](96-job-store-owns-record-scanning.md) | ready | — | Four commands reach into `store._stateRoot`; three rebuild the jobs walk and disagree on what exit `17` means |
+| [97 — one worker spawn path](97-one-worker-spawn-path.md) | ready | — | The initial submit and the queued relaunch spawn the worker separately, with different environments |
+| [98 — split `commands/index.js`](98-split-the-commands-index-grab-bag.md) | blocked | 93 | Five unrelated subjects in one 576-line file that every module imports; also deletes the dead `KNOWN_FLAGS` export |
+| [99 — codex/claude spawn seam](99-codex-claude-adapters-spawn-seam.md) | ready | — | `_testMode` short-circuits the methods that matter, so adapter coverage is nominal; inject the child process instead |
+| [100 — opencode transport seam](100-opencode-adapter-transport-seam.md) | ready | — | Twenty-one `_testMode` branches, and tests that reach into private methods; supply a transport and an SSE source |
+| [101 — reducer decides publishability](101-reducer-decides-publishability.md) | ready | — | `JobStore` re-derives half the reducer's decision by matching a `failure.reason` string literal |
+| [102 — unix process-group containment](102-unix-process-group-containment.md) | ready | — | Rung 1 of ADR-010. Backends are spawned without `detached` and killed by pid, so descendants survive; on Unix this is a full guarantee costing one spawn option |
+| [103 — windows degraded tree kill](103-windows-declared-degraded-tree-termination.md) | blocked | 102 | Rung 2 of ADR-010. Verified descendant enumeration + `taskkill /T /F`, `degraded: true`, survivors named and exit `21` — never a kill it did not confirm |
+| [104 — generate this table](104-generate-the-ticket-tracker.md) | ready | — | The tracker's own documented trigger fired at more than ten open tickets; ticket files become the source of status, with a regenerate-and-compare gate in `npm run check` |
 
 ## Closed
 
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
 | [00 — onboarding](00-onboarding.md) | reference | — | Repository rules and current job model |
-| [78 — containment wiring](78-adapters-spawn-through-containment.md) | **closed, not implemented** (2026-08-04) | — | Abandoned by decision. Backend trees are never contained, so termination stays adapter-cooperative — read the ticket's closing section before trusting any termination guarantee |
+| [78 — containment wiring](78-adapters-spawn-through-containment.md) | **closed, not implemented** (2026-08-04) | — | Abandoned by decision: the native helper discards stdin, and codex/claude deliver the prompt there. Superseded 2026-08-10 by **ADR-010**, which replaces its all-or-nothing framing with a capability ladder — tickets 102 and 103 are rungs 1 and 2; this ticket was rung 3 and reopens only on evidence |
 | [81 — opencode unknown status](81-opencode-unknown-status-never-terminates.md) | **done** (2026-08-04) | — | Bound `unknown` status polling and preserve an honest terminal result |
 | [82 — cleanup orphans worktrees](82-cleanup-orphans-worktrees.md) | **done** (2026-08-04) | — | Retention removes worktrees and git registrations, and reports existing orphans |
 | [83 — `--older-than` hours](83-older-than-hours-is-unusable.md) | **done** (2026-08-04) | — | Retention accepts positive day and hour values consistently across parser, cleanup, and docs |
