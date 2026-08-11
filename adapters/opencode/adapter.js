@@ -6,6 +6,7 @@ const { runAdapterSmoke } = require('../../core/adapter-smoke');
 const { HttpTransport, requestJson } = require('./transport');
 const { OpencodeServer } = require('./server');
 const { OpencodeTurn } = require('./turn');
+const { containmentRecordForThisSpawn } = require('../shared/process-lifecycle');
 
 const SESSION_TIMEOUT_MS = 10000;
 const PROJECT_CHECK_TIMEOUT_MS = 10000;
@@ -98,6 +99,7 @@ class OpencodeAdapter {
     this._sessionId = null;
     this._backendPid = null;
     this._backendSessionId = null;
+    this._containment = undefined;
     this._detectedVersion = null;
     this._disposed = false;
     this._cancelled = false;
@@ -418,6 +420,9 @@ class OpencodeAdapter {
     this._server = server;
     this._transport = server.transport;
     this._backendPid = server.pid;
+    // The server was actually spawned (the transport seam above is a test
+    // stub that spawns nothing), so this spawn's containment record applies.
+    this._containment = containmentRecordForThisSpawn();
 
     return {
       handle: 'opencode-server',
@@ -485,6 +490,7 @@ class OpencodeAdapter {
         id: this._sessionId,
         promptSentAt: this._promptSentAt,
         backendPid: this._backendPid,
+        containment: this._containment,
       },
       policy: this._automationPolicy,
       deadline: this._hardDeadlineMs,
@@ -571,7 +577,7 @@ class OpencodeAdapter {
         return { success: true };
 
       case 'hard_kill':
-        if (this._server) this._server.kill();
+        if (this._server) await this._server.kill();
         this._cancelRungReached = 'hard_kill';
         this._cancelled = true;
         return { success: true };

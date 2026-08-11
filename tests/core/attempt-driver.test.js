@@ -381,6 +381,46 @@ async function main() {
   }
 
   // =========================================================================
+  // Criterion E — a started fact's containment record reaches status.json.
+  // =========================================================================
+  // The adapter declares what its own spawn achieved (ticket 102: rung 1 on
+  // POSIX); the driver forwards that verbatim, platform-independently. This
+  // proves the plumbing without needing a POSIX host — the platform decision
+  // itself is asserted by the adapters' own tests on each host.
+  {
+    const dir = tmpDir('dcli-driver-contain-');
+    try {
+      const store = new JobStore({ stateRoot: dir });
+      const jobId = 'fg-contain';
+      seedJob(store, 'fg-contain', jobId, dir);
+
+      const adapter = new FakeAdapter({
+        facts: [
+          { type: 'started', backend_pid: 99999, containment: { kind: 'process-group', degraded: false } },
+          { type: 'assistant_text', message_id: 'm1', text: 'ok' },
+          { type: 'process_exited', code: 0 },
+        ],
+        exitCode: 0, declaredRungs: ['hard_kill'],
+        capabilities: CAPABILITIES,
+      });
+
+      const { driveAttempt } = require(path.join(ROOT, 'core', 'commands', 'attempt-driver'));
+      const result = await driveAttempt({
+        store, adapter, repoKey: 'fg-contain', repoRoot: dir, jobId, attemptNum: 1,
+        prompt: 'x', request: REQUEST, hardTimeoutSec: 60,
+      });
+
+      assert.strictEqual(result.terminalState, 'done');
+      const status = store.readStatus({ repoKey: 'fg-contain', jobId });
+      assert.deepStrictEqual(status.containment, { kind: 'process-group', degraded: false },
+        'the containment record on the started fact must be projected into status.json');
+      console.log('PASS: criterion E — started-fact containment reaches status.json');
+    } finally {
+      clean(dir);
+    }
+  }
+
+  // =========================================================================
   // Criterion D — a foreground hard timeout records kill_skipped.
   // =========================================================================
   {

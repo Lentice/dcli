@@ -113,12 +113,16 @@ async function driveAttempt({
   const hardDeadline = hardTimeoutMs > 0 ? Date.now() + hardTimeoutMs : null;
   let hardTimedOut = false;
   let hardTimeoutTimer = null;
-  // Why hard-timeout escalation stops at the rung walk: the adapters spawn the
-  // backend with a plain `spawn`, so no tree is inside a Job Object, and the
-  // native helper can only terminate a Job Object it created itself. Recording
-  // `kill_skipped` — not a kill we did not perform — is AGENTS.md lessons #5.
-  // Ticket 78 (contain the tree at spawn time) is closed unimplemented.
-  const hardTimeoutKillSkipped = 'not_contained';
+  // Why hard-timeout escalation stops where it stops, per platform. Windows:
+  // the adapters spawn the backend with a plain `spawn` (no Job Object), so
+  // no tree is inside a Job Object, and the native helper can only terminate
+  // a Job Object it created itself. Recording `kill_skipped` — not a kill we
+  // did not perform — is AGENTS.md lessons #5. Unix: the hard_kill rung now
+  // terminates the whole process group (ADR-010 rung 1), so the kill was
+  // performed and no `kill_skipped` is written — claiming a skipped kill
+  // after a kill that worked is the inverse of that lie. Ticket 78 (contain
+  // the tree at spawn time) is closed unimplemented.
+  const hardTimeoutKillSkipped = process.platform === 'win32' ? 'not_contained' : undefined;
 
   async function cancelThroughRungs() {
     try {
@@ -457,6 +461,9 @@ function persistStartedFact(store, repoKey, jobId, attemptNum, fact) {
   const detail = {};
   if (fact.backend_pid !== undefined) detail.backend_pid = fact.backend_pid;
   if (fact.backend_session_id !== undefined) detail.backend_session_id = fact.backend_session_id;
+  // Data forwarded verbatim from the adapter: the adapter knows whether the
+  // spawn it performed is contained (no platform or backend branch here).
+  if (fact.containment !== undefined) detail.containment = fact.containment;
   if (Object.keys(detail).length === 0) return;
   store.journalTransition(jobId, repoKey, {
     kind: 'attempt_state_changed',

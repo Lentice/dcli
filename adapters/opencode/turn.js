@@ -97,7 +97,8 @@ class OpencodeTurn {
    * Run one turn and yield the normalized fact stream.
    *
    * @param {{ prompt?: string|null, session: { id: string,
-   *           promptSentAt?: number|null, backendPid?: number|null },
+   *           promptSentAt?: number|null, backendPid?: number|null,
+   *           containment?: object|null },
    *           policy?: object|null, deadline?: number|null,
    *           context?: { isCancelled?: () => boolean } }} opts
    */
@@ -117,7 +118,12 @@ class OpencodeTurn {
     this._exitCode = null;
     this._hadBackendError = false;
 
-    yield this._record({ type: 'started', backend_pid: session.backendPid || null, backend_session_id: session.id });
+    yield this._record({
+      type: 'started',
+      backend_pid: session.backendPid || null,
+      backend_session_id: session.id,
+      ...(session.containment ? { containment: session.containment } : {}),
+    });
 
     const POLL_MS = this._timings.pollIntervalMs;
     const SSE_TIMEOUT = this._timings.sseReadTimeoutMs;

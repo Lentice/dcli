@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
-const { applyProcessLifecycle } = require('../shared/process-lifecycle');
+const { applyProcessLifecycle, terminateProcessTree, containmentRecordForThisSpawn } = require('../shared/process-lifecycle');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 const { runAdapterSmoke } = require('../../core/adapter-smoke');
 
@@ -224,6 +224,14 @@ class ClaudeAdapter {
         cwd: invocation.cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: invocation.windowsHide,
+        // POSIX only. `detached: true` calls setsid(2), putting the child in a
+        // new process group whose pgid is the child's pid, so every descendant
+        // it spawns is in that group and can be signalled as a unit. On
+        // Windows `detached` means a new console instead, which is not
+        // containment and would defeat windowsHide — see
+        // docs/engineering/windows-spawning.md. Never unref() this child;
+        // dcli waits on its exit.
+        detached: process.platform !== 'win32',
         // Forward the invocation's own value: it is the single source of truth
         // for how its command line is quoted (adapters/codex/cmd-quoting.js).
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -286,7 +294,12 @@ class ClaudeAdapter {
       throw new Error('Cannot send prompt: no child process');
     }
 
-    this._facts.push({ type: 'started', backend_pid: this._processPid, backend_session_id: this._sessionId });
+    this._facts.push({
+      type: 'started',
+      backend_pid: this._processPid,
+      backend_session_id: this._sessionId,
+      containment: containmentRecordForThisSpawn(),
+    });
 
     this._childProcess.stdin.write(prompt, 'utf8');
     this._childProcess.stdin.end();
@@ -400,14 +413,12 @@ class ClaudeAdapter {
     };
   }
 
-  Dispose(attempt) {
+  async Dispose(attempt) {
     if (this._disposed) return;
     this._disposed = true;
 
-    if (this._childProcess && !this._childProcess.killed) {
-      try { this._childProcess.kill('SIGKILL'); } catch {
-        try { this._childProcess.kill(); } catch {}
-      }
+    if (this._childProcess) {
+      await terminateProcessTree(this._childProcess);
     }
 
     this._childProcess = null;

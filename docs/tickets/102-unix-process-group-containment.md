@@ -1,6 +1,6 @@
 # 102 — Unix: contain the backend in its own process group, so cancel and hard timeout kill the tree
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Trust. `--hard-timeout-sec` and `dcli cancel` currently reach the backend's *direct child only*.
 On Unix the mechanism that fixes this is specified, unblocked, and costs one spawn option plus one signal
@@ -270,4 +270,85 @@ ticket 102: contain the backend in its own process group on unix
 
 ## Notes
 
-(Left empty by the author.)
+Implemented 2026-08-11 by opencode.
+
+**POSIX host:** WSL2, Ubuntu 26.04 LTS, Node v22.14.0 (nvm-managed). Tests run via
+`wsl -d Ubuntu -- bash <nvm-init> node <test>`. claude/opencode are not installed inside
+WSL; not needed — the containment tests drive plain Node fixtures, no backend binary.
+
+**Step-1 evidence (grandchild survives today's direct-child kill).** The grandchild test
+run against the pre-fix mechanism (`child.kill('SIGKILL')`, the then-current hard_kill
+rung) failed on WSL exactly as the ticket predicted:
+
+```
+FAIL: grandchild 2853 must be dead after the rung — a direct-child kill would leave it reparented to init
+EXIT=1
+```
+
+The direct child died; the grandchild it had spawned (in the same process group, spawned
+without `detached`) was reparented and kept running. The same test, after the fix, passes
+against `terminateProcessTree` on WSL (grandchild 985/997/1057 across runs), with the
+grace-then-escalate test at ~400 ms of grace and the ESRCH test returning success.
+
+**Design decisions.**
+
+- `terminateProcessTree(child, { graceMs = 5000 })` lives in
+  `adapters/shared/process-lifecycle.js` and is the ONLY place a backend child is
+  signalled (agent check: exactly one `kill('SIGKILL')` site, the Windows branch, copied
+  verbatim from the old four sites). Unix: `process.kill(-child.pid, 'SIGTERM')` → poll
+  the child's `exitCode`/`signalCode` up to `graceMs` → `process.kill(-child.pid,
+  'SIGKILL')`; `ESRCH` from either signal is success. Returns
+  `{ kind: 'process-group'|'none', degraded, escalated }`. The negative pid is built only
+  from `child.pid` of a child this code spawned `detached` — the group was created by
+  that spawn and contains only its descendants, which is ownership proof (documented in
+  the helper's comment).
+- All three spawns add `detached: process.platform !== 'win32'` with the POSIX-only
+  comment; no `unref()` anywhere on a backend child (kept refed — dcli waits on exit).
+  Windows spawn options are byte-identical.
+- The grace wait is async (setTimeout polls) — it never blocks the event loop or the
+  fact stream — and the default 5000 ms is finite (invariant 3).
+- **`kill_skipped` is Windows-only now.** `attempt-driver.js` writes
+  `kill_skipped: 'not_contained'` only when `process.platform === 'win32'`; on Unix the
+  hard-timeout rung walk really terminates the group, so writing `kill_skipped` there
+  would be the inverse lie ADR-010 forbids. `undefined` is dropped by the journal's
+  JSON, so the `timed_out` detail is clean on Unix and byte-identical on Windows
+  (`attempt-driver.test.js` criterion D still asserts `not_contained` on this host).
+- **The containment record.** Each adapter attaches `containment: { kind:
+  'process-group', degraded: false }` (POSIX only) to its `started` fact — the adapter
+  knows what its own spawn achieved — and `persistStartedFact` forwards it verbatim into
+  the journal/status.json (no platform or backend branch in core; invariant 1 intact).
+  opencode's record is set only on the real-server path (the injected-transport test
+  seam spawns nothing). New platform-independent criterion E test in
+  `tests/core/attempt-driver.test.js` proves the forwarding; Windows records stay
+  `containment: null` (job-store tests unchanged, green).
+- `Dispose`/`kill()` became async (claude, codex, opencode server) because they must
+  await the grace-bounded terminate: fire-and-forget would let the worker's
+  `process.exit()` kill the pending SIGKILL timer mid-grace, leaving the group alive.
+  `tryDisposeAdapter` already races `Dispose` against a bounded budget, and all
+  `RequestCancel` callers await. Two tests that asserted post-Dispose temp-dir cleanup
+  synchronously were updated to await `Dispose` (codex start-child-scope,
+  temp-dir-leak).
+- opencode's `kill()` keeps its Windows taskkill pre-step byte-identical and now awaits
+  `terminateProcessTree` for the SIGKILL half; `session_abort` and `server_dispose`
+  rungs run first, unchanged (criterion H — `adapters/opencode/adapter.test.js` still
+  asserts all three rungs).
+- `core/containment.js` and `core/commands/cancel.js` untouched (hard constraints);
+  rung names unchanged; `core/containment.js`/`worker.js` contain no backend names
+  (agent check green).
+
+**Verification.** Windows (this host): `tests/contract/suite.js`, 
+`tests/adapters/observe-wakeup.test.js`, the new test (explicit SKIPPED output, ticket 91
+discipline), plus every adapter/core test touching spawn/kill/containment
+(scripted-child, server-kill-tree, all three adapter.test.js, start-child-scope ×3,
+start-server-scope, server-lifecycle, attempt-driver, hard-kill-honesty, cancel,
+job-store, commands, worker-cancel-watcher, commands-tail-debug-cleanup, temp-dir-leak,
+sandbox-and-workdir, session-continuation, session-permissions-routing, opencode
+transport/turn tests) and `npm run lint` — all green. WSL: the three new tests green, no
+leaked fixture processes after the run.
+
+**Discovery worth recording:** the grace test originally failed because the test sent
+SIGTERM before the fixture's Node had registered its SIGTERM handler (Node startup
+takes ~100 ms), so the fixture died of default SIGTERM and no escalation was observed.
+Fixed by waiting for the fixture's stdout marker (printed after handler registration)
+before signalling — an instance of the "assert the child's observable behaviour" rule
+from `docs/engineering/windows-spawning.md`.

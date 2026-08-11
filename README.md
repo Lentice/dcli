@@ -158,10 +158,12 @@ The alternative would require a reconnectable process supervisor, and that compl
 honest limitation.
 
 **A budget bounds the wrapper's wait, not the backend's process tree.** `--hard-timeout-sec` and `--timeout-sec`
-both bound what *dcli* does: the attempt is ended, the record is written, and control returns to you. dcli does not
-currently contain the backend's process tree, so a backend that ignores cancellation — or a tool it spawned — can
-outlive the job that started it. The record says so rather than claiming otherwise: a hard timeout writes
-`kill_skipped: "not_contained"`, and a cancel whose rungs all fail records
+both bound what *dcli* does: the attempt is ended, the record is written, and control returns to you. On **Unix**
+the backend runs in its own process group and a hard timeout or an escalated cancel terminates the whole group
+(`SIGTERM` → grace → `SIGKILL`), so the backend and everything it spawned cease running. On **Windows** dcli does
+not currently contain the backend's process tree, so a backend that ignores cancellation — or a tool it spawned —
+can outlive the job that started it. The record says so rather than claiming otherwise: on Windows a hard timeout
+writes `kill_skipped: "not_contained"`, and a cancel whose rungs all fail records
 `cancel_rung_reached: "containment_unavailable"`. Neither ever reports a kill that did not happen. If a job matters
 enough that a survivor would be a problem, check for one before re-running it.
 

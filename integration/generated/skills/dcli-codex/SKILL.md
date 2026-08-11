@@ -147,11 +147,19 @@ observed condition — not a theoretical one. So:
 ## A budget bounds the wrapper, not the backend
 
 `--hard-timeout-sec` and `--timeout-sec` bound what **dcli** does — they end the
-attempt, write the record, and return control to you. dcli does not currently
-contain the backend's process tree, so a backend that ignores cancellation, or a
-tool the backend spawned, can outlive the job that started it.
+attempt, write the record, and return control to you. What happens to the backend
+afterwards depends on the platform:
 
-The record states this rather than claiming otherwise:
+- **On Unix** the backend runs in its own process group (spawned `detached`), and
+  the hard-timeout or cancel escalation terminates the whole group — `SIGTERM`,
+  bounded grace, then `SIGKILL`. The backend and everything it spawned cease
+  running; the job record carries
+  `containment: { kind: "process-group", degraded: false }`.
+- **On Windows** dcli does not currently contain the backend's process tree, so a
+  backend that ignores cancellation, or a tool the backend spawned, can outlive
+  the job that started it.
+
+The record states the Windows situation rather than claiming otherwise:
 
 - A hard timeout writes `kill_skipped: "not_contained"` on the `timed_out` detail.
 - A cancel whose declared rungs all fail records

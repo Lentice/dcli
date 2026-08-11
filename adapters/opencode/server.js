@@ -5,6 +5,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
 const { getRedactor } = require('../../core/fs-text');
+const { terminateProcessTree } = require('../shared/process-lifecycle');
 const { HttpTransport, requestJson } = require('./transport');
 
 const PORT_RESERVE_MAX_RETRIES = 5;
@@ -95,6 +96,14 @@ class OpencodeServer {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, OPENCODE_SERVER_PASSWORD: this._password },
       windowsHide: invocation.windowsHide,
+      // POSIX only. `detached: true` calls setsid(2), putting the child in a
+      // new process group whose pgid is the child's pid, so every descendant
+      // it spawns (watchers, providers, git) is in that group and can be
+      // signalled as a unit. On Windows `detached` means a new console
+      // instead, which is not containment and would defeat windowsHide — see
+      // docs/engineering/windows-spawning.md. Never unref() this child; dcli
+      // waits on its exit.
+      detached: process.platform !== 'win32',
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
 
@@ -222,7 +231,7 @@ class OpencodeServer {
       }
     }
 
-    this.kill();
+    await this.kill();
     this._deleteServerMetadata();
     this._process = null;
     this._baseUrl = null;
@@ -231,7 +240,7 @@ class OpencodeServer {
     return { gracefulPost };
   }
 
-  kill() {
+  async kill() {
     if (!this._process) return;
     // The Windows Bun shim spawns the real server as a child; ChildProcess.kill()
     // only reaches the shim, so terminate the whole tree first.
@@ -245,9 +254,9 @@ class OpencodeServer {
         });
       } catch {}
     }
-    try { this._process.kill('SIGKILL'); } catch {
-      try { this._process.kill(); } catch {}
-    }
+    // Terminates the process group on Unix (ADR-010 rung 1) and the direct
+    // child on Windows, exactly as the shared hard_kill rung does.
+    await terminateProcessTree(this._process);
   }
 
   // -------------------------------------------------------------------------

@@ -17,6 +17,84 @@
  */
 const { spawn } = require('node:child_process');
 
+// How long between the SIGTERM and the SIGKILL when terminating a contained
+// process group (Unix rung 1, ADR-010). Finite by construction (invariant 3:
+// nothing waits forever). A backend normally exits well within this.
+const PROCESS_GROUP_GRACE_MS = 5000;
+
+/**
+ * Terminate a backend child and everything it spawned.
+ *
+ * Unix (rung 1, ADR-010): the child was spawned `detached`, so it is the
+ * leader of a process group whose id is the child's pid and which contains
+ * only its descendants. A negative pid signals the whole group. This is the
+ * one signal that IS ownership proof, not the "unverified reused pid" the
+ * spec forbids: the group was created by this very spawn, so its id cannot
+ * name a group we do not own. `SIGTERM` → bounded grace → `SIGKILL` to the
+ * group; `ESRCH` from either signal means the group is already gone, which is
+ * the outcome we wanted, not an error.
+ *
+ * Windows (rung 0): today's direct-child `kill('SIGKILL')`, copied verbatim —
+ * `detached` means a new console there, not a group, so a negative pid would
+ * be meaningless (ticket 103 raises this half).
+ *
+ * POSIX callers must only pass a child they spawned `detached`: a negative
+ * pid built from a non-detached child would target a group we do not own.
+ *
+ * @param {object|null} child
+ * @param {{ graceMs?: number }} [opts]
+ * @returns {Promise<{ kind: 'process-group'|'none', degraded: boolean, escalated: boolean }>}
+ */
+async function terminateProcessTree(child, { graceMs = PROCESS_GROUP_GRACE_MS } = {}) {
+  if (process.platform === 'win32') {
+    if (child && !child.killed) {
+      try { child.kill('SIGKILL'); } catch {
+        try { child.kill(); } catch {}
+      }
+    }
+    return { kind: 'none', degraded: true, escalated: false };
+  }
+
+  if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
+    return { kind: 'none', degraded: true, escalated: false };
+  }
+
+  const pgid = child.pid;
+  const signalGroup = (signal) => {
+    try {
+      process.kill(-pgid, signal);
+      return true;
+    } catch (err) {
+      if (err && err.code === 'ESRCH') return true;
+      return false;
+    }
+  };
+
+  signalGroup('SIGTERM');
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline && child.exitCode === null && child.signalCode === null) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+  let escalated = false;
+  if (child.exitCode === null && child.signalCode === null) {
+    escalated = signalGroup('SIGKILL');
+  }
+  return { kind: 'process-group', degraded: false, escalated };
+}
+
+/**
+ * The containment record for a backend this process spawned. POSIX: the
+ * spawn is `detached`, the group is owned — rung 1, a full guarantee.
+ * Windows: no containment (rung 0); the driver records `kill_skipped` there
+ * instead, so nothing is written here.
+ *
+ * @returns {{ kind: 'process-group', degraded: false }|undefined}
+ */
+function containmentRecordForThisSpawn() {
+  if (process.platform === 'win32') return undefined;
+  return { kind: 'process-group', degraded: false };
+}
+
 // How often a parked live-fact drain re-checks its own terminal condition.
 // This bound is not a performance knob: the timer behind it is the only refed
 // libuv handle that exists while the drain is parked and the child has closed
@@ -125,19 +203,19 @@ const methods = {
     });
   },
 
-  RequestCancel(attempt, rung) {
+  async RequestCancel(attempt, rung) {
     if (this._cancelled) return { success: true };
 
     if (rung !== 'hard_kill') {
       return { success: false, error: `Unknown rung: ${rung}` };
     }
 
-    if (this._childProcess && !this._childProcess.killed) {
-      try {
-        this._childProcess.kill('SIGKILL');
-      } catch {
-        try { this._childProcess.kill(); } catch {}
-      }
+    // The rung now terminates the group on Unix and the direct child on
+    // Windows (terminateProcessTree); `hard_kill` therefore keeps its
+    // promise on POSIX (ADR-010 rung 1) and stays the honest rung 0 record
+    // on Windows.
+    if (this._childProcess) {
+      await terminateProcessTree(this._childProcess);
     }
 
     this._cancelRungReached = 'hard_kill';
@@ -239,4 +317,4 @@ function applyProcessLifecycle(AdapterClass) {
   return AdapterClass;
 }
 
-module.exports = { applyProcessLifecycle, LIVE_DRAIN_RECHECK_MS, POST_EXIT_DRAIN_MS };
+module.exports = { applyProcessLifecycle, terminateProcessTree, containmentRecordForThisSpawn, LIVE_DRAIN_RECHECK_MS, POST_EXIT_DRAIN_MS };

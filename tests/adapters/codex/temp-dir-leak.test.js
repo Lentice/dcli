@@ -50,7 +50,9 @@ async function main() {
       try { adapter._childProcess.kill(); } catch {}
     }
   } finally {
-    adapter.Dispose({});
+    // Dispose is async since ticket 102 (it awaits the shared
+    // terminateProcessTree), so the temp-dir assertion awaits it.
+    await adapter.Dispose({});
   }
 
   assert.ok(!fs.existsSync(tmpDir), `Dispose must remove its own temp dir: ${tmpDir}`);

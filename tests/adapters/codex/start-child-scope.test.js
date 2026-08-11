@@ -15,12 +15,14 @@ const { assertRealFailure } = require('../../helpers/assert-failure');
 
 // cmd.exe launched with codex's arguments is a hang-shaped fixture (an
 // interactive shell). Teardown runs in a finally in every case below: a leaked
-// fixture poisons every later test on the machine.
-function teardown(adapter) {
+// fixture poisons every later test on the machine. Dispose is async since
+// ticket 102 (it awaits the shared terminateProcessTree), so the temp-dir
+// assertions below await teardown.
+async function teardown(adapter) {
   if (adapter._childProcess) {
     try { adapter._childProcess.kill(); } catch {}
   }
-  try { adapter.Dispose({}); } catch {}
+  try { await adapter.Dispose({}); } catch {}
 }
 
 async function main() {
@@ -69,7 +71,7 @@ async function main() {
     assert.ok(adapter._childProcess.listenerCount('exit') > 0, 'exit handler must be armed');
     assert.ok(adapter._childProcess.listenerCount('error') > 0, 'error handler must be armed');
   } finally {
-    teardown(adapter);
+    await teardown(adapter);
   }
 
   assert.ok(tmpDir, 'Start must have created a temp dir');
@@ -111,7 +113,7 @@ async function main() {
     // If spawn happened to succeed on this host, that is acceptable — the
     // assertion that matters is that no ReferenceError was raised.
   } finally {
-    teardown(adapter);
+    await teardown(adapter);
   }
 
   if (tmpDir) {

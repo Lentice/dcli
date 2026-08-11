@@ -694,6 +694,23 @@ when the mechanism for it exists and is tested. The Job Object path in this sect
 the eventual target; it is no longer the only thing that counts as containment. Read ADR-010 before
 proposing containment work — it records why the intermediate rungs come first.
 
+### Amendment 2026-08-11 — Unix is contained (ADR-010 rung 1)
+
+The Unix half of this section is now wired. All three adapters spawn the backend with
+`detached: process.platform !== 'win32'`; on POSIX the backend leads its own process group — the group is
+created by this spawn and contains only its descendants, so its id (the child's pid) is **ownership proof**,
+not the unverified reused pid the section forbids — and every termination path goes through the shared
+`terminateProcessTree` in `adapters/shared/process-lifecycle.js`: `SIGTERM` to the group → bounded grace →
+`SIGKILL` to the group. `ESRCH` from either signal means the group is already gone, which is the outcome
+wanted, not an error. The job record carries `containment: { kind: 'process-group', degraded: false }`, and
+the hard-timeout path no longer writes `kill_skipped: 'not_contained'` on Unix — the kill was performed, and
+claiming a skipped kill is the same dishonesty as claiming one that did not happen.
+
+This supersedes the Unix parts of the 2026-08-02 amendment. What remains there is the **Windows** half: no
+Job Object, plain `spawn` with no `detached`, `containment: null` in `core/commands/cancel.js`, and the
+`kill_skipped: 'not_contained'` record on Windows hard timeouts. Windows stays at ADR-010 rung 0 until the
+degraded tree kill (ticket 103) lands.
+
 ---
 
 ## 15. Locking and concurrency
