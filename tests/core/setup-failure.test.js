@@ -116,7 +116,7 @@ const CASES = [
     // A backend limit of 0 makes acquireSlot refuse before the worktree step
     // even starts; the created worktree must still be removed.
     setup: ({ stateRoot }) => countingAdmission(stateRoot, { backendLimits: { fake: 0 } }),
-    expect: { exitCode: 14, acquire: 1, release: 0 },
+    expect: { exitCode: 17, failureClass: 'lock', acquire: 1, release: 0 },
   },
   {
     name: 'createJob throws',
@@ -152,6 +152,10 @@ async function main() {
 
       assert.ok(error, `${c.name}: setup must throw`);
       assert.strictEqual(error.exitCode, c.expect.exitCode, `${c.name}: original exit code must be preserved`);
+      if (c.expect.failureClass) {
+        assert.strictEqual(error.failureClass, c.expect.failureClass,
+          `${c.name}: capacity failure must carry failureClass ${c.expect.failureClass}`);
+      }
       if (c.expect.message) assert.strictEqual(error.message, c.expect.message, `${c.name}: original error must be preserved`);
       assert.strictEqual(spy.acquireCalls, c.expect.acquire, `${c.name}: slot acquisition count`);
       assert.strictEqual(spy.releaseCalls, c.expect.release, `${c.name}: slot release count`);
@@ -204,6 +208,43 @@ async function main() {
     assert.strictEqual(spy.releaseCalls, 0, 'nothing may be released when nothing was acquired');
     assert.strictEqual(slotFiles(stateRoot).length, 0, 'no admission slot file may remain');
     console.log('PASS: setup failure — worktree already exists');
+  });
+
+  // =========================================================================
+  // Ticket 119 criterion A — at-capacity `run --json` exits 17 and reports
+  // failure_class "lock" in the JSON output, not a quota/rate-limit 14.
+  // =========================================================================
+  await withTempDir(async (dir) => {
+    const repoRoot = createRepo(dir);
+    const stateRoot = path.join(dir, 'state');
+    // Fill every fake-backend admission slot from this process so the CLI's
+    // own controller (same state root, fake limit 3) sees no capacity left.
+    const filler = new AdmissionController({ stateRoot, backendLimits: { fake: 3 } });
+    const slots = [];
+    for (let i = 0; i < 3; i++) {
+      const s = filler.acquireSlot('fake');
+      assert.ok(s.acquired, `slot ${i + 1}/3 must be acquired by the filler`);
+      slots.push(s.slotId);
+    }
+    try {
+      const CLI = path.join(__dirname, '..', '..', 'cli', 'dcli.js');
+      const r = spawnSync(process.execPath, [
+        CLI, '--backend', 'fake', 'run', '--repo', repoRoot, '--json', 'say hi',
+      ], {
+        encoding: 'utf8',
+        windowsHide: true,
+        env: { ...process.env, DCLI_STATE_ROOT: stateRoot },
+        timeout: DEFAULT_TIMEOUT,
+      });
+      assert.strictEqual(r.status, 17, `at-capacity run --json must exit 17, got ${r.status}: ${r.stderr}`);
+      const envelope = JSON.parse(r.stdout);
+      assert.strictEqual(envelope.failure_class, 'lock', '--json output must carry failure_class "lock"');
+      assert.ok(/Try again later/.test(envelope.detail), `message must keep the retry advice: ${envelope.detail}`);
+      assert.strictEqual(slotFiles(stateRoot).length, 3, 'the CLI must not create or steal any slot');
+      console.log('PASS: setup failure — at-capacity run --json exits 17 with failure_class "lock"');
+    } finally {
+      for (const id of slots) filler.releaseSlot(id);
+    }
   });
 
   console.log('\nAll setup-failure tests passed.');

@@ -14,6 +14,7 @@ const FAILURE_CLASS_TO_EXIT_CODE = Object.freeze({
   quota_or_rate_limit: 14,
   permission_or_sandbox: 15,
   network_error: 16,
+  lock: 17,
   protocol: 26,
 });
 

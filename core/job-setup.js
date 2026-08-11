@@ -107,8 +107,13 @@ function openAttempt({
     if (admission) {
       const result = admission.acquireSlot(backend);
       if (!result.acquired) {
+        // Admission slots are a lock-like resource: at capacity the local
+        // queue is full right now, not the provider's credit exhausted.
+        // Classify as lock/17 (bounded backoff retry) so the delegating agent
+        // is never told "note it, never retry" about a transient local state.
         const err = new Error(`System at capacity (global: ${result.active}/${result.limit}). Try again later or use "submit" instead.`);
-        err.exitCode = 14;
+        err.exitCode = 17;
+        err.failureClass = 'lock';
         throw err;
       }
       acquiredSlotId = result.slotId;

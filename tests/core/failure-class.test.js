@@ -23,6 +23,15 @@ for (const cls of FAILURE_CLASSES) {
 }
 
 // ===========================================================================
+// 1b. lock maps to 17 in both directions (ticket 119: admission capacity is
+//     a lock-class failure, not a quota/rate-limit one).
+// ===========================================================================
+assert.strictEqual(failureClassToExitCode('lock'), 17);
+assert.strictEqual(exitCodeToFailureClass(17), 'lock');
+assert.strictEqual(failureClassToExitCode('quota_or_rate_limit'), 14, 'quota_or_rate_limit keeps 14');
+assert.strictEqual(exitCodeToFailureClass(14), 'quota_or_rate_limit', '14 keeps quota_or_rate_limit');
+
+// ===========================================================================
 // 2. Unknown classes and codes are null, never a guessed class.
 // ===========================================================================
 assert.strictEqual(failureClassToExitCode('no_such_class'), null);

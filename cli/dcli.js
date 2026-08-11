@@ -110,8 +110,15 @@ const { AdmissionController } = require('../core/admission');
 const { spawnWorker } = require('../core/worker-spawn');
 const { getBackground, getBackendLimits, DEFAULT_BACKEND } = require('../adapters/registry');
 
+// Set by main() after argument parsing; the catch handler below reads it so a
+// failure with an explicit failureClass can be reported as JSON when --json
+// was requested (design-spec §7: "--json output must carry a distinct
+// failure_class"). Null when parsing itself threw — those errors stay plain.
+let parsedArgs = null;
+
 async function main() {
   const parsed = parseArgs(process.argv);
+  parsedArgs = parsed;
 
   if (parsed.help) {
     console.log(help);
@@ -699,6 +706,14 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error(err.message);
+  if (parsedArgs && parsedArgs.json && err.failureClass) {
+    console.log(JSON.stringify({
+      schema_version: 1,
+      failure_class: err.failureClass,
+      detail: err.message,
+    }));
+  } else {
+    console.error(err.message);
+  }
   process.exit(err.exitCode || 1);
 });

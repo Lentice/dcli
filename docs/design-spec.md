@@ -332,7 +332,7 @@ translated, never surfaced.
 | `14` | Quota or rate-limit failure |
 | `15` | Permission / access-policy denial |
 | `16` | Network / transport failure |
-| `17` | Lock acquisition or corrupt-state failure |
+| `17` | Lock acquisition or corrupt-state failure. (2026-08-11) Local admission capacity — "System at capacity", the local queue is full — classifies here as `lock` (bounded backoff retry), never as `14`. |
 | `18` | Worker launch / startup-sentinel failure |
 | `20` | Caller's `wait` timed out; job still active |
 | `21` | Cancellation could not be confirmed. (2026-08-11) On Windows a tree-kill rung that left survivors also exits `21` — the survivors are named in the human output and the JSON envelope's `containment_survivors`, and no clean `cancelled` outcome is written. |

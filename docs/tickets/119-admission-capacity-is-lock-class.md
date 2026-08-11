@@ -1,6 +1,6 @@
 # 119 — local admission capacity is reported as quota/rate-limit (exit 14) instead of the `lock` class
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Exit 14's contract tells the one consumer that matters — the delegating agent — "note
 it, never retry-loop". A locally-transient "the local queue is full" is delivered as "you are out
@@ -106,6 +106,76 @@ npm test -- --grep "failure-class|capacity"   # expect: green
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+Implemented 2026-08-11, one commit.
+
+**What was changed and where**
+
+- `core/failure-class.js` — added `lock: 17` to the frozen `FAILURE_CLASS_TO_EXIT_CODE`
+  literal (append-only; both directions derive, so criterion B holds by construction).
+- `core/job-setup.js:109-118` — the capacity error now sets `err.exitCode = 17` and
+  `err.failureClass = 'lock'`; the message (incl. "Try again later or use `submit`
+  instead.") is unchanged and now matches the class.
+- `cli/dcli.js` — the `--json` envelope does NOT carry `failure_class` for setup errors:
+  `buildEnvelope` is emitted only for jobs that got created, and an at-capacity error
+  previously propagated to `main().catch`, which printed the message and exited with no
+  JSON at all. Added the missing mechanism: `main()` records the parsed args, and the
+  catch handler emits `{ schema_version: 1, failure_class, detail }` on stdout when
+  `--json` was requested and the error carries a `failureClass` (this also gives the
+  adapters' existing `unsupported_capability` errors their spec-mandated §7 JSON output).
+  Errors without a `failureClass` keep the old stderr-only behavior.
+- `docs/design-spec.md` §7 — the `17` row now notes that local admission capacity
+  classifies here as `lock`, never as `14`. §8's `lock` row already carried the correct
+  reaction; no change there.
+- `integration/source/*` — verified per ticket item 3: nothing teaches a "never retry
+  14" rule that this change invalidates; 14 keeps its meaning, so no source change.
+
+**Tests (written first, verified red, then green)**
+
+- `tests/core/failure-class.test.js` — explicit `lock ↔ 17` both directions plus the
+  unchanged `quota_or_rate_limit ↔ 14` assertions (criterion B and C).
+- `tests/core/setup-failure.test.js` — the existing "admission full" case now expects
+  exit 17 and `failureClass: 'lock'`; added a CLI-level case: three fake slots held by
+  the test process, then `run --json` exits 17 and stdout parses to
+  `failure_class: "lock"` with the retry advice intact (criterion A).
+
+**Build and suite results**
+
+`npm run check` (eslint + full suite): green. adapters 33, contract 2, core 60,
+helpers 1, integration 3 — all passed, exit 0. Tracker table regenerated with
+`scripts/generate-tickets-table.js`.
+
+**Agent checks — actual output**
+
+```
+$ node -e "const m = require('./core/failure-class.js'); console.log(m.failureClassToExitCode('lock'), m.exitCodeToFailureClass(17))"
+17 lock
+
+$ rg -n "exitCode = 14|quota" core/job-setup.js
+(no matches, exit 1)
+
+$ npm test -- --grep "failure-class|capacity"
+Cannot run as written: this repo's runner (tests/run-tests.js) has no --grep flag.
+Ran the two files directly instead — both green:
+  node tests/core/failure-class.test.js  → PASS
+  node tests/core/setup-failure.test.js  → PASS
+```
+
+**Deviations from the ticket**
+
+- `tests/core/job-setup.test.js` does not exist; the openAttempt-failure tests live in
+  `tests/core/setup-failure.test.js` (ticket 95's file), which was extended instead.
+- The ticket's item 2 asked to trace "wherever the `--json` envelope carries
+  `failure_class`". It does not, on the setup path — see the `cli/dcli.js` change above,
+  which is the minimal mechanism that makes criterion A's `failure_class: "lock"`
+  observable.
+- Criterion A says "run/submit". `submit` never throws the capacity error: it calls
+  `openAttempt` with `admission: null` and the detached worker queues the job instead
+  (`core/commands/worker.js`). The criterion is satisfied at the single shared error
+  construction site (openAttempt), which the "use `submit` instead" advice points at.
+- The audit quoted only the `global_limit` branch; the current code has one shared
+  construction site (`!result.acquired` covers contention/global/backend limits alike),
+  so one reclassification covers all three.
+- No change to `integration/source/core.md`'s exit table: it has no `17`/`lock` row and
+  the ticket scoped docs to design-spec §7/§8 only. If a future ticket adds a `lock`
+  row there, it should say "bounded backoff retry, then fail".
+
