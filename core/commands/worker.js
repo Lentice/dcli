@@ -65,7 +65,6 @@ async function main() {
 
   // Acquire admission slot (dequeue spawns a fresh worker when one frees).
   const admission = new AdmissionController({ stateRoot, backendLimits: getBackendLimits() });
-  admission.reconcile();
   admission.setSpawnWorker((entry) => {
     // The queued relaunch goes through the same spawn path as the initial
     // submit (core/worker-spawn.js); the queue claim is a parameter.
@@ -81,6 +80,9 @@ async function main() {
       queueClaimPath: entry.queueClaimPath,
     });
   });
+  // Reconcile AFTER the spawn callback is registered: the queue nudge inside
+  // reconcile() dispatches through it.
+  admission.reconcile();
 
   const slotResult = admission.acquireSlot(backendName);
   if (!slotResult.acquired) {
@@ -106,9 +108,6 @@ async function main() {
   }
   const slotId = slotResult.slotId;
   process.env.DCLI_SLOT_ID = slotId;
-  if (queueClaimPath) {
-    try { fs.unlinkSync(queueClaimPath); } catch {}
-  }
 
   let adapter;
   try {
@@ -120,6 +119,7 @@ async function main() {
     adapter = new AdapterClass(params._adapterScript || {});
   } catch (err) {
     journalFailure(store, slotId, repoKey, jobId, null, 'worker_startup_failed', `Cannot load adapter: ${err.message}`);
+    dropQueueClaim(queueClaimPath);
     admission.releaseSlot(slotId);
     process.exit(1);
   }
@@ -136,6 +136,7 @@ async function main() {
     adapter.DetectVersion();
   } catch (err) {
     journalFailure(store, slotId, repoKey, jobId, null, 'validation_failed', err.message);
+    dropQueueClaim(queueClaimPath);
     admission.releaseSlot(slotId);
     process.exit(2);
   }
@@ -146,6 +147,7 @@ async function main() {
   } catch (err) {
     if (err.code !== 'EEXIST') {
       journalFailure(store, slotId, repoKey, jobId, null, 'worker_startup_failed', `Cannot create attempt dir: ${err.message}`);
+      dropQueueClaim(queueClaimPath);
       admission.releaseSlot(slotId);
       process.exit(1);
     }
@@ -190,6 +192,12 @@ async function main() {
       ...(worktreePath ? { worktree_path: worktreePath, worktree_base_commit: worktreeBaseCommit } : {}),
     },
   });
+
+  // The launch is durable now — the journal says `running` — so the queue
+  // claim can go. Dropping it earlier opened a window where a reconciler saw
+  // a `queued` job with no entry and no worker and retired it while the
+  // backend was about to start (ticket 107).
+  dropQueueClaim(queueClaimPath);
 
   // Every terminal exit routes through here so the completion sentinel — the
   // evidence reconciliation reads to tell "finished" from "died" — cannot be
@@ -240,6 +248,13 @@ function journalFailure(store, slotId, repoKey, jobId, stateRoot, reason, messag
       });
     }
   } catch {}
+}
+
+// Remove the queue launch claim once it is no longer needed. Idempotent: a
+// claim that cancel already removed (or that never existed) is fine.
+function dropQueueClaim(queueClaimPath) {
+  if (!queueClaimPath) return;
+  try { fs.unlinkSync(queueClaimPath); } catch {}
 }
 
 function writeCrashSentinel(stateRoot, repoKey, jobId, code, state) {

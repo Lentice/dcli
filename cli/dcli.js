@@ -107,6 +107,7 @@ const { computeRepoKeyWithPath } = require('../core/repo-key');
 const { Redactor } = require('../core/redactor');
 const { setRedactor } = require('../core/fs-text');
 const { AdmissionController } = require('../core/admission');
+const { spawnWorker } = require('../core/worker-spawn');
 const { getBackground, getBackendLimits, DEFAULT_BACKEND } = require('../adapters/registry');
 
 async function main() {
@@ -157,9 +158,25 @@ async function main() {
     stateRoot,
     backendLimits: getBackendLimits(),
   });
-  admissionController.reconcile();
-
   const store = new JobStore({ stateRoot });
+
+  // The CLI must be able to dispatch, not just reclaim: reconcile() nudges
+  // the queue, and a queued job whose slot holders died is relaunched by the
+  // next command only if this process can spawn its worker (ticket 107).
+  admissionController.setSpawnWorker((entry) => {
+    spawnWorker({
+      store,
+      stateRoot,
+      backend: entry.backend,
+      jobId: entry.jobId,
+      repoKey: entry.repoKey || 'unknown',
+      repoRoot: entry.repoRoot || stateRoot,
+      hardTimeoutSec: entry.hardTimeoutMs && entry.hardTimeoutMs > 0 ? entry.hardTimeoutMs / 1000 : null,
+      executionToken: entry.executionToken || null,
+      queueClaimPath: entry.queueClaimPath,
+    });
+  });
+  admissionController.reconcile();
 
   const repoPath = parsed.repo || process.cwd();
   const { repoKey, fullPath } = computeRepoKeyWithPath(repoPath);

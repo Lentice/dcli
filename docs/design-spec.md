@@ -271,7 +271,14 @@ backend upgrade cannot retroactively change how an old job is interpreted.
 ## 6. Lifecycle
 
 **States:** `created` → `running` → one of `done` | `failed` | `timed_out` | `cancelled` |
-`interrupted` (controller died — ADR-008; recoverable only by a **new attempt**).
+`interrupted` (controller died — ADR-008; recoverable only by a **new attempt**). A `submit` job
+that cannot acquire an admission slot journals `created` → `queued`; the queue relaunches it
+(`queued` → `running`) when capacity frees. The queue lifecycle guarantees a queued job always
+either runs or reaches a terminal state: cancelling a queued job removes its queue entry and any
+launch claim under the admission lock, so a cancelled job is never launched from the queue; and a
+queued job whose entry is gone with no live worker reconciles to `failed` with
+`failure_reason: queue_stranded` (ticket 107). The reducer still owns every terminal state — the
+queue only adds and removes entries, and supplies the `queueEntryPresent` fact.
 
 **Terminal state is decided by an engine-owned reducer over adapter facts (ADR-007).** There is no
 universal completion criterion: for a CLI adapter, `process_exited` plus a validated result plus a

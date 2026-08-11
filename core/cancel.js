@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { writeTextFileAtomic } = require('./fs-text');
 const { isProcessAlive } = require('./process-identity');
@@ -46,6 +47,15 @@ async function cancelJob(opts) {
 
   if (TERMINAL.has(status.state)) {
     return { state: status.state, cancelRungReached: null, exitCode: 0 };
+  }
+
+  // A queued job's only launch path is the admission queue. Cancelling it
+  // must remove its queue entry (and any launch claim) so the relaunch path
+  // can never start its backend after the caller was told cancellation
+  // succeeded. Removed under the admission lock — never an unlocked unlink
+  // racing a `_claimQueueEntry` rename.
+  if (status.state === 'queued') {
+    removeQueueEntryUnderLock(store.stateRoot, jobId);
   }
 
   // Without a pid there is nothing to observe, and `isProcessAlive(null)` is
@@ -242,6 +252,30 @@ async function cancelJob(opts) {
 
 function boundedSleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Delete a queued job's queue entry and any `.launching-` claim under the
+ * admission lock. Idempotent: absence is fine. The lock is released even on
+ * error; if the lock cannot be acquired the removal is skipped — the entry
+ * then stays, but tryDequeue's state check keeps the cancelled job unlaunched.
+ */
+function removeQueueEntryUnderLock(stateRoot, jobId) {
+  const { LockManager } = require('./locking');
+  const lockManager = new LockManager({ lockDir: path.join(stateRoot, 'locks') });
+  const lock = lockManager.tryAcquire('admission', 'global');
+  try {
+    if (!lock) return;
+    const queueDir = path.join(stateRoot, 'queue');
+    const files = fs.readdirSync(queueDir).filter(f => f.startsWith(jobId + '.') && f.endsWith('.json'));
+    for (const f of files) {
+      try { fs.unlinkSync(path.join(queueDir, f)); } catch {}
+    }
+  } catch {
+    // A failed removal must not turn a cancel into a failure.
+  } finally {
+    if (lock) lockManager.release(lock);
+  }
 }
 
 /**

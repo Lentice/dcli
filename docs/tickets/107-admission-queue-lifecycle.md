@@ -1,6 +1,6 @@
 # 107 — the admission queue strands queued jobs and relaunches cancelled ones
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** A submitted job that never runs, or a cancelled job whose backend still starts, is the
 single worst outcome for a delegation tool: work happens the caller was told was gone, and work is
@@ -146,6 +146,103 @@ rg -n "readJobState" core/admission.js
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+**What was changed and where**
+
+- `core/cancel.js` — when `status.state === 'queued'`, `cancelJob` now removes
+  `queue/<jobId>.json` and any `queue/<jobId>.launching-*.json` claim under the
+  admission lock (`LockManager.tryAcquire('admission','global')`, `try/finally`
+  so the lock is released even on error; a lock that cannot be acquired skips
+  the removal rather than racing an unlocked unlink). The existing exit-0
+  cancelled outcome for queued jobs is unchanged. Idempotent: absence is fine.
+- `core/admission.js` — `AdmissionController` gains the constructor option
+  `readJobState` (default: a `JobStore.readStatus` reader over `this._stateRoot`).
+  The `tryDequeue` dispatch loop skips any entry whose job state is terminal
+  (`TERMINAL` from the reducer), on both the spawn and the in-process fallback
+  paths. `reconcile()` now calls `this.tryDequeue()` before returning, so the
+  "every slot holder died" path drains on the next command.
+- `core/reducer.js` — reconciliation gate now includes `queued`; a `queued`
+  job with `queueEntryPresent === false`, no live worker and no slot
+  reconciles to terminal `failed` with `failure_reason: 'queue_stranded'`
+  (`publishable: true` — entry absence is positive durable evidence).
+  `queueEntryPresent !== false` or `workerAlive === true` always returns
+  noChange, so an existing entry, a live launch claim, or an unreadable queue
+  never retires a queued job.
+- `core/job-store.js` — `gatherEvidence` supplies the new `queueEntryPresent`
+  fact: any `queue/<jobId>.json` or `<jobId>.launching-*.json` file (queue dir
+  unreadable → `null`, never a retirement).
+- `core/commands/worker.js` — `setSpawnWorker` is registered **before**
+  `reconcile()` (the nudge must dispatch through it, not the in-process
+  fallback). The queue claim is no longer unlinked right after slot
+  acquisition; it is dropped only after the `created → running` journal
+  transition is durable, and `dropQueueClaim` runs on the pre-running failure
+  paths (adapter load, validation, attempt-dir creation) so a failed relaunch
+  leaves no stale claim.
+- `cli/dcli.js` — the CLI admission controller now gets a `setSpawnWorker`
+  callback (same `spawnWorker` call worker.js uses), so the startup
+  `reconcile()` nudge can actually relaunch queued jobs.
+- `docs/design-spec.md` §6 — state list gains the `queued` transition and a
+  sentence on the queue lifecycle.
+
+**Deviation from the ticket, and why**
+
+1. **The CLI and worker needed a spawner before the nudge could be safe.** The
+   ticket says "an unconditional nudge is safe" and puts the nudge at CLI
+   startup, but the CLI process never registered a spawn callback, and the
+   worker registered it *after* `reconcile()`. Without a spawner, `tryDequeue`
+   takes its in-process fallback path — it acquires a slot in the short-lived
+   caller and deletes the entry without ever spawning a worker, which would
+   have **destroyed** every queued job the nudge touched. Fix: the CLI now
+   sets the same spawn callback worker.js uses, and worker.js registers it
+   before reconciling. (2 extra lines of behaviour in `cli/dcli.js` beyond the
+   ticket's list.)
+2. **The claim is held until the `running` journal, not unlinked at slot
+   acquisition.** Item 4's "no slot" clause is not checkable from evidence —
+   slot files do not name their owning job — so the reducer can only use
+   `queueEntryPresent` + `workerAlive`. The old code unlinked the claim
+   immediately after `acquireSlot` but journaled `running` only after adapter
+   load/validation, leaving a window where a `queued` job had no entry, no
+   recorded worker identity and a live (about-to-run) worker: a concurrent
+   `status` would have reconciled it to `queue_stranded` and the running
+   backend would have been written as failed. Holding the claim until the
+   journal says `running` makes "no entry" strictly imply "nothing is
+   launching it", which is what item 4's condition needs. The launch lease
+   mechanics themselves are unchanged.
+3. **`readJobState` is effectively synchronous.** `tryDequeue` is synchronous
+   (it is called from `releaseSlot`/`reconcile`, and the whole admission path
+   is sync), so the default reader is a synchronous `JobStore.readStatus`.
+   The ticket's `async` signature would require making the dispatch loop
+   async; nothing in production passes an async reader.
+4. **Skipped terminal entries are left in `queue/`, not removed.** Removal is
+   `cancelJob`'s job, under the admission lock; the dispatcher only skips, per
+   item 2. A skipped entry is harmless (always skipped) and never launches.
+5. **The race where a relaunched worker re-enqueues a cancelled job** (it
+   fails to acquire a slot and `enqueueJob`s after cancel already removed the
+   entry) is not fixed here: item 2's state check guarantees the re-enqueued
+   entry is never launched, so the ticket's guarantee holds; the entry would
+   linger as garbage. Left as-is per "make only the changes the ticket asks
+   for".
+
+**Build and suite results**
+
+- `npm run check` (eslint + `node tests/run-tests.js --suite full`): **green,
+  exit 0** — adapters 17, cli 17, core 58, helpers 1, integration 3 passed,
+  0 failed.
+- Targeted runs before the full suite, all green:
+  `node tests/core/cancel.test.js` (incl. new test 10 — queued-job cancel
+  removes entry + launch claim, ends cancelled, exit 0, never launched),
+  `node tests/core/admission.test.js` (new tests 10–12 — tryDequeue skips
+  terminal jobs; reconcile nudges the queue; dispatcher never spawns for a
+  terminal job), `node tests/core/reducer.test.js` (new test 17 — queue_stranded
+  rules), `node tests/core/job-store.test.js` (new test 19 — end-to-end
+  `reconcileStatus` retires a stranded queued job and keeps one with an entry).
+  Each was verified **red** before the implementation.
+
+**Agent checks' actual output**
+
+- `npm test -- --grep "admission"` — the repo's runner has no `--grep`; ran
+  the admission/cancel suites directly as above, green.
+- `rg -n "to: '(done|failed|timed_out|cancelled|interrupted)'" core/admission.js`
+  → no output, exit 1 (nothing — expected: the engine decides no terminal state).
+- `rg -n "readJobState" core/admission.js` → constructor option at line 11,
+  default reader at line 23, one use in the dispatch loop at line 239
+  (exit 0).

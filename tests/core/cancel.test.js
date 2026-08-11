@@ -431,6 +431,62 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
+// 10. Cancelling a queued job removes its queue entry (and any launch claim)
+//     and the job ends cancelled with exit 0 — and is never launched later.
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const repoKey = 'test-repo';
+  const jobId = 'cancel-test-10';
+  createJob(store, repoKey, jobId);
+  const jobDir = store.getJobDir(repoKey, jobId);
+
+  store.journalTransition(jobId, repoKey, {
+    kind: 'attempt_state_changed',
+    attempt: 1,
+    from: 'created',
+    to: 'queued',
+    detail: { phase: 'queued', queue_reason: 'global_limit', worker_pid: null, worker_identity: null },
+  });
+
+  const queueDir = path.join(dir, 'queue');
+  fs.mkdirSync(queueDir, { recursive: true });
+  fs.writeFileSync(path.join(queueDir, `${jobId}.json`),
+    JSON.stringify({ jobId, backend: 'fake' }) + '\n', 'utf8');
+  fs.writeFileSync(path.join(queueDir, `${jobId}.launching-abc.json`),
+    JSON.stringify({ jobId, backend: 'fake' }) + '\n', 'utf8');
+
+  const adapter = new FakeAdapter({ declaredRungs: ['hard_kill'], facts: [] });
+
+  const result = await cancelJob({
+    store, adapter, jobDir, repoKey, jobId,
+    attempt: {}, attemptNum: 1,
+    containment: null, executionToken: null, pid: null,
+    isProcessAliveFn: () => false,
+    rungWaitMs: 10, hardKillWaitMs: 10,
+  });
+
+  assert.strictEqual(result.state, 'cancelled', 'Queued job must end cancelled');
+  assert.strictEqual(result.exitCode, 0, 'Queued job cancel must exit 0');
+
+  const remaining = fs.readdirSync(queueDir).filter(f => f.startsWith(jobId + '.'));
+  assert.deepStrictEqual(remaining, [],
+    'Queued job cancel must remove the queue entry and any launch claim');
+
+  const status = store.readStatus({ repoKey, jobId });
+  assert.strictEqual(status.state, 'cancelled', 'Status must show cancelled');
+
+  // Nothing may launch it later: the queue is empty of this job.
+  const { AdmissionController } = require('../../core/admission');
+  const admission = new AdmissionController({ stateRoot: dir, globalLimit: 5 });
+  let spawns = 0;
+  admission.setSpawnWorker(() => { spawns++; });
+  assert.strictEqual(admission.tryDequeue(), 0, 'No entry may remain to dequeue');
+  assert.strictEqual(spawns, 0, 'No worker may spawn for the cancelled job');
+  console.log('PASS: cancel test 10 — queued job cancel removes queue entry');
+});
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 console.log('\nAll cancellation tests passed.');

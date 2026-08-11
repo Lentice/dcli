@@ -2,12 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { LockManager } = require('./locking');
+const { TERMINAL } = require('./reducer');
 
 const DEFAULT_GLOBAL_LIMIT = 5;
 const DEFAULT_PER_BACKEND_LIMIT = 5;
 
 class AdmissionController {
-  constructor({ stateRoot, globalLimit, backendLimits }) {
+  constructor({ stateRoot, globalLimit, backendLimits, readJobState }) {
     this._stateRoot = stateRoot;
     this._globalLimit = globalLimit !== undefined ? globalLimit : DEFAULT_GLOBAL_LIMIT;
     this._backendLimits = backendLimits || {};
@@ -17,6 +18,12 @@ class AdmissionController {
     this._ownIdentity = this._captureIdentity();
     this._ownToken = this._ownIdentity.startTime + ':' + process.pid;
     this._lockManager = new LockManager({ lockDir: path.join(stateRoot, 'locks') });
+    // The dispatcher must not launch a job that is no longer queued; the
+    // queue is the only coordination point between cancel and relaunch.
+    this._readJobState = readJobState || ((repoKey, jobId) => {
+      const { JobStore } = require('./job-store');
+      return new JobStore({ stateRoot: this._stateRoot }).readStatus({ repoKey, jobId });
+    });
   }
 
   _captureIdentity() {
@@ -223,6 +230,18 @@ class AdmissionController {
 
     let dequeued = 0;
     for (const entry of queueEntries) {
+      // A job that is no longer queued (cancelled, failed, ...) must never be
+      // launched from the queue: the queue is the only coordination point
+      // between cancel and the relaunch path. Terminal states are decided by
+      // the reducer; the queue only skips its entries.
+      let jobState = null;
+      try {
+        jobState = this._readJobState(entry.repoKey, entry.jobId);
+      } catch {
+        jobState = null;
+      }
+      if (jobState && TERMINAL.has(jobState.state)) continue;
+
       // A queued worker must acquire the slot in its own process. A slot file
       // owned by this dispatcher cannot be transferred safely to a detached
       // child: the parent may exit and reconciliation would reclaim it.
@@ -274,6 +293,12 @@ class AdmissionController {
         reclaimed++;
       }
     }
+
+    // Nudge the queue: a reconciliation that reclaimed slots freed capacity,
+    // and the only other launch trigger is releaseSlot. reconcile() runs at
+    // CLI startup and worker startup — both safe places to dispatch.
+    // tryDequeue already respects capacity, the launch lease and job state.
+    this.tryDequeue();
 
     return reclaimed;
   }

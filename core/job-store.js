@@ -477,6 +477,7 @@ class JobStore {
       sentinelExitCode: null,
       sentinelState: null,
       workerIdentityMissing: null,
+      queueEntryPresent: null,
     };
 
     try {
@@ -508,6 +509,21 @@ class JobStore {
         try { evidence.workerAlive = isProcessAlive(status.worker_pid); } catch {}
       }
       if (status.job_id) evidence.jobId = status.job_id;
+
+      // A `queued` job is launched only through the admission queue; an
+      // existing entry or `.launching-` claim means the relaunch path may
+      // still pick it up. Absence is the durable positive evidence that
+      // nothing can launch it any more — the reducer's only basis for
+      // retiring a `queued` job (ticket 107).
+      try {
+        const queueDir = path.join(this._stateRoot, 'queue');
+        const queueFiles = fs.readdirSync(queueDir)
+          .filter(f => f.startsWith(`${jobId}.`) && f.endsWith('.json'));
+        evidence.queueEntryPresent = queueFiles.length > 0;
+      } catch {
+        // Unreadable queue (or no queue dir yet) — never positive evidence.
+        evidence.queueEntryPresent = null;
+      }
 
       // Check completion sentinel under attempts/<n>/
       const attemptNum = status.attempt;

@@ -742,6 +742,57 @@ console.log('PASS: zero-wait — reducer is synchronous and never blocks');
 console.log('PASS: cancel created job with live worker (reducer transition)');
 
 // ===========================================================================
+// 17. A stranded queued job reconciles to failed(queue_stranded); an existing
+//     queue entry (or live worker) keeps it queued forever only in the sense
+//     that the relaunch path is the ONLY path that makes it run
+// ===========================================================================
+
+{
+  const base = {
+    state: 'queued',
+    phase: 'queued',
+    job_id: 'j1',
+    cancel_requested_at: null,
+    hard_timeout_sec: null,
+    started_at: null,
+    failure_reason: null,
+    backend_session_id: null,
+    failure: null,
+  };
+
+  // Queue entry gone, no worker, no slot → stranded: terminal failed
+  const stranded = reduce(base, [], { queueEntryPresent: false, workerAlive: null, jobId: 'j1' });
+  assert.strictEqual(stranded.state, 'failed', 'Stranded queued job must reconcile to failed');
+  assert.strictEqual(stranded.failure_reason, 'queue_stranded',
+    'failure_reason must be queue_stranded');
+  assert.strictEqual(stranded.phase, 'terminal', 'Stranded must be terminal');
+  assert.strictEqual(stranded.publishable, true,
+    'Queue-entry absence is positive durable evidence: stranded must be publishable');
+
+  // Queue entry still present → never retired
+  const withEntry = reduce(base, [], { queueEntryPresent: true, workerAlive: null, jobId: 'j1' });
+  assert.strictEqual(withEntry.state, 'queued', 'A queued job with an entry must stay queued');
+
+  // A live worker is still launching it (slot acquired, running not yet journaled)
+  const withWorker = reduce(base, [], { queueEntryPresent: false, workerAlive: true, jobId: 'j1' });
+  assert.strictEqual(withWorker.state, 'queued', 'A queued job with a live worker must stay queued');
+
+  // Queue unreadable (null evidence) → treated as absent, never a retirement
+  const unknown = reduce(base, [], { queueEntryPresent: null, workerAlive: null, jobId: 'j1' });
+  assert.strictEqual(unknown.state, 'queued', 'Unknown queue state must not retire a queued job');
+
+  // No queue evidence at all → stays queued
+  const noEvidence = reduce(base, [], {});
+  assert.strictEqual(noEvidence.state, 'queued', 'No queue evidence must not retire a queued job');
+
+  // A launch claim is still an entry: the claim rename keeps the fact true
+  const withClaim = reduce(base, [], { queueEntryPresent: true, workerAlive: null, jobId: 'j1' });
+  assert.strictEqual(withClaim.state, 'queued', 'A live launch claim must keep the job queued');
+}
+
+console.log('PASS: stranded queued job reconciles to queue_stranded only without an entry');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 

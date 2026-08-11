@@ -55,7 +55,6 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
-| [107 — the admission queue strands and relaunches](107-admission-queue-lifecycle.md) | ready | — | Queued jobs can wait forever (dequeue only on slot release) and cancelled queued jobs still launch |
 | [112 — worker startup failure record](112-worker-startup-failure-record.md) | ready | — | Startup failures write a string into the structured `failure` field and skip the completion sentinel |
 | [114 — the detached worker lacks the redactor](114-worker-initializes-the-redactor.md) | ready | — | The worker process never initializes the writer-path redactor; registration is a silent no-op |
 | [108 — `--access full` is out of contract](108-access-full-is-out-of-contract.md) | ready | — | Accepted, undocumented, and three different postures per backend (opencode grants external access; codex/claude silently downgrade) |
@@ -104,6 +103,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [103 — windows degraded tree kill](103-windows-declared-degraded-tree-termination.md) | done | — | Rung 2 of ADR-010. Verified descendant enumeration + `taskkill /T /F`, `degraded: true`, survivors named and exit `21` — never a kill it did not confirm |
 | [111 — wait --all reports corruption as a timeout](111-wait-all-corrupt-state-exit.md) | done | — | Final post-deadline list read returns exit 20 for corrupt state; must return 17 like the polling loop |
 | [113 — scrub-session-ids must survive replay](113-scrub-session-ids-must-survive-replay.md) | done | — | The scrub rewrites only the projection; a journal event must make it durable |
+| [107 — the admission queue strands and relaunches](107-admission-queue-lifecycle.md) | done | — | Queued jobs can wait forever (dequeue only on slot release) and cancelled queued jobs still launch |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

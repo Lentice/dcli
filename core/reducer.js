@@ -10,6 +10,8 @@
  * @property {number|null} commandExitCode - Exit code from evidence
  * @property {string|null} sentinelState - Terminal state the worker published in its sentinel
  * @property {boolean|null} workerIdentityMissing - No usable worker identity or pid is recorded
+ * @property {boolean|null} queueEntryPresent - Does the admission queue still hold this job's
+ *   entry or launch claim? Only a `queued` job uses this fact.
  */
 
 const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
@@ -169,9 +171,27 @@ function reduce(state, facts, evidence) {
     }
   }
 
-  // 5. Reconciliation — only for non-terminal states (running/created)
-  if (state.state !== 'running' && state.state !== 'created') {
+  // 5. Reconciliation — only for non-terminal states (running/created/queued)
+  if (state.state !== 'running' && state.state !== 'created' && state.state !== 'queued') {
     return noChange(state);
+  }
+
+  // A queued job runs only through the admission queue. When its queue entry
+  // (or live launch claim) is gone and no worker is launching it, nothing can
+  // make it run — it is stranded, and the reducer retires it. The relaunch
+  // path must stay the only path that makes it run: an existing entry, a live
+  // launch claim, or an unreadable queue never retires a queued job.
+  if (state.state === 'queued') {
+    if (ev.queueEntryPresent !== false) return noChange(state);
+    if (ev.workerAlive === true) return noChange(state);
+    return {
+      state: 'failed',
+      phase: 'terminal',
+      failure: { reason: 'queue_stranded' },
+      failure_reason: 'queue_stranded',
+      backend_session_id: state.backend_session_id || null,
+      publishable: true,
+    };
   }
 
   // Job-id match guard: evidence must name this job or be absent

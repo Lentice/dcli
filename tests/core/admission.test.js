@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const { JobStore } = require('../../core/job-store');
+
 let AdmissionController;
 function loadModules() {
   AdmissionController = require('../../core/admission').AdmissionController;
@@ -289,5 +291,115 @@ console.log('PASS: utilization and reconcile');
 }
 
 console.log('PASS: queue drain on release');
+
+// ===========================================================================
+// 10. tryDequeue consults job state — a job that is no longer queued
+//     (cancelled while waiting) is never launched from the queue
+// ===========================================================================
+
+{
+  loadModules();
+  const root = tmpDir();
+  const ac = new AdmissionController({ stateRoot: root, globalLimit: 5 });
+  const store = new JobStore({ stateRoot: root });
+  const repoKey = 'test-repo';
+
+  store.createJob({
+    jobId: 'cancelled-job', repoKey, repoRoot: '/tmp/repo',
+    backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'submit', access: 'read-only',
+  });
+  store.journalTransition('cancelled-job', repoKey, {
+    kind: 'attempt_state_changed',
+    attempt: null,
+    from: 'created',
+    to: 'cancelled',
+    detail: { finished_at: new Date().toISOString() },
+  });
+
+  ac.enqueueJob('fake', 'cancelled-job', { repoKey });
+
+  const dequeued = ac.tryDequeue();
+  assert.strictEqual(dequeued, 0, 'tryDequeue must not dequeue a job whose state is terminal');
+
+  const queueDir = path.join(root, 'queue');
+  assert.ok(fs.existsSync(path.join(queueDir, 'cancelled-job.json')),
+    'The terminal job queue entry must not be removed by the dispatcher');
+
+  clean(root);
+}
+
+console.log('PASS: tryDequeue skips jobs that are no longer queued');
+
+// ===========================================================================
+// 11. reconcile() reclaims dead slots AND nudges the queue — a queued job
+//     whose every slot holder died drains when the next command reconciles
+// ===========================================================================
+
+{
+  loadModules();
+  const root = tmpDir();
+  const slotDir = path.join(root, 'locks', 'admission');
+  fs.mkdirSync(slotDir, { recursive: true });
+  fs.writeFileSync(path.join(slotDir, 'dead-slot.json'), JSON.stringify({
+    slotId: 'dead-slot', backend: 'fake', pid: 999999997,
+    startTime: '2025-01-01T00:00:00.000Z', executionToken: 'dead',
+    acquiredAt: '2025-01-01T00:00:00.000Z',
+  }) + '\n', 'utf8');
+
+  const ac = new AdmissionController({ stateRoot: root, globalLimit: 1 });
+  ac.enqueueJob('fake', 'stranded-job');
+
+  const reclaimed = ac.reconcile();
+  assert.strictEqual(reclaimed, 1, 'reconcile must reclaim the dead slot');
+
+  const queueDir = path.join(root, 'queue');
+  const remaining = fs.readdirSync(queueDir)
+    .filter(f => f.endsWith('.json') && !f.includes('.launching-'));
+  assert.strictEqual(remaining.length, 0,
+    'reconcile must nudge the queue: the freed capacity must drain the entry');
+
+  clean(root);
+}
+
+console.log('PASS: reconcile nudges the queue');
+
+// ===========================================================================
+// 12. The dispatcher never spawns a worker for a job that is no longer queued
+// ===========================================================================
+
+{
+  loadModules();
+  const root = tmpDir();
+  const ac = new AdmissionController({ stateRoot: root, globalLimit: 5 });
+  const store = new JobStore({ stateRoot: root });
+  const repoKey = 'test-repo';
+
+  store.createJob({
+    jobId: 'done-job', repoKey, repoRoot: '/tmp/repo',
+    backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'submit', access: 'read-only',
+  });
+  store.journalTransition('done-job', repoKey, {
+    kind: 'attempt_state_changed',
+    attempt: null,
+    from: 'created',
+    to: 'failed',
+    detail: { finished_at: new Date().toISOString(), failure_reason: 'queue_stranded' },
+  });
+
+  ac.enqueueJob('fake', 'done-job', { repoKey });
+
+  let spawns = 0;
+  ac.setSpawnWorker(() => { spawns++; });
+
+  const dequeued = ac.tryDequeue();
+  assert.strictEqual(dequeued, 0, 'A terminal job must never be dequeued');
+  assert.strictEqual(spawns, 0, 'The dispatcher must not spawn a worker for a terminal job');
+
+  clean(root);
+}
+
+console.log('PASS: dispatcher never launches a job that is no longer queued');
 
 console.log('\nAll admission tests passed.');

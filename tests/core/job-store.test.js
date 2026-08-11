@@ -1191,6 +1191,76 @@ console.log('PASS: heartbeat writer');
 console.log('PASS: zero-wait reads');
 
 // ===========================================================================
+// 19. A stranded queued job reconciles to failed(queue_stranded); a queued
+//     job whose queue entry still exists is never retired by reconciliation
+// ===========================================================================
+
+{
+  loadModules();
+  const root = tmpStateRoot();
+  const store = new JobStore({ stateRoot: root });
+  const repoKeyResult = computeRepoKeyWithPath(__dirname);
+  const jobId = generateJobId();
+
+  store.createJob({
+    jobId,
+    repoKey: repoKeyResult.repoKey,
+    repoRoot: repoKeyResult.fullPath,
+    backend: 'fake',
+    backendVersion: '1.0.0',
+    adapterVersion: '1.0.0',
+    mode: 'submit',
+    access: 'read-only',
+  });
+  store.journalTransition(jobId, repoKeyResult.repoKey, {
+    kind: 'attempt_state_changed',
+    attempt: null,
+    from: 'created',
+    to: 'queued',
+    detail: { phase: 'queued', queue_reason: 'global_limit', worker_pid: null, worker_identity: null },
+  });
+
+  // Entry removed (e.g. by cancel) and nothing else can launch it → stranded.
+  const queueDir = path.join(root, 'queue');
+  fs.mkdirSync(queueDir, { recursive: true });
+
+  const stranded = store.reconcileStatus({ repoKey: repoKeyResult.repoKey, jobId });
+  assert.strictEqual(stranded.state, 'failed', 'Stranded queued job must reconcile to failed');
+  assert.strictEqual(stranded.failure_reason, 'queue_stranded',
+    'failure_reason must be queue_stranded');
+
+  // With the queue entry still present, reconciliation must never retire it.
+  const jobId2 = generateJobId();
+  store.createJob({
+    jobId: jobId2,
+    repoKey: repoKeyResult.repoKey,
+    repoRoot: repoKeyResult.fullPath,
+    backend: 'fake',
+    backendVersion: '1.0.0',
+    adapterVersion: '1.0.0',
+    mode: 'submit',
+    access: 'read-only',
+  });
+  store.journalTransition(jobId2, repoKeyResult.repoKey, {
+    kind: 'attempt_state_changed',
+    attempt: null,
+    from: 'created',
+    to: 'queued',
+    detail: { phase: 'queued', queue_reason: 'global_limit', worker_pid: null, worker_identity: null },
+  });
+  fs.writeFileSync(path.join(queueDir, `${jobId2}.json`),
+    JSON.stringify({ jobId: jobId2, backend: 'fake' }) + '\n', 'utf8');
+
+  const stillQueued = store.reconcileStatus({ repoKey: repoKeyResult.repoKey, jobId: jobId2 });
+  assert.strictEqual(stillQueued.state, 'queued',
+    'A queued job whose entry still exists must never be retired by reconciliation');
+
+  clean(root);
+}
+
+console.log('PASS: queued-job reconciliation (queue_stranded; entry keeps job queued)');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 
