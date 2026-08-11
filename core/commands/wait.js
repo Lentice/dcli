@@ -105,9 +105,26 @@ async function executeWaitAll({ store, repoKey, group, timeoutSec, pollMs }) {
 
   const { executeList } = require('./list');
   const listResult = await executeList({ store, repoKey, groupFilter: group });
+
+  // 20 means "still active, budget elapsed". A record we cannot read is not
+  // active work — it is corrupt state, which has its own code.
+  if ((listResult.errors || []).length > 0) {
+    return {
+      exitCode: 17,
+      timedOut: false,
+      waitTimeoutSec: waitTimeoutMs / 1000,
+      jobs: listResult.jobs.map(j => ({
+        job_id: j.job_id,
+        repo_key: j.repo_key,
+        state: j.state,
+        phase: j.phase,
+        ...(j.reconcile_error ? { reconcile_error: j.reconcile_error } : {}),
+      })),
+      errors: listResult.errors,
+    };
+  }
+
   return {
-    // 20 means "still active, budget elapsed". A record we cannot read is not
-    // active work — it is corrupt state, which has its own code.
     exitCode: 20,
     timedOut: true,
     waitTimeoutSec: waitTimeoutMs / 1000,

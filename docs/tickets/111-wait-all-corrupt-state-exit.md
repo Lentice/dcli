@@ -1,6 +1,6 @@
 # 111 — `wait --all` reports corrupt state as a caller timeout (exit 20 instead of 17)
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Exit 20 tells automation "active work merely exceeded its wait budget"; exit 17 tells
 it "state is corrupt, stop waiting". Reporting the former for the latter sends a caller into
@@ -80,6 +80,38 @@ npm test -- --grep "wait"   # expect: green, including the corrupt-final-read ca
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+Implemented 2026-08-11.
+
+**Changed:** `core/commands/wait.js` — the final post-deadline read in
+`executeWaitAll` (formerly `:106-122`) now runs the same corruption branch as the
+polling loop: when `listResult.errors.length > 0` it returns `exitCode: 17,
+timedOut: false` with the jobs projection and `errors`, and only falls through to
+the existing exit-20/`timedOut: true` result when the final listing is clean but
+some job is still non-terminal. The comment stating that rule moved onto the new
+branch. No other file changed.
+
+**Tests:** extended `tests/core/worker-liveness.test.js` with block 6p, reusing
+the existing corruption-fixture pattern (garbage appended to `journal.jsonl`).
+Two cases: (1) corrupt record with `timeoutSec: 0` — the polling loop never runs,
+so the corruption is only ever seen by the final read; expects exit 17,
+`timedOut: false`, non-empty `errors`; (2) readable still-active job with
+`timeoutSec: 0` in a fresh state root — expects exit 20, `timedOut: true`
+(acceptance criterion B). Verified red before the fix (assertion `20 !== 17`),
+green after.
+
+**Suite:** `npm run check` green — lint clean; `test:full` 96 files passed
+(adapters 32, contract 2, core 58, helpers 1, integration 3), 0 failed.
+
+**Agent checks:**
+- `rg -n "exitCode: 17" core/commands/wait.js` → two sites as expected:
+  line 69 (loop early-return) and line 113 (final-read branch).
+- `npm test -- --grep "wait"` — deviation: this repo's test runner
+  (`tests/run-tests.js`) has no `--grep` flag. Covered instead by the full
+  suite above (`tests/core/worker-liveness.test.js` passes in it).
+
+**Deviation from ticket:** the "still-active still exits 20" case (criterion B)
+needed a separate state root — seeding it into the same store would have
+reported the first job's corrupt record, which the ticket's test description
+(one corrupt case, one timeout case) implicitly assumed. Also the ticket's
+`--grep` agent-check command does not exist in this repo's runner; noted above.
+No other deviation.

@@ -55,7 +55,6 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
-| [111 — wait --all reports corruption as a timeout](111-wait-all-corrupt-state-exit.md) | ready | — | Final post-deadline list read returns exit 20 for corrupt state; must return 17 like the polling loop |
 | [113 — scrub-session-ids must survive replay](113-scrub-session-ids-must-survive-replay.md) | ready | — | The scrub rewrites only the projection; a journal event must make it durable |
 | [107 — the admission queue strands and relaunches](107-admission-queue-lifecycle.md) | ready | — | Queued jobs can wait forever (dequeue only on slot release) and cancelled queued jobs still launch |
 | [112 — worker startup failure record](112-worker-startup-failure-record.md) | ready | — | Startup failures write a string into the structured `failure` field and skip the completion sentinel |
@@ -104,6 +103,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [100 — opencode transport seam](100-opencode-adapter-transport-seam.md) | done | — | Twenty-one `_testMode` branches, and tests that reach into private methods; supply a transport and an SSE source |
 | [102 — unix process-group containment](102-unix-process-group-containment.md) | done | — | Rung 1 of ADR-010. Backends are spawned without `detached` and killed by pid, so descendants survive; on Unix this is a full guarantee costing one spawn option |
 | [103 — windows degraded tree kill](103-windows-declared-degraded-tree-termination.md) | done | — | Rung 2 of ADR-010. Verified descendant enumeration + `taskkill /T /F`, `degraded: true`, survivors named and exit `21` — never a kill it did not confirm |
+| [111 — wait --all reports corruption as a timeout](111-wait-all-corrupt-state-exit.md) | done | — | Final post-deadline list read returns exit 20 for corrupt state; must return 17 like the polling loop |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

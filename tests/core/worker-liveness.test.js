@@ -731,6 +731,51 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
+  // 6p. The post-deadline final read honours the same corruption contract as
+  //     the polling loop (ticket 111): an unreadable record in the FINAL
+  //     listing is exit 17 with timedOut: false, never a caller timeout.
+  // ---------------------------------------------------------------------------
+  {
+    const dir = tmpDir();
+    try {
+      const store = new JobStore({ stateRoot: dir });
+
+      // Zero wait budget: the polling loop never runs, so the corrupt record
+      // is only ever seen by the deadline fall-through read.
+      seedRunningJob(store, 'liveness-23', {});
+      const journalPath = path.join(store.getJobDir(REPO_KEY, 'liveness-23'), 'journal.jsonl');
+      fs.appendFileSync(journalPath, 'not json at all\n', 'utf8');
+
+      const { executeWaitAll } = require('../../core/commands/wait');
+      const waited = await executeWaitAll({ store, timeoutSec: 0, pollMs: 100 });
+      assert.strictEqual(waited.exitCode, 17,
+        'a corrupt record in the final listing is corrupt state, not a budget expiry');
+      assert.strictEqual(waited.timedOut, false,
+        'corruption must not be reported as a caller timeout');
+      assert.ok((waited.errors || []).length > 0, 'and it must say which record');
+      console.log('PASS: liveness 6p — final-read corruption returns exit 17');
+
+      // And the timeout branch survives: readable but still-active jobs after
+      // the deadline still exit 20 with timedOut: true. Fresh dir — the
+      // corrupt record above must not leak into this listing.
+      const dir2 = tmpDir();
+      try {
+        const store2 = new JobStore({ stateRoot: dir2 });
+        seedRunningJob(store2, 'liveness-24', {});
+        const active = await executeWaitAll({ store: store2, timeoutSec: 0, pollMs: 100 });
+        assert.strictEqual(active.exitCode, 20,
+          'still-active jobs after the deadline must keep exiting 20');
+        assert.strictEqual(active.timedOut, true);
+        console.log('PASS: liveness 6p — deadline fall-through still exits 20');
+      } finally {
+        clean(dir2);
+      }
+    } finally {
+      clean(dir);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // 6c. A losing terminal claim must not stamp its metadata onto the winner.
   //     Reconciliation and a worker publishing at the same moment is a real
   //     race: replay keeps `done`, but the loser's finished_at/failure_reason
