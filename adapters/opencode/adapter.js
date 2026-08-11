@@ -1,7 +1,7 @@
-const { execSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
+const { runProbe } = require('../shared/run-probe');
 const { runAdapterSmoke } = require('../../core/adapter-smoke');
 const { HttpTransport, requestJson } = require('./transport');
 const { OpencodeServer } = require('./server');
@@ -42,9 +42,7 @@ function resolvePastBunShim(shimPath) {
   }
 
   try {
-    const result = require('node:child_process').execSync('bun pm bin -g', {
-      encoding: 'utf8', timeout: 5000, windowsHide: true,
-    });
+    const result = runProbe('bun', ['pm', 'bin', '-g'], 5000);
     const binDir = result.trim().split('\n')[0].trim();
     if (binDir) {
       const prefix = path.dirname(binDir);
@@ -203,11 +201,7 @@ class OpencodeAdapter {
     } catch {}
 
     try {
-      const result = execSync(`"${opencodePath}" --version`, {
-        encoding: 'utf8',
-        timeout: 10000,
-        windowsHide: true,
-      });
+      const result = runProbe(opencodePath, ['--version'], 10000);
       this._detectedVersion = result.toString().trim();
       return this._detectedVersion;
     } catch (err) {
@@ -714,7 +708,7 @@ class OpencodeAdapter {
       throw new Error('opencode executable not found');
     }
     try {
-      const result = execSync(`"${opencodePath}" --version`, { encoding: 'utf8', timeout: 10000, windowsHide: true });
+      const result = runProbe(opencodePath, ['--version'], 10000);
       const version = result.toString().trim();
       if (!version) throw new Error('No version output');
     } catch (err) {

@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { OpencodeAdapter, resolveOpencodePath } = require('../../../adapters/opencode/adapter');
 const { FakeTransport } = require('../../fixtures/fake-transport');
-const { withVersionShim, writeVersionShim } = require('../../fixtures/version-shim');
+const { withVersionShim, writeVersionShim, writeVersionShimAt } = require('../../fixtures/version-shim');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
@@ -154,6 +154,38 @@ if (process.platform === 'win32') {
   });
   try { fs.rmSync(shimDir, { recursive: true, force: true }); } catch {}
   console.log('PASS: DetectVersion returns version string');
+}
+
+// ===========================================================================
+// 2a. DetectVersion probes a path with spaces and quoting metacharacters
+// ===========================================================================
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-opencode-meta-'));
+  try {
+    const metaDir = path.join(tmpDir, 'Program Files (x86)', 'my tool');
+    fs.mkdirSync(metaDir, { recursive: true });
+    if (process.platform === 'win32') {
+      const shim = writeVersionShimAt(path.join(metaDir, 'version&go.cmd'), '1.18.8');
+      await withVersionShim('OPENCODE_PATH', shim, () => {
+        const adapter = makeAdapter();
+        assert.strictEqual(adapter.DetectVersion(), '1.18.8',
+          'probe must run a metachar-containing .cmd path via the shared construction');
+      });
+    } else {
+      const shim = path.join(metaDir, 'version&go');
+      fs.writeFileSync(shim, '#!/bin/sh\n', 'utf8');
+      fs.appendFileSync(shim, 'echo 1.18.8\n', 'utf8');
+      fs.chmodSync(shim, 0o755);
+      await withVersionShim('OPENCODE_PATH', shim, () => {
+        const adapter = makeAdapter();
+        assert.strictEqual(adapter.DetectVersion(), '1.18.8',
+          'probe must run a metachar-containing path as an argument array');
+      });
+    }
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+  console.log('PASS: DetectVersion probes a metacharacter-containing path');
 }
 
 // ===========================================================================

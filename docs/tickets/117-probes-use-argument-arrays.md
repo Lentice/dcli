@@ -1,6 +1,6 @@
 # 117 — version and doctor probes execute interpolated shell strings instead of argument arrays
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** The repository rule is "argument arrays, never shell strings" at every process
 boundary; the probes are the one place that still interpolates executable paths into `execSync`
@@ -94,6 +94,55 @@ npm test -- --grep "probe|version"   # expect: green, including the quoting-meta
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+Implemented by ticket 117 work. **What and where:**
+- New `adapters/shared/run-probe.js` — `runProbe(command, args, timeoutMs)`: a single
+  synchronous probe runner used by all three adapters. Non-`.cmd` executables spawn directly as
+  an argument array (`spawnSync`); `.cmd`/`.bat` shims go through `cmd.exe /d /s /c` with the
+  inner command line built by the shared `buildWin32CommandLine` and passed as one `/c` argument
+  (wrapped in one outer quote pair, `windowsVerbatimArguments: true`), never by interpolating the
+  path into a shell string. Keeps every probe's existing timeout and `windowsHide`. Throws on
+  spawn failure or non-zero exit, so detection/doctor verdicts are unchanged.
+- `adapters/codex/adapter.js` — `DetectVersion` (`--version`), `LiveSmoke` probes 1 (`--version`)
+  and 2 (`doctor --json`) converted to `runProbe`.
+- `adapters/claude/adapter.js` — `DetectVersion` and `LiveSmoke` converted.
+- `adapters/opencode/adapter.js` — `DetectVersion`, `LiveSmoke`, and the remaining
+  `execSync('bun pm bin -g')` site in `resolvePastBunShim` converted to
+  `runProbe('bun', ['pm', 'bin', '-g'], 5000)`. The bun probe is not a version/doctor probe, but
+  it was the last `execSync` shell-string site in `adapters/`; converting it makes the grep proof
+  for criterion A airtight (zero `execSync` left in `adapters/`). No change to
+  `resolve-executable.js` or env-var handling (non-goal honored).
+- Tests: `tests/fixtures/version-shim.js` gained `writeVersionShimAt(filePath, version)`; each of
+  `tests/adapters/{codex,claude,opencode}/adapter.test.js` gained a "DetectVersion probes a
+  metacharacter-containing path" test that places the shim at
+  `<tmp>/Program Files (x86)/my tool/version&go.cmd` (spaces + `&` + parens) and asserts
+  `DetectVersion()` returns the same version as the plain-path test. On POSIX the same test uses
+  a non-`.cmd` executable script with the same metacharacters in its path, covering the
+  `spawnSync`-direct branch.
+
+**Discovery that contradicts the ticket's "same shape the launch path uses":** `buildCmdInvocation`
+(the launch path's helper) does not work for a metacharacter-containing `.cmd` path. It runs
+`quoteForCmd` over the whole Win32 command line, which prefixes `^` to every `& ( )` — including
+inside the double-quoted shim path. cmd.exe treats `^` inside quotes as a literal caret, so the
+filename `version&go.cmd` becomes `version^&go.cmd` and the shim is "not found". Verified live:
+the wrapped+escaped shape fails with exit 1, while the wrapped+unescaped
+`buildWin32CommandLine` line succeeds. The probes therefore use `buildWin32CommandLine` directly
+— which is exactly what the ticket's item 2 prescribes ("pass the command line built by
+`buildWin32CommandLine(path, ['--version'])` as a single argument") — and skip the
+`quoteForCmd` layer. `buildCmdInvocation` itself was left untouched (out of this ticket's scope).
+
+**Suite results:** `npm run check` — eslint clean; full suite 102 files, all groups green
+(adapters 34, contract 2, core 62, helpers 1, integration 3). Run several times; one run showed
+an unrelated load-flake (an assertion diff in an untouched core/ test — the runner self-reports
+the suite as load-sensitive). All adapter/contract/doctor tests passed on every run.
+
+**Agent checks actual output:**
+```
+$ rg -n "execSync|spawnSync" adapters/
+adapters/shared/run-probe.js:10:const { spawnSync } = require('node:child_process');
+adapters/shared/run-probe.js:23: * Returns the child's stdout as a string (mirroring `execSync` with
+adapters/shared/run-probe.js:54:  const result = spawnSync(command, args, options);
+```
+Every `spawnSync` hit passes an argument array; no `execSync` call remains in `adapters/`, and no
+site builds a command string by concatenating the executable path. The `npm test -- --grep`
+recipe does not exist in this repo's runner (it rejects `--grep` as an unknown flag); the
+equivalent coverage is the new metachar tests above, run as part of `npm run check`.

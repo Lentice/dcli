@@ -7,7 +7,7 @@ const { CodexAdapter, buildArgv, resolveCodexPath } = require('../../../adapters
 const { executableNames, resolveExecutablePath } = require('../../../adapters/shared/resolve-executable');
 const { validateFact } = require('../../../core/fact-types');
 const { ScriptedChild } = require('../../../tests/fixtures/scripted-child');
-const { writeVersionShim, withVersionShim } = require('../../../tests/fixtures/version-shim');
+const { writeVersionShim, writeVersionShimAt, withVersionShim } = require('../../../tests/fixtures/version-shim');
 
 const TERMINAL_OR_INTERRUPTED = ['done', 'failed', 'timed_out', 'cancelled', 'interrupted'];
 
@@ -200,6 +200,38 @@ if (process.platform !== 'win32') {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
   console.log('PASS: DetectVersion returns version string');
+}
+
+// ===========================================================================
+// 2a. DetectVersion probes a path with spaces and quoting metacharacters
+// ===========================================================================
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dcli-codex-meta-'));
+  try {
+    const metaDir = path.join(tmpDir, 'Program Files (x86)', 'my tool');
+    fs.mkdirSync(metaDir, { recursive: true });
+    if (process.platform === 'win32') {
+      const shim = writeVersionShimAt(path.join(metaDir, 'version&go.cmd'), '0.145.0');
+      await withVersionShim('CODEX_PATH', shim, () => {
+        const adapter = makeMinimalAdapter();
+        assert.strictEqual(adapter.DetectVersion(), '0.145.0',
+          'probe must run a metachar-containing .cmd path via the shared construction');
+      });
+    } else {
+      const shim = path.join(metaDir, 'version&go');
+      fs.writeFileSync(shim, '#!/bin/sh\n', 'utf8');
+      fs.appendFileSync(shim, 'echo 0.145.0\n', 'utf8');
+      fs.chmodSync(shim, 0o755);
+      await withVersionShim('CODEX_PATH', shim, () => {
+        const adapter = makeMinimalAdapter();
+        assert.strictEqual(adapter.DetectVersion(), '0.145.0',
+          'probe must run a metachar-containing path as an argument array');
+      });
+    }
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+  console.log('PASS: DetectVersion probes a metacharacter-containing path');
 }
 
 // ===========================================================================

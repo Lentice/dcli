@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { buildCmdInvocation } = require('./cmd-quoting');
+const { runProbe } = require('../shared/run-probe');
 const { applyProcessLifecycle, terminateProcessTree, containmentRecordForThisSpawn } = require('../shared/process-lifecycle');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 const { runAdapterSmoke } = require('../../core/adapter-smoke');
@@ -228,18 +229,8 @@ class CodexAdapter {
     if (this._detectedVersion) return this._detectedVersion;
 
     const codexPath = resolveCodexPath();
-    const { execSync } = require('node:child_process');
     try {
-      const result = execSync(
-        /\.(cmd|bat)$/i.test(codexPath)
-          ? `"${process.env.ComSpec || 'cmd.exe'}" /d /s /c "${codexPath} --version"`
-          : `"${codexPath}" --version`,
-        {
-          encoding: 'utf8',
-          timeout: DETECT_VERSION_TIMEOUT_MS,
-          windowsHide: true,
-        }
-      );
+      const result = runProbe(codexPath, ['--version'], DETECT_VERSION_TIMEOUT_MS);
       const version = result.toString().trim();
       if (!version) throw new Error('No version output');
       this._detectedVersion = version;
@@ -605,15 +596,11 @@ class CodexAdapter {
     if (!codexPath) {
       throw new Error('codex executable not found');
     }
-    const { execSync } = require('node:child_process');
     const effectiveTimeout = timeoutMs || LIVE_SMOKE_TIMEOUT_MS;
 
     // Probe 1: --version
     try {
-      const cmd = /\.(cmd|bat)$/i.test(codexPath)
-        ? `"${process.env.ComSpec || 'cmd.exe'}" /d /s /c "${codexPath} --version"`
-        : `"${codexPath}" --version`;
-      const result = execSync(cmd, { encoding: 'utf8', timeout: effectiveTimeout, windowsHide: true });
+      const result = runProbe(codexPath, ['--version'], effectiveTimeout);
       const version = result.toString().trim();
       if (!version) throw new Error('No version output');
     } catch (err) {
@@ -622,11 +609,7 @@ class CodexAdapter {
 
     // Probe 2: codex doctor --json (best-effort, non-fatal)
     try {
-      const doctorCmd = /\.(cmd|bat)$/i.test(codexPath)
-        ? `"${process.env.ComSpec || 'cmd.exe'}" /d /s /c "${codexPath} doctor --json"`
-        : `"${codexPath}" doctor --json`;
-      const result = execSync(doctorCmd, { encoding: 'utf8', timeout: effectiveTimeout, windowsHide: true });
-      const doctorOutput = result.toString().trim();
+      const doctorOutput = runProbe(codexPath, ['doctor', '--json'], effectiveTimeout).toString().trim();
       if (doctorOutput) {
         try {
           JSON.parse(doctorOutput);

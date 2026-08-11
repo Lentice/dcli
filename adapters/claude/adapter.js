@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { buildCmdInvocation } = require('../codex/cmd-quoting');
+const { runProbe } = require('../shared/run-probe');
 const { applyProcessLifecycle, terminateProcessTree, containmentRecordForThisSpawn } = require('../shared/process-lifecycle');
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 const { runAdapterSmoke } = require('../../core/adapter-smoke');
@@ -123,18 +124,8 @@ class ClaudeAdapter {
     if (this._detectedVersion) return this._detectedVersion;
 
     const claudePath = resolveClaudePath();
-    const { execSync } = require('node:child_process');
     try {
-      const result = execSync(
-        /\.(cmd|bat)$/i.test(claudePath)
-          ? `"${process.env.ComSpec || 'cmd.exe'}" /d /s /c "${claudePath} --version"`
-          : `"${claudePath}" --version`,
-        {
-          encoding: 'utf8',
-          timeout: DETECT_VERSION_TIMEOUT_MS,
-          windowsHide: true,
-        }
-      );
+      const result = runProbe(claudePath, ['--version'], DETECT_VERSION_TIMEOUT_MS);
       const version = result.toString().trim();
       if (!version) throw new Error('No version output');
       this._detectedVersion = version;
@@ -473,12 +464,8 @@ class ClaudeAdapter {
     if (!claudePath) {
       throw new Error('claude executable not found');
     }
-    const { execSync } = require('node:child_process');
     try {
-      const cmd = /\.(cmd|bat)$/i.test(claudePath)
-        ? `"${process.env.ComSpec || 'cmd.exe'}" /d /s /c "${claudePath} --version"`
-        : `"${claudePath}" --version`;
-      const result = execSync(cmd, { encoding: 'utf8', timeout: timeoutMs || LIVE_SMOKE_TIMEOUT_MS, windowsHide: true });
+      const result = runProbe(claudePath, ['--version'], timeoutMs || LIVE_SMOKE_TIMEOUT_MS);
       const version = result.toString().trim();
       if (!version) throw new Error('No version output');
     } catch (err) {

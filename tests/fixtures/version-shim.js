@@ -16,6 +16,20 @@ function writeVersionShim(dir, version) {
 }
 
 /**
+ * Write a version-printing shim to an explicit path. Used to place the shim
+ * under a directory/file name full of spaces and quoting metacharacters, so
+ * the probe's argument-array construction is exercised for real.
+ *
+ * @param {string} filePath
+ * @param {string} version
+ * @returns {string}
+ */
+function writeVersionShimAt(filePath, version) {
+  fs.writeFileSync(filePath, ['@echo off', `echo ${version}`, ''].join('\r\n'), 'utf8');
+  return filePath;
+}
+
+/**
  * Run `fn` with the given environment variable pointing at the fixture.
  * The variable is restored (or deleted) in all paths.
  *
@@ -35,4 +49,4 @@ async function withVersionShim(envName, fixturePath, fn) {
   }
 }
 
-module.exports = { writeVersionShim, withVersionShim };
+module.exports = { writeVersionShim, writeVersionShimAt, withVersionShim };
