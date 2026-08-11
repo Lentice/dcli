@@ -22,6 +22,25 @@ const { driveAttempt, createCancelSignal } = require('./attempt-driver');
 const { generateExecutionToken, workerIdentityDetail } = require('../process-identity');
 const { spawnWorker } = require('../worker-spawn');
 
+// Every terminal exit routes through here so the completion sentinel — the
+// evidence reconciliation reads to tell "finished" from "died" — cannot be
+// written on some paths and forgotten on others. `state` is recorded beside
+// the exit code because the two are not the same claim: an `interrupted`
+// attempt exits 0, and a reader that had only the code turned that into
+// `done`. Written after the driver's terminal journal entry, never before.
+// Startup failures may predate the attempts/<n> directory, so the parent is
+// created on demand; a null jobDir (no usable state root) writes nothing.
+function writeSentinel(jobDir, code, state) {
+  if (!jobDir) return;
+  try {
+    fs.mkdirSync(path.join(jobDir, 'attempts', '1'), { recursive: true });
+    writeJsonFileAtomic(
+      path.join(jobDir, 'attempts', '1', 'worker-complete.json'),
+      { exit_code: code, state, finished_at: new Date().toISOString() }
+    );
+  } catch {}
+}
+
 async function main() {
   const stateRoot = process.env.DCLI_STATE_ROOT;
   const backendName = process.env.DCLI_BACKEND;
@@ -34,6 +53,7 @@ async function main() {
   if (!stateRoot || !backendName || !jobId || !repoKey || !repoRoot) {
     console.error('Worker: missing required env vars');
     journalFailure(null, null, repoKey, jobId, stateRoot, 'worker_startup_failed', 'Missing required env vars');
+    writeSentinel(stateRoot ? path.join(stateRoot, 'jobs', repoKey, jobId) : null, 1, 'failed');
     process.exit(1);
   }
 
@@ -49,6 +69,7 @@ async function main() {
     params = JSON.parse(fs.readFileSync(path.join(jobDir, 'params.json'), 'utf8'));
   } catch (err) {
     journalFailure(store, null, repoKey, jobId, null, 'worker_startup_failed', `Cannot read params: ${err.message}`);
+    writeSentinel(jobDir, 1, 'failed');
     process.exit(1);
   }
   const executionToken = params.executionToken || generateExecutionToken();
@@ -60,6 +81,7 @@ async function main() {
     prompt = fs.readFileSync(path.join(jobDir, 'prompt.txt'), 'utf8');
   } catch (err) {
     journalFailure(store, null, repoKey, jobId, null, 'worker_startup_failed', `Cannot read prompt: ${err.message}`);
+    writeSentinel(jobDir, 1, 'failed');
     process.exit(1);
   }
 
@@ -121,6 +143,7 @@ async function main() {
     journalFailure(store, slotId, repoKey, jobId, null, 'worker_startup_failed', `Cannot load adapter: ${err.message}`);
     dropQueueClaim(queueClaimPath);
     admission.releaseSlot(slotId);
+    writeSentinel(jobDir, 1, 'failed');
     process.exit(1);
   }
 
@@ -138,6 +161,7 @@ async function main() {
     journalFailure(store, slotId, repoKey, jobId, null, 'validation_failed', err.message);
     dropQueueClaim(queueClaimPath);
     admission.releaseSlot(slotId);
+    writeSentinel(jobDir, 2, 'failed');
     process.exit(2);
   }
 
@@ -149,6 +173,7 @@ async function main() {
       journalFailure(store, slotId, repoKey, jobId, null, 'worker_startup_failed', `Cannot create attempt dir: ${err.message}`);
       dropQueueClaim(queueClaimPath);
       admission.releaseSlot(slotId);
+      writeSentinel(jobDir, 1, 'failed');
       process.exit(1);
     }
   }
@@ -199,19 +224,8 @@ async function main() {
   // backend was about to start (ticket 107).
   dropQueueClaim(queueClaimPath);
 
-  // Every terminal exit routes through here so the completion sentinel — the
-  // evidence reconciliation reads to tell "finished" from "died" — cannot be
-  // written on some paths and forgotten on others. `state` is recorded beside
-  // the exit code because the two are not the same claim: an `interrupted`
-  // attempt exits 0, and a reader that had only the code turned that into
-  // `done`. Written after the driver's terminal journal entry, never before.
   function finish(code, state) {
-    try {
-      writeJsonFileAtomic(
-        path.join(jobDir, 'attempts', String(attemptNum), 'worker-complete.json'),
-        { exit_code: code, state: state || null, finished_at: new Date().toISOString() }
-      );
-    } catch {}
+    writeSentinel(jobDir, code, state);
     process.exit(code);
   }
 
@@ -244,7 +258,7 @@ function journalFailure(store, slotId, repoKey, jobId, stateRoot, reason, messag
         attempt: 1,
         from: 'created',
         to: 'failed',
-        detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: reason, failure: message },
+        detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: reason, failure: { class: reason, message, source: 'wrapper' } },
       });
     }
   } catch {}
@@ -257,29 +271,19 @@ function dropQueueClaim(queueClaimPath) {
   try { fs.unlinkSync(queueClaimPath); } catch {}
 }
 
-function writeCrashSentinel(stateRoot, repoKey, jobId, code, state) {
-  try {
-    const jobDir = path.join(stateRoot, 'jobs', repoKey, jobId);
-    writeJsonFileAtomic(
-      path.join(jobDir, 'attempts', '1', 'worker-complete.json'),
-      { exit_code: code, state, finished_at: new Date().toISOString() }
-    );
-  } catch {}
-}
-
 main().catch(err => {
   console.error('Worker fatal:', err.message);
   try {
     const s = new (require('../job-store').JobStore)({ stateRoot: process.env.DCLI_STATE_ROOT });
     s.journalTransition(process.env.DCLI_JOB_ID, process.env.DCLI_REPO_KEY, {
       kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'failed',
-      detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: 'worker_crash', failure: err.message },
+      detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: 'worker_crash', failure: { class: 'worker_crash', message: err.message, source: 'wrapper' } },
     });
   } catch {}
-  writeCrashSentinel(
-    process.env.DCLI_STATE_ROOT,
-    process.env.DCLI_REPO_KEY,
-    process.env.DCLI_JOB_ID,
+  writeSentinel(
+    process.env.DCLI_STATE_ROOT && process.env.DCLI_REPO_KEY && process.env.DCLI_JOB_ID
+      ? path.join(process.env.DCLI_STATE_ROOT, 'jobs', process.env.DCLI_REPO_KEY, process.env.DCLI_JOB_ID)
+      : null,
     1,
     'failed'
   );
