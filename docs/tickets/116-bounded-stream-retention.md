@@ -1,6 +1,6 @@
 # 116 — codex and claude stream collectors grow without a bound
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** A noisy backend (or a single unbroken line) can grow the retained stdout/stderr to
 unbounded size until the job hard timeout — the exact memory-exhaustion shape the §13 line-size
@@ -102,6 +102,54 @@ npm test -- --grep "stream"   # expect: green, including the oversized-stream ca
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+Implemented by the ticket's TDD order (red → green → full suite → agent checks → commit).
+
+**What and where.** New shared helper `adapters/shared/stream-retention.js` holds the caps and all
+cap logic, used by both adapters (the ticket's sanctioned "cap lives in one helper both use" shape):
+
+- `MAX_RETAINED_STREAM_BYTES = 10 MiB` (mirrors opencode's `MAX_STDOUT_BYTES`/`MAX_STDERR_BYTES`),
+  applied to `_stdoutContent` and `_stderrContent` in both adapters.
+- `MAX_PARTIAL_LINE_BYTES = 2 MiB` — the hard cap on `_lineBuffer`, far above any real JSONL event
+  line; a pathological line degrades to a parse error (non-fatal by contract).
+- `appendRetained()` — tail-keep append, whole-line eviction only (`lineSafeTail()`), so the cap
+  never splits a line the parser reads and the retained region always starts on a line boundary.
+- `withTruncationMarker()` / `TRUNCATION_PREFIX` — a `… <truncated N bytes>` line is stamped at the
+  front of the retained content when bytes are dropped (N = cumulative dropped at insertion). The
+  marker itself is a line within the cap; later eviction may drop it, and it is re-stamped with an
+  updated count on the next dropping append.
+- `capPartialLine()` — hard caps `_lineBuffer` after each chunk, keeping the tail of an unbroken
+  oversized line.
+
+Adapters: codex `adapters/codex/adapter.js` and claude `adapters/claude/adapter.js` each gained
+`_appendStdout`/`_appendStderr` (data handlers now route every append through them) and track
+`_stdoutTruncatedBytes`/`_stderrTruncatedBytes` for diagnostics. The JSONL framing path is
+otherwise untouched: parsing still runs off `_lineBuffer`, so events completed before the cap are
+parsed exactly as before, and `_collectResultFromEvents` (`:368-369` split) tolerates the marker
+line and any line the cap cut via its existing per-line try/catch. Result-file cap (codex
+`MAX_RESULT_BYTES`) and opencode's caps unchanged (non-goals).
+
+**Chosen values.** 10 MiB per stream / 2 MiB partial line — documented in the helper's header.
+
+**Tests.** New `tests/adapters/stream-retention.test.js` (`// @suite full`, spec-loop over both
+adapters via the `ScriptedChild` harness, asserting against the imported real caps): (1) >cap
+stdout+stderr leaves all three collectors bounded with the marker present and pre-cap events
+parsed intact (criteria A+B); (2) an unbroken >cap line leaves `_lineBuffer` bounded; (3) claude's
+`CollectResult` returns the full result text, `result_status: 'present'`, usage and session id
+after a >cap preamble (criterion C).
+
+**Suite results.** `npm run check` green: lint clean; full suite 34 adapters + 2 contract + 62 core
++ 1 helpers + 3 integration passed, exit 0. Two intermediate full-suite runs hit pre-existing
+load-sensitive flakes in unrelated `core/` files (`test-runner.test.js` 100% vs 101% budget
+rounding; `job-store.test.js` lingering `status.json.tmp-*` under parallel load) — both pass in
+isolation and on the final clean run; neither touches this change.
+
+**Agent checks.**
+- `rg -n "\+= chunk"` over both adapters → no matches: every append now flows through the shared
+  helper (the ticket's sanctioned alternative to per-site cap checks).
+- `rg -n "truncat"` over both adapters → the `_appendStdout`/`_appendStderr` marker sites plus the
+  pre-existing codex result-file truncation logic.
+- The ticket's `npm test -- --grep "stream"` cannot run literally: the runner has no `--grep` flag.
+  Ran `node tests/adapters/stream-retention.test.js` directly (green) and the full suite.
+
+**Deviations.** None. Marker byte count is cumulative dropped at the marker's last (re-)insertion,
+so it can undercount by the bytes the marker itself displaced — informational only, never parsed.

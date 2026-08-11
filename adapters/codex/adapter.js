@@ -6,6 +6,13 @@ const { applyProcessLifecycle, terminateProcessTree, containmentRecordForThisSpa
 const { executableNames, resolveExecutablePath } = require('../shared/resolve-executable');
 const { runAdapterSmoke } = require('../../core/adapter-smoke');
 const { isGitRepo } = require('../../core/worktree');
+const {
+  MAX_RETAINED_STREAM_BYTES,
+  TRUNCATION_PREFIX,
+  appendRetained,
+  withTruncationMarker,
+  capPartialLine,
+} = require('../shared/stream-retention');
 
 const DETECT_VERSION_TIMEOUT_MS = 10000;
 const STARTUP_SENTINEL_MS = 10000;
@@ -184,6 +191,8 @@ class CodexAdapter {
     this._cancelRungReached = null;
     this._stdoutContent = '';
     this._stderrContent = '';
+    this._stdoutTruncatedBytes = 0;
+    this._stderrTruncatedBytes = 0;
     this._liveFacts = [];
     this._liveFactsResolve = null;
     this._lineBuffer = '';
@@ -349,8 +358,8 @@ class CodexAdapter {
     child.stderr.setEncoding('utf8');
 
     child.stdout.on('data', (chunk) => {
-      this._stdoutContent += chunk;
-      this._lineBuffer += chunk;
+      this._appendStdout(chunk);
+      this._lineBuffer = capPartialLine(this._lineBuffer, chunk);
       const lines = this._lineBuffer.split('\n');
       this._lineBuffer = lines.pop();
       for (const line of lines) {
@@ -364,7 +373,7 @@ class CodexAdapter {
     });
 
     child.stderr.on('data', (chunk) => {
-      this._stderrContent += chunk;
+      this._appendStderr(chunk);
     });
 
     this._stdoutClosed = false;
@@ -551,6 +560,40 @@ class CodexAdapter {
     this._childProcess = null;
     this._tmpDirPath = null;
     this._resultFilePath = null;
+  }
+
+  // -----------------------------------------------------------------------
+  // Stream retention (ticket 116)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Retain a stdout chunk within MAX_RETAINED_STREAM_BYTES, keeping the
+   * newest bytes on whole-line boundaries, and stamp a truncation marker at
+   * the front once bytes have been dropped. The cap must never split a line
+   * the parser reads; complete lines that were parsed before truncation are
+   * untouched because parsing runs off the separately-capped _lineBuffer.
+   */
+  _appendStdout(chunk) {
+    const applied = appendRetained(this._stdoutContent, chunk, MAX_RETAINED_STREAM_BYTES);
+    this._stdoutContent = applied.content;
+    this._stdoutTruncatedBytes += applied.dropped;
+    if (applied.dropped > 0 && !this._stdoutContent.startsWith(TRUNCATION_PREFIX)) {
+      this._stdoutContent = withTruncationMarker(this._stdoutContent, MAX_RETAINED_STREAM_BYTES, this._stdoutTruncatedBytes);
+    }
+  }
+
+  /**
+   * Retain a stderr chunk within MAX_RETAINED_STREAM_BYTES, tail-keeping
+   * with a truncation marker. stderr is never parsed, so the cap is a pure
+   * memory bound.
+   */
+  _appendStderr(chunk) {
+    const applied = appendRetained(this._stderrContent, chunk, MAX_RETAINED_STREAM_BYTES);
+    this._stderrContent = applied.content;
+    this._stderrTruncatedBytes += applied.dropped;
+    if (applied.dropped > 0 && !this._stderrContent.startsWith(TRUNCATION_PREFIX)) {
+      this._stderrContent = withTruncationMarker(this._stderrContent, MAX_RETAINED_STREAM_BYTES, this._stderrTruncatedBytes);
+    }
   }
 
   // -----------------------------------------------------------------------
