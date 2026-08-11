@@ -55,7 +55,6 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
-| [120 — cancelled job loses its snapshot](120-cancelled-job-keeps-snapshot.md) | ready | — | `finishCancelled` is the only terminal exit that skips `finalizeWorktreeSnapshot()` |
 | [109 — deadlines: one source of truth](109-deadlines-one-source-of-truth.md) | ready | — | Six §13 boundaries have no production consumer; drain ships 3000 ms against a documented 5000 ms; HTTP is one 10 s bound against a 10 s/60 s contract |
 | [110 — submit leaks on spawn failure](110-submit-leaks-on-spawn-failure.md) | ready | — | A failed worker launch leaves a `created` job and a registered worktree |
 | [116 — codex/claude streams unbounded](116-bounded-stream-retention.md) | ready | — | The two collectors retain stdout/stderr with no cap; opencode already caps |
@@ -104,6 +103,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [108 — `--access full` is out of contract](108-access-full-is-out-of-contract.md) | done | — | Accepted, undocumented, and three different postures per backend (opencode grants external access; codex/claude silently downgrade) |
 | [119 — capacity misreported as quota](119-admission-capacity-is-lock-class.md) | done | — | At-capacity fails exit 14/quota ("never retry") though it is a transient local condition; the `lock` class/17 exists |
 | [115 — read exits 0 with no result](115-read-exits-11-without-result.md) | done | — | Terminal job without `result.md` returns success; must be exit 11 |
+| [120 — cancelled job loses its snapshot](120-cancelled-job-keeps-snapshot.md) | done | — | `finishCancelled` is the only terminal exit that skips `finalizeWorktreeSnapshot()` |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

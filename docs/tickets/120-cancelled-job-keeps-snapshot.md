@@ -1,6 +1,6 @@
 # 120 — a cancelled implement-mode job loses its worktree snapshot
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Three of four terminal exits finalize the implement worktree snapshot; cancel is the
 exception. A job cancelled after doing real work has no `result_commit`, so `diff`/`apply` refuse
@@ -90,6 +90,48 @@ npm test -- --grep "cancel"   # expect: green, including the result_commit asser
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+**What changed and where.**
+
+- `core/commands/attempt-driver.js` — `finishCancelled()` (`:254-258`) now spreads
+  `...finalizeWorktreeSnapshot()` into its terminal journal detail, mirroring `finishTimedOut`
+  (`:239`). A cancelled implement attempt with a worktree now carries `worktree_result_commit`
+  (projected to `status.worktree.result_commit`, and `base_commit` as fallback when the backend
+  changed nothing); run-mode cancels are byte-identical because the helper returns `{}` with no
+  worktree. Ordering is unchanged: the journal (now with the snapshot) still precedes
+  `tryDisposeAdapter`.
+- `tests/core/attempt-driver.test.js` — new "Ticket 120" block after the criterion G cancel test:
+  an implement-mode attempt is cancelled mid-run after the fake backend wrote `feature.txt` into
+  the worktree; asserts `status.worktree.result_commit` is a 40-hex commit hash, `executeDiff`
+  (name-only) shows `feature.txt`, and `executeApply` lands it into the main repo. Covers
+  acceptance A and B. Acceptance C (run-mode cancel, no worktree) is covered by the unchanged
+  criterion C / criterion G cancel tests, which still pass byte-identically.
+
+**Build and suite results.** `npm run check` green: eslint clean; full suite 99 passed (33
+adapters + 2 contract + 60 core + 1 helpers + 3 integration), no failures. The new test passes
+standalone (`node tests/core/attempt-driver.test.js`) and in the suite.
+
+**Agent checks' actual output.**
+
+```
+$ rg -n "finalizeWorktreeSnapshot" core/commands/attempt-driver.js
+100:  function finalizeWorktreeSnapshot() {
+239:        ...finalizeWorktreeSnapshot(),      # finishTimedOut
+258:        ...finalizeWorktreeSnapshot(),      # finishCancelled (this ticket)
+343:              ...finalizeWorktreeSnapshot(), # result_persistence_failed branch
+376:            ...finalizeWorktreeSnapshot(),  # process_exited branch
+434:      ...finalizeWorktreeSnapshot(),        # observe-ended branch
+```
+
+The ticket expected "four sites"; there are actually five call sites. The fourth, the
+`result_persistence_failed` branch (`:343`), predates this ticket — it was already finalizing when
+the ticket's line count was written, not a site this work added or missed. `finishCancelled` was
+the only terminal path without it.
+
+`npm test -- --grep "cancel"` cannot run as written — the repo's runner (`tests/run-tests.js`) has
+no `--grep` flag. Ran the full suite instead; all cancel-path tests (criterion C, criterion G,
+`cancel.test.js`, `cancel-cli.test.js`, `worker-cancel-watcher.test.js`, `taskkill-tree-cancel.test.js`)
+pass.
+
+**Deviations.** None from the ticket's scope: no change to `abandon()`, the snapshot helper, its
+deadline, or any exit code. The only differences from the ticket's wording are the two noted above
+(five call sites, not four; `--grep` unavailable).

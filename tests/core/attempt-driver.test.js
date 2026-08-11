@@ -572,6 +572,80 @@ async function main() {
     }
   }
 
+  // =========================================================================
+  // Ticket 120 — a cancelled implement-mode attempt keeps its worktree
+  // snapshot: the terminal record carries result_commit and diff/apply accept
+  // the job, exactly as after a timeout.
+  // =========================================================================
+  {
+    const dir = tmpDir('dcli-driver-cancel-wt-');
+    try {
+      const repoRoot = path.join(dir, 'repo');
+      initRepo(repoRoot);
+      const stateRoot = path.join(dir, 'state');
+      const store = new JobStore({ stateRoot });
+      const jobId = 'cancel-wt-job';
+      seedJob(store, 'cancel-wt-job', jobId, repoRoot);
+
+      const worktreePath = path.join(stateRoot, 'worktrees', jobId);
+      const wt = createDetachedWorktree(repoRoot, worktreePath, undefined, stateRoot);
+      store.journalTransition('cancel-wt-job', jobId, {
+        kind: 'attempt_state_changed', attempt: 1, from: null, to: null,
+        detail: { worktree_path: worktreePath, worktree_base_commit: wt.baseCommit },
+      });
+      const signal = manualSignal();
+      const adapter = new FakeAdapter({
+        facts: [
+          { type: 'started', backend_pid: 99999 },
+          { type: 'assistant_text', message_id: 'm1', text: 'partial work' },
+        ],
+        exitCode: 0, declaredRungs: ['hard_kill'],
+        capabilities: CAPABILITIES,
+        behaviors: {
+          onStart: (attempt, request) => {
+            // The backend wrote real work into its worktree before the cancel.
+            fs.writeFileSync(path.join(request.canonicalDir, 'feature.txt'), 'partial\n', 'utf8');
+          },
+          hangAfter: 'assistant_text',
+        },
+      });
+
+      const { driveAttempt } = require(path.join(ROOT, 'core', 'commands', 'attempt-driver'));
+      const runPromise = driveAttempt({
+        store, adapter, repoKey: 'cancel-wt-job', repoRoot, jobId, attemptNum: 1,
+        prompt: 'implement x', request: { ...REQUEST, canonicalDir: worktreePath },
+        worktreePath, worktreeBaseCommit: wt.baseCommit,
+        hardTimeoutSec: 60, cancelSignal: signal,
+      });
+      setTimeout(() => signal.cancel(), 500);
+      const result = await runPromise;
+      assert.strictEqual(result.terminalState, 'cancelled');
+      assert.strictEqual(result.exitCode, 0);
+
+      const status = store.readStatus({ repoKey: 'cancel-wt-job', jobId });
+      assert.strictEqual(status.state, 'cancelled');
+      assert.ok(status.worktree && status.worktree.result_commit,
+        `a cancelled implement job must carry a worktree result_commit, got ${JSON.stringify(status.worktree)}`);
+      assert.ok(/^[0-9a-f]{40}$/.test(status.worktree.result_commit),
+        'the cancelled job\'s result_commit must be a commit hash');
+
+      const { executeDiff } = require(path.join(ROOT, 'core', 'commands', 'diff'));
+      const diffResult = executeDiff({ store, repoKey: 'cancel-wt-job', jobId, nameOnly: true });
+      assert.strictEqual(diffResult.exitCode, 0);
+      assert.ok(diffResult.text.includes('feature.txt'),
+        'diff on the cancelled job must show the partial work');
+
+      const { executeApply } = require(path.join(ROOT, 'core', 'commands', 'apply'));
+      const applyResult = executeApply({ store, repoKey: 'cancel-wt-job', jobId });
+      assert.strictEqual(applyResult.exitCode, 0);
+      assert.ok(fs.existsSync(path.join(repoRoot, 'feature.txt')),
+        'apply on the cancelled job must land the partial change');
+      console.log('PASS: ticket 120 — cancelled implement job keeps its worktree snapshot; diff/apply accept it');
+    } finally {
+      clean(dir);
+    }
+  }
+
   {
     const dir = tmpDir('dcli-driver-g-timeout-');
     try {

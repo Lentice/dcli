@@ -255,6 +255,7 @@ async function driveAttempt({
         finished_at: new Date().toISOString(),
         command_exit_code: null,
         phase: 'terminal',
+        ...finalizeWorktreeSnapshot(),
       },
     });
     await tryDisposeAdapter(adapter, attempt);
