@@ -40,12 +40,35 @@ staleness check. The tables below are now produced from the ticket files, not ma
 ## Open
 
 Tickets 92–101 came out of the architecture review of 2026-08-10 (three independent reviewers; every
-claim re-verified against the tree at `adcbac1` before the ticket was written). They are listed in
-recommended order.
+claim re-verified against the tree at `adcbac1` before the ticket was written).
+
+Tickets 107–120 came out of the 2026-08-11 dual-backend audit (claude + codex agents, each tracing
+the main user scenarios end to end; claims re-verified against the tree at `51e2d35` before each
+ticket was written). Both audits are independent, so findings were merged by subject; overlapping
+findings (the admission queue, the worker startup record) became single tickets.
+
+Both groups are listed in recommended implementation order. The ordering rule: contract and
+security fixes before robustness; reducer-touching tickets adjacent (113 before 107, so the
+reducer is edited once per sitting); `core/commands/worker.js`-touching tickets adjacent (112
+then 114); the pure-docs ticket last. No ticket is blocked by another.
 
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
+| [111 — wait --all reports corruption as a timeout](111-wait-all-corrupt-state-exit.md) | ready | — | Final post-deadline list read returns exit 20 for corrupt state; must return 17 like the polling loop |
+| [113 — scrub-session-ids must survive replay](113-scrub-session-ids-must-survive-replay.md) | ready | — | The scrub rewrites only the projection; a journal event must make it durable |
+| [107 — the admission queue strands and relaunches](107-admission-queue-lifecycle.md) | ready | — | Queued jobs can wait forever (dequeue only on slot release) and cancelled queued jobs still launch |
+| [112 — worker startup failure record](112-worker-startup-failure-record.md) | ready | — | Startup failures write a string into the structured `failure` field and skip the completion sentinel |
+| [114 — the detached worker lacks the redactor](114-worker-initializes-the-redactor.md) | ready | — | The worker process never initializes the writer-path redactor; registration is a silent no-op |
+| [108 — `--access full` is out of contract](108-access-full-is-out-of-contract.md) | ready | — | Accepted, undocumented, and three different postures per backend (opencode grants external access; codex/claude silently downgrade) |
+| [119 — capacity misreported as quota](119-admission-capacity-is-lock-class.md) | ready | — | At-capacity fails exit 14/quota ("never retry") though it is a transient local condition; the `lock` class/17 exists |
+| [115 — read exits 0 with no result](115-read-exits-11-without-result.md) | ready | — | Terminal job without `result.md` returns success; must be exit 11 |
+| [120 — cancelled job loses its snapshot](120-cancelled-job-keeps-snapshot.md) | ready | — | `finishCancelled` is the only terminal exit that skips `finalizeWorktreeSnapshot()` |
+| [109 — deadlines: one source of truth](109-deadlines-one-source-of-truth.md) | ready | — | Six §13 boundaries have no production consumer; drain ships 3000 ms against a documented 5000 ms; HTTP is one 10 s bound against a 10 s/60 s contract |
+| [110 — submit leaks on spawn failure](110-submit-leaks-on-spawn-failure.md) | ready | — | A failed worker launch leaves a `created` job and a registered worktree |
+| [116 — codex/claude streams unbounded](116-bounded-stream-retention.md) | ready | — | The two collectors retain stdout/stderr with no cap; opencode already caps |
+| [117 — probes use shell strings](117-probes-use-argument-arrays.md) | ready | — | Version/doctor probes interpolate executable paths into `execSync` strings, bypassing the quoting seam |
+| [118 — docs drift](118-docs-drift-modes-recursion-containment.md) | ready | — | §16 mode vocabulary, the claude recursion-guard paragraph, and §14 containment-record timing contradict the code |
 <!-- /GENERATED: ticket table -->
 
 ## Closed
