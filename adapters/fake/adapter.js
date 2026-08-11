@@ -3,6 +3,7 @@
 // point, so no real adapter is ever constructed with scripted fixtures.
 const fs = require('fs');
 const path = require('path');
+const { getRedactor } = require('../../core/fs-text');
 
 function DEFAULT_FACTS() {
   return [
@@ -45,6 +46,19 @@ class FakeAdapter {
           fs.writeFileSync(path.join(request.canonicalDir, writeFile), 'new feature\n', 'utf8');
         }
       });
+    }
+    // Test hook mirroring the opencode server's per-job password registration
+    // (adapters/opencode/server.js `_registerPasswordWithRedactor`): a script
+    // may name secrets to register through getRedactor() on construction, so
+    // a spawned worker can be exercised end to end without a real backend.
+    const redactorSecrets = this._script.redactorSecrets;
+    if (redactorSecrets) {
+      const redactor = getRedactor();
+      if (redactor) {
+        for (const [name, value] of Object.entries(redactorSecrets)) {
+          redactor.registerSecret(name, value);
+        }
+      }
     }
     this._cancelled = false;
     this._cancelRungReached = null;

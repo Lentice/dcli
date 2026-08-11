@@ -1,6 +1,6 @@
 # 114 — the detached worker never initializes the writer-path redactor
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** The parent process initializes a `Redactor` that every durable write is supposed to pass
 through; the detached worker is a fresh Node process that never gets one, so the documented
@@ -102,6 +102,59 @@ npm test -- --grep "redactor"   # expect: green
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+**What changed and where**
+
+- `core/commands/worker.js` — `main()` now initializes the process-local redactor as its first
+  statement (before any `JobStore` construction or journal write): `setRedactor(new Redactor())`,
+  mirroring `cli/dcli.js:154-155`. No secret is known yet at that point; sessions register theirs
+  later via `getRedactor()`, which is now non-null in the worker process.
+- `adapters/fake/adapter.js` — the fake adapter now accepts a `redactorSecrets` map in its
+  `_adapterScript` and registers each entry through `getRedactor()` at construction. This is the
+  stand-in for the opencode server's `_registerPasswordWithRedactor()` (`adapters/opencode/server.js`),
+  and the only injection channel into a spawned worker (params.json is JSON and cannot carry a
+  registration callback). Guarded by `getRedactor()` being non-null, so no other test that builds a
+  `FakeAdapter` is affected.
+- `tests/core/worker-redactor.test.js` (new, `@suite full` `@serial`) — spawns the real worker with a
+  fake adapter; a planted token is registered through `getRedactor()` inside the worker process and is
+  asserted redacted in `prompt.md` (writeTextFileAtomic), `command.json` (writeJsonFileAtomic),
+  `journal.jsonl` + `status.json` (appendJsonLine / writeJsonFileAtomic), `result.md` and
+  `backend-events.jsonl`. Also asserts the job reaches `done`.
+
+**Deviation from the ticket**
+
+- The ticket's example writer path "command.txt" does not exist in the current tree — the structured
+  invocation file is `command.json` (`core/result-artifact.js` `persistInitFiles`). The test covers the
+  actual writers instead.
+- Criterion B's "worker-style process" option was implemented as the stronger "actual worker with a
+  fake adapter" option, which required the small `redactorSecrets` test hook in `adapters/fake/adapter.js`
+  (outside `core/` and outside the worker itself — the ticket's non-goals only forbid redactor design,
+  parent-registration, and scrubbing changes). This is what makes the red-phase fail for the right
+  reason: with the worker's init missing, `getRedactor()` is null, registration is a silent no-op, and
+  every writer path leaks the planted token.
+
+**Docs**
+
+- `docs/design-spec.md` §19 claims "A call site cannot bypass it — every write goes through the same
+  path." The detached worker was the contradicting call site; after this ticket the claim is true, so
+  no doc change was made (per the ticket's What-to-build item 3).
+
+**Agent checks**
+
+- `rg -n "setRedactor|Redactor" core/commands/worker.js` →
+  `48: // getRedactor().`, `49: const { Redactor } = require('../redactor');`,
+  `50: const { setRedactor } = require('../fs-text');`, `51: setRedactor(new Redactor());` — above the
+  first store/journal write in `main()`.
+- `rg -n "planted|redact" tests/ --glob '*worker*'` → `tests/core/worker-redactor.test.js` (new test
+  asserting written bytes are redacted).
+- `npm test -- --grep "redactor"` — this runner has no `--grep` flag; ran the redactor-related files
+  directly instead: `redactor.test.js`, `fs-text.test.js`, `redaction-e2e.test.js`,
+  `worker-redactor.test.js`, `worker-startup-failure.test.js` — all green.
+
+**Build and suite results**
+
+- Red phase: new test failed with the planted token found raw in 6 worker-written files
+  (prompt.md, command.json, result.md, journal.jsonl, status.json, backend-events.jsonl) — exactly the
+  leak the ticket describes.
+- Green phase: targeted files pass; `npm run check` green (eslint clean; full suite 98 passed,
+  0 failed, including the new `worker-redactor.test.js`).
+- Tracker table regenerated with `node scripts/generate-tickets-table.js`.

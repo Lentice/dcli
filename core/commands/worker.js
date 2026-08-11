@@ -42,6 +42,14 @@ function writeSentinel(jobDir, code, state) {
 }
 
 async function main() {
+  // The worker is a fresh Node process: the parent CLI's process-local
+  // redactor is not inherited, so initialize one before any writer path can
+  // run (mirror of cli/dcli.js). Sessions register their secrets later via
+  // getRedactor().
+  const { Redactor } = require('../redactor');
+  const { setRedactor } = require('../fs-text');
+  setRedactor(new Redactor());
+
   const stateRoot = process.env.DCLI_STATE_ROOT;
   const backendName = process.env.DCLI_BACKEND;
   const jobId = process.env.DCLI_JOB_ID;
