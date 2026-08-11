@@ -492,7 +492,7 @@ job record; a rung is climbed only when its mechanism exists and is tested.
 |---|---|---|---|
 | 0 — none | direct-child `SIGKILL` only | none for descendants | `kill_skipped: 'not_contained'` |
 | 1 — process group (Unix) | `detached: true`, `SIGTERM` → grace → `SIGKILL` to the group | the group dies | `containment.kind: 'process-group'`, `degraded: false` |
-| 2 — degraded tree kill (Windows) | verified descendant enumeration + `taskkill /T /F`, against the exact enumerated pid set | best effort, survivors named | `containment.degraded: true`, survivors reported |
+| 2 — degraded tree kill (Windows) | verified descendant enumeration + `taskkill /T /F`, against the exact enumerated pid set | best effort, survivors named | `containment: { kind: 'taskkill-tree', degraded: true }`, survivors in `containment_survivors`, exit `21` on survivors — never a clean `cancelled` |
 | 3 — Job Object (Windows) | ADR-003's helper, kill-on-close | the tree dies, including on controller death | `containment.kind: 'job-object'`, `degraded: false` |
 
 Rung 3 stays the target. Rungs 1 and 2 are not consolation prizes: rung 1 is a full guarantee on its

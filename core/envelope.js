@@ -14,6 +14,10 @@ function buildEnvelope(status) {
     findings_status: status.findings_status || null,
     truncation_info: null,
     untracked_warning: null,
+    // A taskkill-tree rung's survivor set (ticket 103): non-empty means a kill
+    // was attempted but left processes alive, which is why a cancel that
+    // reaches this state exits 21 instead of reporting a clean cancellation.
+    containment_survivors: status.containment_survivors || null,
   };
 }
 

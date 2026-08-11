@@ -113,33 +113,45 @@ async function driveAttempt({
   const hardDeadline = hardTimeoutMs > 0 ? Date.now() + hardTimeoutMs : null;
   let hardTimedOut = false;
   let hardTimeoutTimer = null;
-  // Why hard-timeout escalation stops where it stops, per platform. Windows:
-  // the adapters spawn the backend with a plain `spawn` (no Job Object), so
-  // no tree is inside a Job Object, and the native helper can only terminate
-  // a Job Object it created itself. Recording `kill_skipped` — not a kill we
-  // did not perform — is AGENTS.md lessons #5. Unix: the hard_kill rung now
-  // terminates the whole process group (ADR-010 rung 1), so the kill was
-  // performed and no `kill_skipped` is written — claiming a skipped kill
-  // after a kill that worked is the inverse of that lie. Ticket 78 (contain
-  // the tree at spawn time) is closed unimplemented.
+  // Why hard-timeout escalation records what it records, per platform. Windows
+  // without a tree-kill rung result: the adapters spawn the backend with a
+  // plain `spawn` (no Job Object), so no tree is inside a Job Object, and the
+  // native helper can only terminate a Job Object it created itself. Recording
+  // `kill_skipped` — not a kill we did not perform — is AGENTS.md lessons #5.
+  // Unix: the hard_kill rung terminates the whole process group (ADR-010 rung
+  // 1), so the kill was performed and no `kill_skipped` is written. Windows
+  // with a taskkill-tree result (ADR-010 rung 2, ticket 103): a kill was
+  // attempted too, so `kill_skipped` is replaced by the survivors the
+  // verification step found — writing "skipped" after a real attempt is the
+  // inverse lie.
   const hardTimeoutKillSkipped = process.platform === 'win32' ? 'not_contained' : undefined;
+  // The taskkill-tree result captured when the hard-timeout timer itself fires
+  // (the first cancelThroughRungs for that deadline). finishTimedOut re-runs
+  // the rung walk, but the adapter short-circuits a second cancellation, so
+  // this is where the real result survives.
+  let hardTimeoutTermination = null;
 
   async function cancelThroughRungs() {
+    let termination = null;
     try {
       const rungs = adapter.DeclareCancelRungs();
       if (rungs && rungs.length > 0) {
         for (const rung of rungs) {
-          try { await adapter.RequestCancel(attempt, rung); } catch {}
+          try {
+            const res = await adapter.RequestCancel(attempt, rung);
+            if (res && res.termination) termination = res.termination;
+          } catch {}
         }
       }
     } catch {}
+    return termination;
   }
 
   if (hardTimeoutMs > 0) {
     hardTimeoutTimer = setTimeout(async () => {
       if (hardTimedOut) return;
       hardTimedOut = true;
-      await cancelThroughRungs();
+      hardTimeoutTermination = await cancelThroughRungs();
     }, hardTimeoutMs);
     if (hardTimeoutTimer.unref) hardTimeoutTimer.unref();
   }
@@ -192,7 +204,13 @@ async function driveAttempt({
   };
 
   async function finishTimedOut() {
-    await cancelThroughRungs();
+    const termination = (await cancelThroughRungs()) || hardTimeoutTermination;
+    // A taskkill-tree result is recognised by its survivors array. When such a
+    // rung ran, the timed_out detail records what it verified and does NOT
+    // write `kill_skipped` — a kill was attempted, and claiming a skipped kill
+    // after one is the same dishonesty as claiming one that did not happen.
+    // `kill_skipped` stays correct only when no kill was attempted.
+    const treeKill = termination && Array.isArray(termination.survivors) ? termination : null;
     // Flush whatever partial output the adapter still has before the terminal
     // journal (worker behaviour; the foreground gains it).
     let partialResult = null;
@@ -212,7 +230,12 @@ async function driveAttempt({
         command_exit_code: null,
         phase: 'terminal',
         failure_reason: 'hard_timeout',
-        kill_skipped: hardTimeoutKillSkipped,
+        ...(treeKill
+          ? {
+              containment: { kind: treeKill.kind, degraded: treeKill.degraded !== false },
+              containment_survivors: treeKill.survivors.map(survivorToRecord),
+            }
+          : { kill_skipped: hardTimeoutKillSkipped }),
         ...finalizeWorktreeSnapshot(),
       },
     });
@@ -472,6 +495,18 @@ function persistStartedFact(store, repoKey, jobId, attemptNum, fact) {
     to: null,
     detail,
   });
+}
+
+/**
+ * Normalise a tree-kill survivor (`{ pid, imagePath, reason }`) into the
+ * persisted record shape shared with core/cancel.js.
+ */
+function survivorToRecord(survivor) {
+  return {
+    pid: survivor.pid,
+    image_path: survivor.imagePath != null ? survivor.imagePath : null,
+    reason: survivor.reason || 'still_running',
+  };
 }
 
 const HARD_TIMEOUT_ERROR = Symbol('hard_timeout');

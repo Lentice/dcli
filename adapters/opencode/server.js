@@ -1,4 +1,4 @@
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -241,22 +241,12 @@ class OpencodeServer {
   }
 
   async kill() {
-    if (!this._process) return;
-    // The Windows Bun shim spawns the real server as a child; ChildProcess.kill()
-    // only reaches the shim, so terminate the whole tree first.
-    if (process.platform === 'win32' && !this._process.killed && this._process.exitCode === null &&
-      Number.isInteger(this._process.pid) && this._process.pid > 0) {
-      try {
-        spawnSync('taskkill', ['/PID', String(this._process.pid), '/T', '/F'], {
-          windowsHide: true,
-          stdio: 'ignore',
-          timeout: 5000,
-        });
-      } catch {}
-    }
-    // Terminates the process group on Unix (ADR-010 rung 1) and the direct
-    // child on Windows, exactly as the shared hard_kill rung does.
-    await terminateProcessTree(this._process);
+    if (!this._process) return null;
+    // The shared helper terminates the whole tree: on Windows the verified
+    // degraded taskkill-tree (ADR-010 rung 2, ticket 103) and on Unix the
+    // process group (rung 1). The result names any survivor so the caller can
+    // record it rather than claiming a clean kill.
+    return terminateProcessTree(this._process);
   }
 
   // -------------------------------------------------------------------------

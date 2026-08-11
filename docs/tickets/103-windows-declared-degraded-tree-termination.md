@@ -1,7 +1,7 @@
 # 103 — Windows: a declared-degraded tree termination that names its survivors
 
-**Status:** blocked
-**Blocked by:** 102
+**Status:** done
+**Blocked by:** —
 **Tier:** Trust, and the riskiest ticket in the ladder. This adds a mechanism that *could* claim a kill it
 cannot verify — which is exactly the failure mode the whole containment record was built to prevent. It is
 worth doing because it buys most of the outcome of the Job Object at a fraction of the cost, and it is
@@ -253,4 +253,70 @@ ticket 103: windows terminates the backend tree as a declared degraded capabilit
 
 ## Notes
 
-(Left empty by the author.)
+Implemented 2026-08-11 by opencode on Windows (this host, Node v24.18.0, pwsh 7 present).
+
+**What shipped.**
+
+- `adapters/shared/windows-tree-kill.js` — the Windows-only rung-2 module:
+  `enumerateDescendants(rootPid, { deadlineMs, querySnapshot })` walks the parent-pid graph from the
+  backend pid and returns `{ entries, truncated }`, capped at MAX_DEPTH 32 / MAX_NODES 256 / a finite
+  deadline, with a cap hit reported as `truncated` (criterion F). `terminateTree(rootPid, { deadlineMs,
+  querySnapshot })` runs `taskkill /PID <root> /T /F` as an argument array (`windowsHide: true`, finite
+  timeout), settles briefly, then re-checks every pid in the enumerated set: gone or identity-mismatched
+  → `confirmedDead`, alive-and-matching → a named `survivor`. `querySnapshot` is a test seam; the real
+  default is one PowerShell 7 `Get-Process` query capturing `{ pid, parentPid, createdAt, imagePath }`.
+- The seam: `terminateProcessTree` in `adapters/shared/process-lifecycle.js` — the Windows branch now
+  calls `terminateTree`, returns the full verified result, and memoises in-flight kills per child
+  (a hard-timeout timer and `finishTimedOut` race into `RequestCancel`; without the memo the same tree
+  was killed and enumerated twice). Unix branch untouched (criterion H). opencode's `server.kill()`
+  delegates to the same seam; its old `spawnSync('taskkill', …)` pre-step is gone — taskkill now lives
+  in exactly one call site.
+- Engine wiring: `RequestCancel` (shared lifecycle + opencode hard_kill) returns the termination;
+  `core/cancel.js` walks rungs, journals `containment: { kind: 'taskkill-tree', degraded: true }` +
+  `containment_survivors` whenever a tree-kill rung ran, and returns **exit 21** with the survivors
+  named (human output + JSON envelope) instead of a clean `cancelled` when any survive (criteria B, D).
+  `core/commands/attempt-driver.js` `finishTimedOut` records the survivors on the `timed_out` detail
+  and stops writing `kill_skipped` once a kill was attempted (criterion G). New projection field
+  `containment_survivors` in `job-store.js`/`envelope.js`/`debug.js` — append-only, nothing repurposed.
+  `core/containment.js` and `core/commands/cancel.js`'s `containment: null` are untouched (rung 3).
+
+**Design decisions / discoveries worth recording.**
+
+- **`enumerateDescendants` includes the root pid** as the first entry, so `attempted` is exactly the set
+  the verification may judge — and the ticket's "never signal a pid you never enumerated" holds because
+  taskkill receives only the root pid.
+- **Creation time format matches `core/process-identity.js` exactly** (same PowerShell
+  `Get-Process ... ToUniversalTime().ToString('o')` expression), so enumerated identities are comparable
+  with the existing notion; `isProcessAlive` from `core/process-identity.js` is reused for liveness.
+  Image path is an extra field `process-identity.js` does not expose; it is compared case-insensitively.
+- **PowerShell 7 (`pwsh`) is required for enumeration** — Windows PowerShell 5.1's `Get-Process` has no
+  `.Parent` property, so parent-pid discovery needs pwsh. When pwsh is absent, the process query fails
+  and the rung fails closed (`kind: 'none'`, nothing signalled, `kill_skipped` written) rather than
+  guessing. Documented here because "the degraded kill works on any Windows" would be a false claim.
+- **A positive identity mismatch is required for pid reuse** (creation time or image path both known and
+  different). An alive pid whose current identity cannot be positively compared is classified as a
+  survivor — the conservative direction, because "reporting uncertainty is always preferable to
+  reporting a kill" (ADR-010). This is exactly the rule the ticket called "the line that does not move".
+- **`taskkill` exit codes are not a verdict** — the result is decided by the post-kill re-check only,
+  after a bounded settle poll so a merely-dying process is not reported as a survivor.
+- **The forced-survivor test (criterion B) is real, not stubbed.** A genuine process that `taskkill`
+  cannot reach (it is not a descendant of the root) is the survivor; only the enumeration/verification
+  *snapshots* are injected (as the ticket sanctions), and those carry the processes' real identities.
+  The engine half (exit 21, not `cancelled`, record carries survivors) is covered by core tests that
+  inject the termination result through the FakeAdapter.
+- **`tests/adapters/opencode/server-kill-tree.test.js` was rewritten.** It previously asserted the old
+  `spawnSync('taskkill', …)` pre-step inside `server.kill()`; it now asserts `kill()` delegates to the
+  shared seam, and is marked `@serial` because it temporarily overrides the shared helper's export and
+  must not race the parallel suite.
+
+**Verification (all on this Windows host).** `node tests/adapters/windows-tree-kill.test.js` (criteria
+A/B/C/E/F — real three-deep tree killed and verified, real forced survivor named, pid-reuse counted
+dead, truncation reported at depth/node caps and propagated), `tests/core/taskkill-tree-cancel.test.js`
+(B engine + D), `tests/core/hard-timeout-tree-kill.test.js` (G), `node tests/contract/contract.test.js`,
+`node tests/adapters/process-group-containment.test.js` (SKIPPED visibly), the opencode/codex/claude
+adapter, scope, temp-dir-leak, observe-wakeup, scripted-child, cancel, hard-kill-honesty and
+attempt-driver tests — all green. `npm run check` green after the docs and generated files were updated.
+
+**Notes on the docs that ship with this ticket.** README, design-spec §5/§7/§14, ADR-010's ladder table
+and `integration/source/core.md` were updated and `node scripts/generate-integration.js` re-run; the
+generated skills are committed. Ticket closed and the tracker table regenerated.

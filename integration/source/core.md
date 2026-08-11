@@ -148,19 +148,24 @@ afterwards depends on the platform:
   bounded grace, then `SIGKILL`. The backend and everything it spawned cease
   running; the job record carries
   `containment: { kind: "process-group", degraded: false }`.
-- **On Windows** dcli does not currently contain the backend's process tree, so a
-  backend that ignores cancellation, or a tool the backend spawned, can outlive
-  the job that started it.
+- **On Windows** dcli enumerates the backend's descendants and terminates them
+  with `taskkill /T /F`, then verifies against the exact set it enumerated. This
+  is a **declared degraded** capability: a descendant born between the
+  enumeration and the kill escapes, and whatever survives is named, not hidden.
+  The job record carries `containment: { kind: "taskkill-tree", degraded: true }`
+  plus a `containment_survivors` set.
 
 The record states the Windows situation rather than claiming otherwise:
 
-- A hard timeout writes `kill_skipped: "not_contained"` on the `timed_out` detail.
-- A cancel whose declared rungs all fail records
-  `cancel_rung_reached: "containment_unavailable"` — never the rung name `hard_kill`.
+- A hard timeout records the survivor set on the `timed_out` detail instead of
+  `kill_skipped: "not_contained"` — once a kill was attempted, claiming it was
+  skipped is a second, different lie.
+- A cancel whose tree-kill rung leaves survivors exits **21** and names them;
+  it never reports a clean `cancelled` outcome.
 
 So: exit 24 and exit 21 mean the wrapper stopped waiting and recorded honestly,
-not that a process was killed. If a survivor would be a problem — it holds a lock,
-a port, or a worktree — check for one before re-running the job.
+not that every process was provably dead. If a survivor would be a problem — it
+holds a lock, a port, or a worktree — check for one before re-running the job.
 
 ## Cancelling and cleaning up
 

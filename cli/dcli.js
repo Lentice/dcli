@@ -531,6 +531,11 @@ async function main() {
       }
       if (report.containment) {
         console.log(`Containment: kind=${report.containment.kind || '-'} degraded=${report.containment.degraded}`);
+        if (report.containment.survivors && report.containment.survivors.length > 0) {
+          for (const s of report.containment.survivors) {
+            console.log(`  survivor pid=${s.pid}${s.image_path ? ` image=${s.image_path}` : ''} (${s.reason || 'still_running'})`);
+          }
+        }
       }
       console.log(`Backend: ${report.backend || '-'}`);
       console.log(`Timings: created=${report.timings.created_at || '-'} started=${report.timings.started_at || '-'} heartbeat=${report.timings.heartbeat_at || '-'} finished=${report.timings.finished_at || '-'}`);
@@ -640,6 +645,14 @@ async function main() {
 
       if (parsed.json) {
         console.log(JSON.stringify(result.envelope));
+      } else if (result.survivors && result.survivors.length > 0) {
+        // A taskkill-tree rung named survivors (ticket 103): exit 21, never a
+        // clean cancellation, and the survivors are named so nothing is hidden
+        // behind "cancellation could not be confirmed".
+        console.log(`Cancel ${result.warning || 'termination_unconfirmed'} (state: ${result.state})`);
+        for (const s of result.survivors) {
+          console.log(`  survivor pid=${s.pid}${s.image_path ? ` image=${s.image_path}` : ''} (${s.reason || 'still_running'})`);
+        }
       } else if (result.warning) {
         console.log(`Cancel ${result.warning} (state: ${result.state})`);
       } else {

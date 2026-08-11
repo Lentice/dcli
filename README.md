@@ -160,12 +160,14 @@ honest limitation.
 **A budget bounds the wrapper's wait, not the backend's process tree.** `--hard-timeout-sec` and `--timeout-sec`
 both bound what *dcli* does: the attempt is ended, the record is written, and control returns to you. On **Unix**
 the backend runs in its own process group and a hard timeout or an escalated cancel terminates the whole group
-(`SIGTERM` → grace → `SIGKILL`), so the backend and everything it spawned cease running. On **Windows** dcli does
-not currently contain the backend's process tree, so a backend that ignores cancellation — or a tool it spawned —
-can outlive the job that started it. The record says so rather than claiming otherwise: on Windows a hard timeout
-writes `kill_skipped: "not_contained"`, and a cancel whose rungs all fail records
-`cancel_rung_reached: "containment_unavailable"`. Neither ever reports a kill that did not happen. If a job matters
-enough that a survivor would be a problem, check for one before re-running it.
+(`SIGTERM` → grace → `SIGKILL`), so the backend and everything it spawned cease running. On **Windows** dcli
+terminates the backend's descendants too — it enumerates them, kills them with `taskkill /T /F`, and then
+verifies against the exact set it enumerated — but this is a **declared degraded** capability: a descendant
+spawned between the enumeration and the kill escapes, and a process that a tool cannot end is reported, not
+hidden. The record says so: the job carries `containment: { kind: "taskkill-tree", degraded: true }`, a hard
+timeout records any survivors on its `timed_out` detail, and a cancel that leaves survivors exits `21` and
+names them rather than reporting a clean cancellation. If a job matters enough that a survivor would be a
+problem, check for one before re-running it.
 
 ## Documentation
 

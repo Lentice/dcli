@@ -94,15 +94,57 @@ async function cancelJob(opts) {
 
   const rungs = adapter.DeclareCancelRungs();
   let cancelRungReached = null;
+  // The last rung result that carried a termination report. A tree-kill rung
+  // (the Windows taskkill-tree, ticket 103) returns its verified result here;
+  // a rung with survivors must be reported as such, never as a clean cancel.
+  let termination = null;
 
   for (const rung of rungs) {
     if (cancelRungReached) break;
-    await adapter.RequestCancel(attempt, rung);
+    const requestResult = await adapter.RequestCancel(attempt, rung);
+    if (requestResult && requestResult.termination) termination = requestResult.termination;
+    // A taskkill-tree result is recognised by its survivors array. Non-empty
+    // survivors mean the rung did NOT terminate the tree: stop walking, report
+    // the survivors, and let nothing downstream claim a clean cancellation.
+    if (termination && Array.isArray(termination.survivors) && termination.survivors.length > 0) {
+      cancelRungReached = rung;
+      break;
+    }
     await boundedSleep(rungWaitMs);
     if (pidKnown && !isProcessAliveFn(pid)) {
       cancelRungReached = rung;
       break;
     }
+  }
+
+  // Persist what a taskkill-tree rung verified, whatever it found. `degraded`
+  // stays true even when nothing survived — the mechanism cannot prove there
+  // was nothing outside the enumerated set. Empty survivors are still recorded
+  // so a reader can distinguish "verified clean within the set" from "no rung
+  // ever ran".
+  const treeKill = termination && Array.isArray(termination.survivors) ? termination : null;
+  if (treeKill) {
+    store.journalTransition(jobId, repoKey, {
+      kind: 'attempt_state_changed',
+      attempt: attemptNum,
+      from: status.state || null,
+      to: null,
+      detail: {
+        containment: { kind: treeKill.kind, degraded: treeKill.degraded !== false },
+        containment_survivors: treeKill.survivors.map(survivorToRecord),
+      },
+    });
+  }
+
+  if (treeKill && treeKill.survivors.length > 0) {
+    return {
+      state: status.state,
+      cancelRungReached,
+      exitCode: 21,
+      warning: 'termination_unconfirmed',
+      survivors: treeKill.survivors.map(survivorToRecord),
+      containment: { kind: treeKill.kind, degraded: treeKill.degraded !== false },
+    };
   }
 
   // No rung of ours reached the process. A detached worker still cancels
@@ -200,6 +242,19 @@ async function cancelJob(opts) {
 
 function boundedSleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Normalise a tree-kill survivor (`{ pid, imagePath, reason }`, camelCase, as
+ * the adapter reports it) into the persisted record shape. `image_path` keeps
+ * the survivor's identity discoverable in status.json.
+ */
+function survivorToRecord(survivor) {
+  return {
+    pid: survivor.pid,
+    image_path: survivor.imagePath != null ? survivor.imagePath : null,
+    reason: survivor.reason || 'still_running',
+  };
 }
 
 module.exports = { cancelJob };

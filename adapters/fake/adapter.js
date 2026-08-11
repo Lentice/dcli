@@ -174,7 +174,12 @@ class FakeAdapter {
     if (this._script.behaviors && typeof this._script.behaviors.onCancel === 'function') {
       this._script.behaviors.onCancel(rung);
     }
-    return { success: true };
+    // `behaviors.termination` lets a test report what a tree-kill rung found
+    // (ticket 103's survivor path injects this because a survivor cannot be
+    // constructed reliably in a core test). A function receives the rung.
+    let termination = this._script.behaviors && this._script.behaviors.termination;
+    if (typeof termination === 'function') termination = termination(rung);
+    return { success: true, ...(termination ? { termination } : {}) };
   }
 
   CollectResult(attempt) {

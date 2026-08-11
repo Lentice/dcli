@@ -577,10 +577,11 @@ class OpencodeAdapter {
         return { success: true };
 
       case 'hard_kill':
-        if (this._server) await this._server.kill();
+        let termination = null;
+        if (this._server) termination = await this._server.kill();
         this._cancelRungReached = 'hard_kill';
         this._cancelled = true;
-        return { success: true };
+        return { success: true, ...(termination ? { termination } : {}) };
 
       default:
         return { success: false, error: `Unknown rung: ${rung}` };

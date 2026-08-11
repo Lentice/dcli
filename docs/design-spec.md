@@ -217,6 +217,7 @@ never omitted.
   "worker_pid": 1234,
   "worker_identity": "1234;2026-07-28T07:59:04.5136608Z",
   "containment": { "kind": "job-object", "handle_owner_pid": 1234, "degraded": false },
+  "containment_survivors": null,
   "backend_pid": 1250,
   "backend_session_id": "ses_...",
   "backend_state": { },
@@ -244,7 +245,10 @@ never omitted.
 ```
 
 Add per attempt: `attempt`, `attempt_id`, `attempt_state`, `execution_token`, `containment.degraded`,
-`findings_status`. `state` may additionally be `interrupted` (ADR-008).
+`findings_status`. `containment_survivors` is written only when a taskkill-tree rung (ADR-010 rung 2)
+ran: an array of `{ pid, image_path, reason }` naming every enumerated pid still alive after the kill
+(empty means "verified nothing survived within the enumerated set", absent means no tree-kill rung ran).
+`state` may additionally be `interrupted` (ADR-008).
 
 `backend_state` is the **only** place backend-specific data may live. Anything a backend needs that
 does not fit an existing shared field goes there — never as a new top-level field with
@@ -324,7 +328,7 @@ translated, never surfaced.
 | `17` | Lock acquisition or corrupt-state failure |
 | `18` | Worker launch / startup-sentinel failure |
 | `20` | Caller's `wait` timed out; job still active |
-| `21` | Cancellation could not be confirmed |
+| `21` | Cancellation could not be confirmed. (2026-08-11) On Windows a tree-kill rung that left survivors also exits `21` — the survivors are named in the human output and the JSON envelope's `containment_survivors`, and no clean `cancelled` outcome is written. |
 | `22` | Session missing / expired / incompatible with resume |
 | `23` | Repository or worktree preparation failure |
 | `24` | Job hard timeout; process tree killed |
@@ -710,6 +714,33 @@ This supersedes the Unix parts of the 2026-08-02 amendment. What remains there i
 Job Object, plain `spawn` with no `detached`, `containment: null` in `core/commands/cancel.js`, and the
 `kill_skipped: 'not_contained'` record on Windows hard timeouts. Windows stays at ADR-010 rung 0 until the
 degraded tree kill (ticket 103) lands.
+
+### Amendment 2026-08-11 — Windows tree termination is a declared degraded capability (ADR-010 rung 2)
+
+The degraded tree kill (ticket 103) is wired. On Windows, every termination path goes through the shared
+`terminateProcessTree` seam, whose Windows half (`adapters/shared/windows-tree-kill.js`) does:
+
+1. **Enumerate** the descendant set from the backend pid with its identity — `pid + creation time + image
+   path`, creation time captured with the same OS query as `core/process-identity.js` — bounded in depth,
+   node count and time, with a truncated walk reported (`enumerationTruncated`), never silently accepted.
+2. **Terminate** with `taskkill /PID <root> /T /F` as an argument array, `windowsHide: true`, finite
+   timeout, `/PID` only — never by executable name.
+3. **Verify against that exact set**: a pid is confirmed dead only when it is gone, or when a process with
+   that pid exists but no longer matches its enumerated identity (pid reuse). A pid still alive and still
+   matching is a **survivor**, named in the result. Anything born after enumeration is out of scope by
+   construction — that race is why `degraded` is permanently `true`.
+
+The job record carries `containment: { kind: 'taskkill-tree', degraded: true }` plus the new
+`containment_survivors` field. A cancel whose tree-kill rung leaves survivors exits **21** with the
+survivors named and never writes a clean `cancelled`. A hard timeout with survivors records them on the
+`timed_out` detail instead of `kill_skipped: 'not_contained'` — `kill_skipped` is only correct when no kill
+was attempted, and on Windows it is written only in that case now.
+
+This supersedes the Windows parts of the 2026-08-02 amendment: `cancel_rung_reached:
+'containment_unavailable'` is no longer the Windows cancel record once a tree-kill rung ran, and the
+`kill_skipped: 'not_contained'` hard-timeout record is Windows-only *and* only when no kill was attempted.
+What remains at rung 0 is the rung-3 goal itself — the Job Object helper is still unconstructed, and Windows
+still cannot prove a kill the way a Unix process group or a Job Object can.
 
 ---
 

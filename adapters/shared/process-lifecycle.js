@@ -22,6 +22,13 @@ const { spawn } = require('node:child_process');
 // nothing waits forever). A backend normally exits well within this.
 const PROCESS_GROUP_GRACE_MS = 5000;
 
+// Windows tree kills run once per child (a hard-timeout timer and the
+// finishing path can race into RequestCancel for the same child); memoising on
+// the child object makes concurrent callers await the same result instead of
+// running two taskkill+verify sequences. The entry is dropped when the
+// promise settles so a later Dispose can terminate the already-dead tree.
+const windowsTreeKillInFlight = new WeakMap();
+
 /**
  * Terminate a backend child and everything it spawned.
  *
@@ -34,25 +41,23 @@ const PROCESS_GROUP_GRACE_MS = 5000;
  * group; `ESRCH` from either signal means the group is already gone, which is
  * the outcome we wanted, not an error.
  *
- * Windows (rung 0): today's direct-child `kill('SIGKILL')`, copied verbatim —
- * `detached` means a new console there, not a group, so a negative pid would
- * be meaningless (ticket 103 raises this half).
+ * Windows (rung 2, ADR-010, ticket 103): the verified degraded tree kill in
+ * `./windows-tree-kill.js` — enumerate the descendant set with its identity,
+ * `taskkill /PID <pid> /T /F` as an argument array, then re-check every pid
+ * in that exact set. The result names every survivor; a rung that reports
+ * survivors is a rung that did not fully terminate, and the engine exits 21
+ * for it rather than recording a clean cancel.
  *
  * POSIX callers must only pass a child they spawned `detached`: a negative
  * pid built from a non-detached child would target a group we do not own.
  *
  * @param {object|null} child
- * @param {{ graceMs?: number }} [opts]
- * @returns {Promise<{ kind: 'process-group'|'none', degraded: boolean, escalated: boolean }>}
+ * @param {{ graceMs?: number, deadlineMs?: number }} [opts]
+ * @returns {Promise<{ kind: 'process-group'|'taskkill-tree'|'none', degraded: boolean, escalated: boolean, attempted?: number[], confirmedDead?: number[], survivors?: Array<{pid:number, imagePath:string|null, reason:string}>, enumerationTruncated?: boolean }>}
  */
-async function terminateProcessTree(child, { graceMs = PROCESS_GROUP_GRACE_MS } = {}) {
+async function terminateProcessTree(child, { graceMs = PROCESS_GROUP_GRACE_MS, deadlineMs } = {}) {
   if (process.platform === 'win32') {
-    if (child && !child.killed) {
-      try { child.kill('SIGKILL'); } catch {
-        try { child.kill(); } catch {}
-      }
-    }
-    return { kind: 'none', degraded: true, escalated: false };
+    return terminateWindowsTree(child, deadlineMs);
   }
 
   if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
@@ -80,6 +85,37 @@ async function terminateProcessTree(child, { graceMs = PROCESS_GROUP_GRACE_MS } 
     escalated = signalGroup('SIGKILL');
   }
   return { kind: 'process-group', degraded: false, escalated };
+}
+
+/**
+ * The Windows half of the seam: verified degraded tree termination. An absent
+ * or invalid child stays at rung 0 (`kind: 'none'`); a real child runs
+ * `terminateTree` (taskkill /T /F against the exact enumerated set, verified,
+ * survivors named). `terminateTree` never rejects, so a throw here is a
+ * programmer error, not a termination outcome.
+ *
+ * @param {object|null} child
+ * @param {number|undefined} deadlineMs
+ * @returns {Promise<{ kind: 'taskkill-tree'|'none', degraded: boolean, escalated: boolean, attempted?: number[], confirmedDead?: number[], survivors?: Array<{pid:number, imagePath:string|null, reason:string}>, enumerationTruncated?: boolean }>}
+ */
+function terminateWindowsTree(child, deadlineMs) {
+  if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
+    return Promise.resolve({ kind: 'none', degraded: true, escalated: false });
+  }
+  const inFlight = windowsTreeKillInFlight.get(child);
+  if (inFlight) return inFlight;
+  const { terminateTree } = require('./windows-tree-kill');
+  const promise = terminateTree(child.pid, { deadlineMs }).then((result) => ({
+    ...result,
+    escalated: false,
+  }));
+  windowsTreeKillInFlight.set(child, promise);
+  promise.then(() => {
+    if (windowsTreeKillInFlight.get(child) === promise) windowsTreeKillInFlight.delete(child);
+  }, () => {
+    if (windowsTreeKillInFlight.get(child) === promise) windowsTreeKillInFlight.delete(child);
+  });
+  return promise;
 }
 
 /**
@@ -210,17 +246,19 @@ const methods = {
       return { success: false, error: `Unknown rung: ${rung}` };
     }
 
-    // The rung now terminates the group on Unix and the direct child on
-    // Windows (terminateProcessTree); `hard_kill` therefore keeps its
-    // promise on POSIX (ADR-010 rung 1) and stays the honest rung 0 record
-    // on Windows.
+    // The rung now terminates the group on Unix (rung 1) and the verified
+    // taskkill-tree on Windows (rung 2); `hard_kill` keeps its promise on
+    // POSIX and becomes the declared degraded capability on Windows. The
+    // termination result travels back to the engine so a rung with survivors
+    // can be reported as what it is instead of a clean kill.
+    let termination = null;
     if (this._childProcess) {
-      await terminateProcessTree(this._childProcess);
+      termination = await terminateProcessTree(this._childProcess);
     }
 
     this._cancelRungReached = 'hard_kill';
     this._cancelled = true;
-    return { success: true };
+    return { success: true, ...(termination ? { termination } : {}) };
   },
 
   _resolveExitCode() {

@@ -55,6 +55,7 @@ async function executeDebug({ store, repoKey, jobId }) {
     report.containment = {
       kind: status.containment.kind || null,
       degraded: !!status.containment.degraded,
+      survivors: status.containment_survivors || [],
     };
   }
 

@@ -247,6 +247,7 @@ class JobStore {
       worker_identity: null,
       containment: null,
       kill_skipped: null,
+      containment_survivors: null,
       backend_pid: null,
       backend_session_id: null,
       backend_state: { schema_version: 1 },
@@ -366,6 +367,11 @@ class JobStore {
         if (d.findings_status !== undefined) updated.findings_status = d.findings_status;
         if (d.execution_root !== undefined) updated.execution_root = d.execution_root;
         if (d.containment !== undefined) updated.containment = d.containment;
+        // Append-only addition: the survivor set a taskkill-tree rung (ticket
+        // 103) left alive, `[{ pid, image_path, reason }]`. Present only when
+        // such a rung ran; `[]` means "verified nothing survived within the
+        // enumerated set", and absent means no tree-kill rung ran at all.
+        if (d.containment_survivors !== undefined) updated.containment_survivors = d.containment_survivors;
         // Append-only addition: records why a hard timeout did not escalate to a
         // contained tree kill (e.g. 'not_contained'). Without it a timed_out job is
         // indistinguishable from one whose backend tree was provably killed.
