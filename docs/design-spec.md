@@ -205,7 +205,7 @@ never omitted.
   "repo_key": "f8d3ffc01046",
   "repo_root": "D:\\src\\project",
   "execution_root": "C:\\...\\dcli\\worktrees\\20260728T075904Z-xdzv9ovy",
-  "mode": "review",
+  "mode": "run",
   "access": "read-only",
   "state": "running",
   "phase": "agent_running",
@@ -743,10 +743,14 @@ The degraded tree kill (ticket 103) is wired. On Windows, every termination path
    construction — that race is why `degraded` is permanently `true`.
 
 The job record carries `containment: { kind: 'taskkill-tree', degraded: true }` plus the new
-`containment_survivors` field. A cancel whose tree-kill rung leaves survivors exits **21** with the
-survivors named and never writes a clean `cancelled`. A hard timeout with survivors records them on the
-`timed_out` detail instead of `kill_skipped: 'not_contained'` — `kill_skipped` is only correct when no kill
-was attempted, and on Windows it is written only in that case now.
+`containment_survivors` field **only after a tree-kill rung has run**: spawn-time records are
+rung-1-only, so a live Windows job carries `containment: null` until that rung runs. This matches
+§5's semantics — `containment_survivors` absent means no tree-kill rung ran; `[]` means one ran and
+verified nothing survived within the enumerated set. A cancel whose tree-kill rung leaves survivors
+exits **21** with the survivors named and never writes a clean `cancelled`. A hard timeout with
+survivors records them on the `timed_out` detail instead of `kill_skipped: 'not_contained'` —
+`kill_skipped` is only correct when no kill was attempted, and on Windows it is written only in that
+case now.
 
 This supersedes the Windows parts of the 2026-08-02 amendment: `cancel_rung_reached:
 'containment_unavailable'` is no longer the Windows cancel record once a tree-kill rung ran, and the
@@ -829,11 +833,13 @@ dcli-claude   native-agent ...            dcli-claude from-pr <n>
 dcli-codex thread ...
 ```
 
-Modes: `review`, `brainstorm`, `test`, `implement`.
-Access: `read-only`, `workspace`. `review` is always `read-only`; `brainstorm`/`test` default to
-`read-only` and require an explicit `--access workspace`; `implement` requires `workspace` but only
-inside its worktree. No mode grants access outside the selected repository/worktree. Network policy
-is separately configurable (`deny` | `ask` | `allow`).
+`--mode` accepts exactly `run` and `implement` (`run` is the default). The recorded `status.mode`
+value is `run` for the `run` command, `submit` for a run-mode submit, and `implement` for
+implement-mode. `review` is a subcommand, not a `--mode` value (§11).
+Access: `read-only`, `workspace` (`read-only` is the default). The `review` subcommand always runs
+read-only and rejects an override with exit `2` (§11). Implement-mode work executes inside a
+wrapper-owned detached worktree (§12). No mode grants access outside the selected
+repository/worktree. Network policy is separately configurable (`deny` | `ask` | `allow`).
 
 For opencode, the wrapper generates a per-session permission ruleset per job (study §7) and must
 never mutate the user's permanent opencode configuration.
@@ -841,9 +847,9 @@ never mutate the user's permanent opencode configuration.
 Examples:
 
 ```powershell
-"Compare these two designs." | dcli-opencode run --mode brainstorm
+"Compare these two designs." | dcli-opencode run
 dcli-opencode review --working --path src/ --intent "Add cache invalidation" --embed-diff
-"Run the full test suite." | dcli-claude submit --mode test --access workspace
+"Run the full test suite." | dcli-claude submit --access workspace
 dcli-opencode status <job-id> --json
 dcli-opencode wait --all --group nightly --json
 dcli-opencode resume <job-id> --prompt-file follow-up.md

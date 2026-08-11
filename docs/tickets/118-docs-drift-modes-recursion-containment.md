@@ -1,6 +1,6 @@
 # 118 — documentation drift: mode vocabulary, claude recursion guard, containment record timing
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Spec and reference text that describe behavior the code does not have teaches every
 future agent session the wrong contract — the most expensive kind of doc rot here, because it is
@@ -126,6 +126,60 @@ rg -n "taskkill-tree|tree-kill rung" docs/design-spec.md
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+**What and where.** Docs only; no code changes.
+
+1. `docs/design-spec.md` §16: replaced "Modes: `review`, `brainstorm`, `test`, `implement`." with the
+   shipped vocabulary — `--mode run|implement` (`run` is the default, per `core/cli-args.js:211-218`
+   and the `mode === 'implement' ? 'implement' : 'run'` derivations in `core/commands/run.js:5`,
+   `submit.js:15`), the recorded `status.mode` values (`run` for the `run` command, `submit` for a
+   run-mode submit, `implement` for implement-mode), and "`review` is a subcommand, not a `--mode`
+   value". Access paragraph restated to drop the obsolete `brainstorm`/`test` rules; the review
+   read-only rule now points to §11.
+2. §16 examples block: dropped `--mode brainstorm` and `--mode test` (both exit 2). `run` (default)
+   and `submit --access workspace` replace them.
+3. `docs/design-spec.md` §5: the `status.json` example recorded `"mode": "review"`, a value that never
+   ships; changed to `"run"` (a review-subcommand job records `run`).
+4. §14 (2026-08-11 Windows rung-2 amendment): now states the `taskkill-tree` record appears **only
+   after a tree-kill rung has run** — spawn-time records are rung-1-only, so a live Windows job
+   carries `containment: null` until then — and cross-references §5's `containment_survivors`
+   absent-means-never-ran semantics. Matches `adapters/shared/process-lifecycle.js:130-133`,
+   `core/cancel.js:135-147`, `core/commands/attempt-driver.js:233-238`, `core/job-store.js:369-373`.
+5. `docs/reference/cli-claude.md`: deleted the stale "Nothing in `core/`, `adapters/`, or `cli/`
+   implements this yet" paragraph (`:278-279`). The guard ships in `cli/dcli-claude.js:6-18` (env
+   sentinel, exit 2) and `adapters/claude/adapter.js:215-218` (stamps `DCLI_WORKER=1`/`DCLI_DEPTH`,
+   plus `--safe-mode`/`--disable-slash-commands` at `:47-49`). The section's existing description was
+   re-verified and stays; it agrees with `:127` and `:206`.
+6. `docs/product-spec.md:172` — deviation, see below.
+7. New test `tests/integration/docs-drift-118.test.js` (`@suite full`) gates all three subjects: every
+   `--mode` value the spec teaches must survive the real parser (the parser's set is derived from
+   `core/cli-args.js`, never hard-coded), the §16 record values, no "implements this yet" anywhere in
+   `docs/reference/`, and §14 timing consistent with §5. Red before the doc edits, green after.
+
+**Suite.** `npm run check` green. The first run was killed by a 10-minute wrapper timeout mid-suite
+(live integration tests spawn real processes); re-run to completion: `eslint .` clean; `test:full` —
+adapters 34, contract 2, core 62, helpers 1, integration 4, 0 failed. The runner's load guard flagged
+`core\test-runner.test.js` at 69% of its 120 s budget (82 s) — near-cap, not a failure.
+
+**Agent checks (actual output).**
+- `rg -n "brainstorm|test\`|Modes:" docs/design-spec.md` → only line 35 ("brainstorming" as a
+  supported work kind, not a mode). No `--mode brainstorm`/`--mode test` example; the obsolete Modes
+  sentence is gone.
+- `rg -n "implements this yet" docs/reference/` → nothing.
+- `rg -n "taskkill-tree|tree-kill rung" docs/design-spec.md` → §5:250 and the §14 amendment both tie
+  the record to a rung having run; no "present while running" reading remains.
+
+**Deviations / discoveries.**
+1. The ticket's claim that no code rejects a `review` access override is wrong:
+   `core/commands/review.js:37-41` rejects `--access` != `read-only` with exit `2`, and the sentence
+   already sits in §11 (Review design). Per the Non-goals ("if a doc claim turns out to be true in
+   code after all, leave both alone and say so"), both were left as-is.
+2. `docs/product-spec.md:172` carried the same §16 mode-vocabulary drift but is outside the ticket's
+   named scan list (`integration/source/*`, `docs/reference/cli-*.md`); fixed in the same commit as
+   the same drift.
+3. `docs/design-spec.md` §5 example `"mode": "review"` is drift #1 in a location the ticket did not
+   name; fixed.
+4. `integration/source/core.md:146-156` containment text was scanned and left alone: it describes the
+   record in the post-escalation context (survivors, exit 21, `kill_skipped`) and does not claim the
+   record is present while running, so it is consistent with the code's timing. No generated/installed
+   integration copies byte-differ (acceptance Z) — `integration/source/*` was untouched and
+   `tests/integration/generate.test.js` regenerates-and-compares the generated tree.

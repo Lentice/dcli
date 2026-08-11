@@ -55,7 +55,6 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
-| [118 — docs drift](118-docs-drift-modes-recursion-containment.md) | ready | — | §16 mode vocabulary, the claude recursion-guard paragraph, and §14 containment-record timing contradict the code |
 <!-- /GENERATED: ticket table -->
 
 ## Closed
@@ -104,6 +103,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [110 — submit leaks on spawn failure](110-submit-leaks-on-spawn-failure.md) | done | — | A failed worker launch leaves a `created` job and a registered worktree |
 | [116 — codex/claude streams unbounded](116-bounded-stream-retention.md) | done | — | The two collectors retain stdout/stderr with no cap; opencode already caps |
 | [117 — probes use shell strings](117-probes-use-argument-arrays.md) | done | — | Version/doctor probes interpolate executable paths into `execSync` strings, bypassing the quoting seam |
+| [118 — docs drift](118-docs-drift-modes-recursion-containment.md) | done | — | §16 mode vocabulary, the claude recursion-guard paragraph, and §14 containment-record timing contradict the code |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

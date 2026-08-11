@@ -169,8 +169,10 @@ true `busy`/`idle`/`retry` status signal, and graceful session abort before any 
 - **Core options:** `--repo`, `--prompt-file`, `--mode`, `--access`, `--hard-timeout-sec`, `--group`,
   `--label`, `--model`, `--json`. `--model` is only *syntactically* shared — model names do not
   transfer between backends.
-- **Modes:** `review`, `brainstorm`, `test`, `implement`. **Access:** `read-only`, `workspace`.
-  `review` is always read-only and rejects an override.
+- **Modes:** `--mode` accepts `run` and `implement` (`run` is the default); recorded `status.mode`
+  values are `run`, `submit` (run-mode submit) and `implement`. `review` is a subcommand, not a mode.
+  **Access:** `read-only`, `workspace` (`read-only` is the default). `review` is always read-only and
+  rejects an override.
 - **Exit codes and `status.json` fields are append-only.** Never rename or repurpose either; the
   installed skills, commands, and rules read them. Distinct `command_exit_code` and
   `backend_exit_code`; never a generic `exit_code`.

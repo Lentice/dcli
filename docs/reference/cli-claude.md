@@ -275,9 +275,6 @@ understands:
   something the wrapper orchestrated), that nested process inherits the sentinel automatically and
   fails fast at startup.
 
-Nothing in `core/`, `adapters/`, or `cli/` implements this yet — there is no existing scaffolding to
-mirror, unlike most of this adapter's other mechanics.
-
 ---
 
 ## Verification results (verified 2026-07-29 on claude 2.1.220)
