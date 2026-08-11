@@ -204,9 +204,24 @@ async function executeCleanup({ store, olderThan, dryRun, scrubSessionIds }) {
     // --scrub-session-ids mode: blank backend_session_id on terminal jobs
     if (scrubSessionIds) {
       if (TERMINAL.has(status.state) && status.backend_session_id && !dryRun) {
-        status.backend_session_id = null;
         try {
-          store.writeStatusRecord({ repoKey, jobId, status });
+          // Journal the scrub as an attempt_state_changed transition whose
+          // detail carries backend_session_id: null. The projection alone is
+          // derived state — a direct write is resurrected by the next replay
+          // from the authoritative journal. The replay's last-write-wins rule
+          // turns the appended null into the durable value, and journalTransition
+          // regenerates and rewrites the projection in the same call, so no
+          // separate projection write is needed.
+          store.journalTransition(jobId, repoKey, {
+            kind: 'attempt_state_changed',
+            attempt: status.attempt,
+            from: status.state,
+            to: status.state,
+            detail: {
+              backend_session_id: null,
+              session_scrubbed_at: new Date().toISOString(),
+            },
+          });
           result.scrubbed++;
         } catch (err) {
           result.errors.push(`Failed to scrub session id for ${name}: ${err.message}`);

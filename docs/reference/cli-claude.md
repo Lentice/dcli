@@ -226,6 +226,10 @@ worktree, and git registration together. It also discovers orphan worktrees
 under the dcli state root. `--dry-run` names each worktree and reports its
 bytes; worktrees held by `diff` or `apply` are named and skipped.
 
+`--scrub-session-ids` blanks the recorded backend session id on terminal jobs
+only. The scrub is durable: it is journaled, so a later status read that
+regenerates the record from the journal still reports the id blank.
+
 ## Background implementation recipe
 
 `submit --mode implement` is honoured: the worktree is prepared at submit time

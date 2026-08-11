@@ -215,9 +215,8 @@ class JobStore {
   }
 
   /**
-   * The supported path for rewriting a status projection (cleanup's
-   * --scrub-session-ids). Same atomic write with bounded retry the store uses
-   * for its own writes.
+   * The supported path for rewriting a status projection. Same atomic write
+   * with bounded retry the store uses for its own writes.
    * @param {{ repoKey:string, jobId:string, status:Object }} args
    */
   writeStatusRecord({ repoKey, jobId, status }) {

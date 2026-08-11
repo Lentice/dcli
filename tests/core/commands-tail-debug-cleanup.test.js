@@ -443,12 +443,18 @@ await withTempDir(async (dir) => {
   const repoKey = 'test-repo';
   makeTerminalJob(store, repoKey, 'clean-scrub-1', 'done');
 
-  // Manually set backend_session_id in the status.json
+  // Manually set backend_session_id in the status.json — and in the journal,
+  // so the record survives regeneration (a stale-projection judgement can
+  // regenerate before the scrub reads, and the id must be visible either way).
   const jobDir = store.getJobDir(repoKey, 'clean-scrub-1');
   const statusPath = path.join(jobDir, 'status.json');
   const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
   status.backend_session_id = 'ses_should_be_scrubbed';
   fs.writeFileSync(statusPath, JSON.stringify(status, null, 2) + '\n', 'utf8');
+  store.journalTransition('clean-scrub-1', repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'done', to: 'done',
+    detail: { backend_session_id: 'ses_should_be_scrubbed' },
+  });
 
   // Verify session_id exists
   const before = store.readStatus({ repoKey, jobId: 'clean-scrub-1' });
@@ -479,6 +485,106 @@ await withTempDir(async (dir) => {
   assert.strictEqual(result.scrubbed, 1, 'scrub must report the projection it persisted');
   assert.strictEqual(after.backend_session_id, null, 'session_id must be null after scrub');
   console.log('PASS: cleanup test 8 — --scrub-session-ids blanks session ids');
+});
+
+// 16. scrub is journaled: the null survives regeneration from the journal
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const repoKey = 'test-repo';
+  makeTerminalJob(store, repoKey, 'clean-scrub-2', 'done');
+
+  // Journal the session id the way a real backend does: a started fact.
+  store.journalTransition('clean-scrub-2', repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'done', to: 'done',
+    detail: { backend_session_id: 'ses_in_journal' },
+  });
+
+  const jobDir = store.getJobDir(repoKey, 'clean-scrub-2');
+  const journalPath = path.join(jobDir, 'journal.jsonl');
+  const beforeLines = fs.readFileSync(journalPath, 'utf8').split('\n').filter(Boolean);
+  assert.ok(beforeLines.some(l => l.includes('ses_in_journal')), 'journal must contain the session id before scrub');
+  assert.strictEqual(
+    store.readStatus({ repoKey, jobId: 'clean-scrub-2' }).backend_session_id,
+    'ses_in_journal', 'projection must show the id before scrub'
+  );
+
+  const { executeCleanup } = require('../../core/commands/cleanup');
+  const result = await executeCleanup({ store, scrubSessionIds: true });
+  assert.deepStrictEqual(result.errors, [], 'scrub must not report errors');
+  assert.strictEqual(result.scrubbed, 1, 'scrub must count the scrubbed job');
+
+  const afterLines = fs.readFileSync(journalPath, 'utf8').split('\n').filter(Boolean);
+  assert.strictEqual(afterLines.length, beforeLines.length + 1, 'exactly one journal entry appended');
+  assert.deepStrictEqual(afterLines.slice(0, beforeLines.length), beforeLines, 'existing journal entries unchanged');
+  const scrubbedEntry = JSON.parse(afterLines[afterLines.length - 1]);
+  assert.strictEqual(scrubbedEntry.kind, 'attempt_state_changed', 'scrub must be journaled as attempt_state_changed');
+  assert.strictEqual(scrubbedEntry.detail.backend_session_id, null, 'scrubbed detail must null the id');
+  assert.ok(scrubbedEntry.detail.session_scrubbed_at, 'scrubbed detail must carry session_scrubbed_at');
+
+  assert.strictEqual(
+    store.readStatus({ repoKey, jobId: 'clean-scrub-2' }).backend_session_id,
+    null, 'projection must be null after scrub'
+  );
+  const regenerated = store.regenerateStatus({ repoKey, jobId: 'clean-scrub-2' });
+  assert.strictEqual(regenerated.backend_session_id, null, 'regenerated status must keep the scrub');
+  console.log('PASS: cleanup test 9 — scrub is journaled and survives regeneration');
+});
+
+// 17. A non-terminal job is never scrubbed; its journal is untouched
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const repoKey = 'test-repo';
+  const runningJobId = 'clean-scrub-running';
+  store.createJob({
+    jobId: runningJobId, repoKey, repoRoot: '/tmp/test',
+    backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'run', access: 'read-only',
+    hardTimeoutSec: 999999,
+  });
+  store.createAttemptDir({ repoKey, jobId: runningJobId, attemptNum: 1 });
+  store.journalTransition(runningJobId, repoKey, {
+    kind: 'attempt_created', attempt: 1, from: null, to: 'created',
+    detail: { attempt_id: 'a1', execution_token: 'tok_running' },
+  });
+  store.journalTransition(runningJobId, repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'running',
+    detail: { started_at: new Date().toISOString(), phase: 'agent_running', backend_session_id: 'ses_running' },
+  });
+
+  const jobDir = store.getJobDir(repoKey, runningJobId);
+  const journalPath = path.join(jobDir, 'journal.jsonl');
+  const before = fs.readFileSync(journalPath, 'utf8');
+
+  const { executeCleanup } = require('../../core/commands/cleanup');
+  const result = await executeCleanup({ store, scrubSessionIds: true });
+  assert.strictEqual(result.scrubbed, 0, 'non-terminal job must not be scrubbed');
+  assert.strictEqual(fs.readFileSync(journalPath, 'utf8'), before, 'non-terminal journal must be untouched');
+  assert.strictEqual(
+    store.readStatus({ repoKey, jobId: runningJobId }).backend_session_id,
+    'ses_running', 'non-terminal session id must survive'
+  );
+  console.log('PASS: cleanup test 10 — non-terminal jobs never scrubbed');
+});
+
+// 18. --dry-run --scrub-session-ids appends no journal event
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const repoKey = 'test-repo';
+  makeTerminalJob(store, repoKey, 'clean-scrub-dr', 'done');
+  store.journalTransition('clean-scrub-dr', repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'done', to: 'done',
+    detail: { backend_session_id: 'ses_dry_run' },
+  });
+
+  const jobDir = store.getJobDir(repoKey, 'clean-scrub-dr');
+  const journalPath = path.join(jobDir, 'journal.jsonl');
+  const before = fs.readFileSync(journalPath, 'utf8');
+
+  const { executeCleanup } = require('../../core/commands/cleanup');
+  const result = await executeCleanup({ store, scrubSessionIds: true, dryRun: true });
+  assert.strictEqual(result.scrubbed, 0, 'dry-run must not report a scrub');
+  assert.strictEqual(fs.readFileSync(journalPath, 'utf8'), before, 'dry-run must not append a journal event');
+  console.log('PASS: cleanup test 11 — dry-run appends no journal event');
 });
 
 // ===========================================================================
