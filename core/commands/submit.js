@@ -3,7 +3,7 @@ const { loadJobOrThrow } = require('../job-lookup');
 const { openAttempt } = require('../job-setup');
 const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { generateExecutionToken } = require('../process-identity');
-const { spawnWorker } = require('../worker-spawn');
+const { spawnWorker, journalWorkerSpawnFailure } = require('../worker-spawn');
 
 async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, mode, stateRoot, backend }) {
   stateRoot = stateRoot || store.stateRoot;
@@ -79,10 +79,16 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
   // Spawn detached worker (admission slot acquired by the worker itself).
   // The initial submit has no queue claim; core/worker-spawn.js owns the
   // spawn and the launch-identity persistence.
-  await spawnWorker({
-    store, stateRoot, backend: backend || attempt.backend, jobId, repoKey, repoRoot, hardTimeoutSec,
-    executionToken, queueClaimPath: null,
-  }).launched;
+  try {
+    await spawnWorker({
+      store, stateRoot, backend: backend || attempt.backend, jobId, repoKey, repoRoot, hardTimeoutSec,
+      executionToken, queueClaimPath: null,
+    }).launched;
+  } catch (err) {
+    journalWorkerSpawnFailure({ store, stateRoot, repoRoot, repoKey, jobId, error: err });
+    attempt.release();
+    throw err;
+  }
 
   return { jobId };
 }

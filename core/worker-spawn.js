@@ -9,6 +9,43 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { removeWorktree } = require('./worktree');
+
+function readSpawnFailureWorktree({ store, stateRoot, repoKey, jobId }) {
+  try {
+    const status = store.readStatus({ repoKey, jobId });
+    if (status.worktree && status.worktree.path) return status.worktree.path;
+  } catch {}
+  try {
+    const params = JSON.parse(fs.readFileSync(
+      path.join(stateRoot, 'jobs', repoKey, jobId, 'params.json'), 'utf8',
+    ));
+    return params.worktreePath || null;
+  } catch {
+    return null;
+  }
+}
+
+function journalWorkerSpawnFailure({ store, stateRoot, repoRoot, repoKey, jobId, error }) {
+  const worktreePath = readSpawnFailureWorktree({ store, stateRoot, repoKey, jobId });
+  try {
+    store.journalTransition(jobId, repoKey, {
+      kind: 'attempt_state_changed',
+      attempt: 1,
+      from: 'created',
+      to: 'failed',
+      detail: {
+        finished_at: new Date().toISOString(),
+        phase: 'terminal',
+        failure_reason: 'worker_spawn_failed',
+        failure: error && error.message ? error.message : 'Worker failed to launch',
+        ...(worktreePath ? { worktree_path: worktreePath } : {}),
+      },
+    });
+  } catch {}
+  if (worktreePath) removeWorktree(repoRoot, worktreePath);
+  if (error && !error.exitCode) error.exitCode = 18;
+}
 
 /**
  * Spawn the detached worker for a job and persist its launch identity before
@@ -87,22 +124,7 @@ function spawnWorker({ store, stateRoot, backend, jobId, repoKey, repoRoot, hard
       resolve();
     };
     const journalSpawnFailure = (err) => {
-      try {
-        const { JobStore } = require('../job-store');
-        const failureStore = new JobStore({ stateRoot });
-        failureStore.journalTransition(jobId, repoKey, {
-          kind: 'attempt_state_changed',
-          attempt: 1,
-          from: 'created',
-          to: 'failed',
-          detail: {
-            finished_at: new Date().toISOString(),
-            phase: 'terminal',
-            failure_reason: 'worker_spawn_failed',
-            failure: err.message,
-          },
-        });
-      } catch {}
+      journalWorkerSpawnFailure({ store, stateRoot, repoRoot, repoKey, jobId, error: err });
       settle();
     };
     const timer = setTimeout(settle, 1000);
@@ -115,4 +137,4 @@ function spawnWorker({ store, stateRoot, backend, jobId, repoKey, repoRoot, hard
   return { child, launched };
 }
 
-module.exports = { spawnWorker };
+module.exports = { spawnWorker, journalWorkerSpawnFailure };

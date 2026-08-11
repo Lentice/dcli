@@ -1,6 +1,6 @@
 # 110 — `submit` leaks the job record and worktree when the worker launch fails
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** The documented worker-launch failure path (exit 18) leaves a `created` job and a
 registered worktree behind. Every resource a job creates must have an owner that releases it on
@@ -120,6 +120,26 @@ npm test -- --grep "submit"   # expect: green, including spawn-failure cases
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+- Changed `core/worker-spawn.js` to share worker-spawn failure publication and cleanup: it journals
+  terminal `failed` with `worker_spawn_failed`, reads the implement worktree from status or
+  `params.json`, removes it idempotently, and assigns exit 18 when a synchronous error lacks one.
+  `core/commands/submit.js` now catches synchronous launch failures, invokes that owner, releases
+  the setup handle, and rethrows. Added `tests/core/submit-spawn-failure.test.js` for sync throw,
+  child `error`, implement mode, and run mode.
+- TDD: the new test was red with a `created` job and registered worktree; it passed after the fix.
+  Targeted worker-spawn, submit implement-mode, submit e2e, and the new test passed. `npm run lint`
+  passed.
+- `npm run check` completed in 274.4s with exit 1: 61 core, 32 adapters, 2 contract, 1 helpers,
+  and 3 integration suites passed; unrelated `adapters/windows-tree-kill.test.js` and
+  `core/job-store.test.js` failed. `core/job-store.test.js` passed when rerun alone; the Windows
+  tree-kill test failed again when rerun alone (`backend child must be dead after the rung`).
+- Agent checks:
+  - `rg -n "worker_spawn_failed" core/worker-spawn.js core/commands/submit.js` →
+    `core/worker-spawn.js:40: failure_reason: 'worker_spawn_failed'`.
+  - `rg -n "spawnWorker" core/commands/submit.js` → lines 6 and 83 (import and guarded call).
+  - The ticket's `npm test -- --grep "submit"` check was not run because this runner has no
+    `--grep`; the targeted test files were run directly as instructed.
+- Deviation: submit calls the shared failure publisher, so the failure-reason literal has one
+  journal site in `worker-spawn.js` rather than a duplicated literal in `submit.js`; this keeps one
+  cleanup/publication owner and preserves the requested behavior. No contradictory repository fact
+  was discovered.

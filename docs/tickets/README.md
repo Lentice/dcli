@@ -55,7 +55,6 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
-| [110 — submit leaks on spawn failure](110-submit-leaks-on-spawn-failure.md) | ready | — | A failed worker launch leaves a `created` job and a registered worktree |
 | [116 — codex/claude streams unbounded](116-bounded-stream-retention.md) | ready | — | The two collectors retain stdout/stderr with no cap; opencode already caps |
 | [117 — probes use shell strings](117-probes-use-argument-arrays.md) | ready | — | Version/doctor probes interpolate executable paths into `execSync` strings, bypassing the quoting seam |
 | [118 — docs drift](118-docs-drift-modes-recursion-containment.md) | ready | — | §16 mode vocabulary, the claude recursion-guard paragraph, and §14 containment-record timing contradict the code |
@@ -104,6 +103,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [115 — read exits 0 with no result](115-read-exits-11-without-result.md) | done | — | Terminal job without `result.md` returns success; must be exit 11 |
 | [120 — cancelled job loses its snapshot](120-cancelled-job-keeps-snapshot.md) | done | — | `finishCancelled` is the only terminal exit that skips `finalizeWorktreeSnapshot()` |
 | [109 — deadlines: one source of truth](109-deadlines-one-source-of-truth.md) | done | — | Six §13 boundaries have no production consumer; drain ships 3000 ms against a documented 5000 ms; HTTP is one 10 s bound against a 10 s/60 s contract |
+| [110 — submit leaks on spawn failure](110-submit-leaks-on-spawn-failure.md) | done | — | A failed worker launch leaves a `created` job and a registered worktree |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was
