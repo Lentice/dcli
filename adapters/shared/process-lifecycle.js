@@ -16,6 +16,7 @@
  * _stdoutClosed, _stderrClosed, _drainTimedOut.
  */
 const { spawn } = require('node:child_process');
+const { resolveDeadline } = require('../../core/deadlines');
 
 // How long between the SIGTERM and the SIGKILL when terminating a contained
 // process group (Unix rung 1, ADR-010). Finite by construction (invariant 3:
@@ -137,7 +138,6 @@ function containmentRecordForThisSpawn() {
 // its pipes, so it is what stops the process from silently exiting 0 mid-drain.
 // See _waitForFactsOrRecheck and the bounded observe-wakeup regression test.
 const LIVE_DRAIN_RECHECK_MS = 250;
-const POST_EXIT_DRAIN_MS = 3000;
 
 const methods = {
   /**
@@ -285,7 +285,7 @@ const methods = {
 
   async _waitForStreamDrain() {
     if (this._stdoutClosed && this._stderrClosed) return;
-    const deadline = Date.now() + POST_EXIT_DRAIN_MS;
+    const deadline = Date.now() + resolveDeadline('POST_EXIT_DRAIN_MS');
     while (Date.now() < deadline) {
       if (this._stdoutClosed && this._stderrClosed) return;
       await new Promise(r => setTimeout(r, 10));
@@ -355,4 +355,4 @@ function applyProcessLifecycle(AdapterClass) {
   return AdapterClass;
 }
 
-module.exports = { applyProcessLifecycle, terminateProcessTree, containmentRecordForThisSpawn, LIVE_DRAIN_RECHECK_MS, POST_EXIT_DRAIN_MS };
+module.exports = { applyProcessLifecycle, terminateProcessTree, containmentRecordForThisSpawn, LIVE_DRAIN_RECHECK_MS };

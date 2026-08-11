@@ -14,11 +14,10 @@ function load() {
   assert.ok(dflts, 'DEFAULTS must exist');
 
   const required = [
-    'WORKER_STARTUP_SENTINEL_MS', 'BACKEND_FIRST_EVENT_WATCHDOG_MS',
-    'BACKEND_HEALTH_READY_MS', 'JOB_HARD_TIMEOUT_MS',
+    'JOB_HARD_TIMEOUT_MS',
     'WAIT_TIMEOUT_MS',
     'POST_EXIT_DRAIN_MS', 'HTTP_CONNECT_MS', 'HTTP_READ_MS',
-    'EVENT_STREAM_IDLE_MS', 'LOCK_ACQUISITION_MS', 'DOCTOR_LIVE_SMOKE_MS',
+    'LOCK_ACQUISITION_MS', 'DOCTOR_LIVE_SMOKE_MS',
   ];
   for (const key of required) {
     assert.ok(key in dflts, `DEFAULTS must contain ${key}`);
@@ -28,15 +27,11 @@ function load() {
   }
 
   // Verify specific values from the design spec
-  assert.strictEqual(dflts.WORKER_STARTUP_SENTINEL_MS, 30000);
-  assert.strictEqual(dflts.BACKEND_FIRST_EVENT_WATCHDOG_MS, 120000);
-  assert.strictEqual(dflts.BACKEND_HEALTH_READY_MS, 30000);
   assert.strictEqual(dflts.JOB_HARD_TIMEOUT_MS, 1800000);
   assert.strictEqual(dflts.WAIT_TIMEOUT_MS, 300000);
   assert.strictEqual(dflts.POST_EXIT_DRAIN_MS, 5000);
   assert.strictEqual(dflts.HTTP_CONNECT_MS, 10000);
   assert.strictEqual(dflts.HTTP_READ_MS, 60000);
-  assert.strictEqual(dflts.EVENT_STREAM_IDLE_MS, 120000);
   assert.strictEqual(dflts.LOCK_ACQUISITION_MS, 10000);
   assert.strictEqual(dflts.DOCTOR_LIVE_SMOKE_MS, 120000);
 }

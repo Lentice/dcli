@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getOwnIdentity, generateExecutionToken, isSameProcessAlive } = require('./process-identity');
+const { resolveDeadline } = require('./deadlines');
 
 // Only scopes with a real caller. Lock names are persisted as filenames, so a
 // scope is a contract the moment something takes it — add one when a caller
@@ -12,8 +13,6 @@ const LOCK_SCOPES = Object.freeze({
 });
 
 const LOCK_EXIT_CODE = 17;
-
-const DEFAULT_TIMEOUT_MS = 10000;
 
 // How long an unparseable lock file is given before it is treated as junk.
 const UNPARSEABLE_LOCK_GRACE_MS = 1000;
@@ -44,7 +43,7 @@ class LockManager {
   constructor(options = {}) {
     const stateRoot = require('./state-root').getStateRoot();
     this._lockDir = options.lockDir || path.join(stateRoot, 'locks');
-    this._timeoutMs = options.timeoutMs !== undefined ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
+    this._timeoutMs = options.timeoutMs !== undefined ? options.timeoutMs : resolveDeadline('LOCK_ACQUISITION_MS');
     this._heldLocks = new Map();
     // Deliberately the CHEAP identity: no OS creation-time lookup. A lock is
     // taken on every journal write, and a subprocess there is not affordable —
@@ -328,6 +327,5 @@ module.exports = {
   LockManager,
   LOCK_SCOPES,
   LOCK_EXIT_CODE,
-  DEFAULT_TIMEOUT_MS,
   lockManagerForStore,
 };

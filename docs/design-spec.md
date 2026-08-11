@@ -600,14 +600,13 @@ wrapper's reproducibility and cleanup guarantees.
 
 | Boundary | Default |
 |---|---|
-| Worker startup sentinel | 30 s |
-| Backend startup / no-first-event watchdog | 120 s |
-| opencode server health-ready | 30 s |
+| Worker startup sentinel | 1 s settle after spawn, confirmed by a spawn event or an error journal entry (`core/worker-spawn.js:81-113`) — not a `resolveDeadline` key |
+| opencode server health-ready | 10 s, a local bound in `adapters/opencode/server.js` (`HEALTH_TIMEOUT_MS`) passed as an explicit `timeoutMs` to the health check's `requestJson` call — not wired through the deadlines table, since it is a single caller-supplied deadline, not the connect/read pair |
 | Job hard timeout | 1800 s, configurable, `0` disables |
-| Post-exit stdout/stderr drain | 5 s |
-| HTTP connect / read | 10 s / 60 s |
-| SSE idle (no event, no keepalive) | 120 s |
-| File-lock acquisition | 10 s |
+| Post-exit stdout/stderr drain | 5 s (`resolveDeadline('POST_EXIT_DRAIN_MS')`, override `DCLI_POST_EXIT_DRAIN`) |
+| HTTP connect / read | 10 s / 60 s (`resolveDeadline('HTTP_CONNECT_MS')` / `resolveDeadline('HTTP_READ_MS')`, overrides `DCLI_HTTP_CONNECT_TIMEOUT` / `DCLI_HTTP_READ_TIMEOUT`) — applies only when a call has no caller-supplied `timeoutMs`; an explicit `timeoutMs` remains a single deadline for the whole call |
+| REST-poll idle confirmation | 3 s, a local bound in `adapters/opencode/turn.js` (`IDLE_CONFIRM_MS`) — not a `resolveDeadline` key; a distinct concept from the SSE socket's own long-lived idle tolerance, which the transport owns |
+| File-lock acquisition | 10 s (`resolveDeadline('LOCK_ACQUISITION_MS')`) |
 | Individual git operation | bounded per call |
 | `wait` caller budget | 300 s; `--timeout-sec` overrides without changing the job |
 | `doctor` live smoke | 120 s |
@@ -622,9 +621,15 @@ outlives them all. An undrained pipe on a verbose server fills its buffer and **
 never-hang violation inside the never-hang design. Server stdout/stderr is captured to a size-capped,
 rotating job log and drained continuously for the entire server lifetime.
 
-**Explicitly detect the study §5 hang class:** if a permission or question request is pending while
-the session reports `busy` and no event has arrived within the watchdog window, that is
-`permission_or_sandbox` / `blocked`, not `timeout`. Report it precisely.
+**No first-event watchdog is implemented.** An earlier version of this table asserted that a pending
+permission or question request, observed while the session reports `busy` with no event arriving
+within a watchdog window, is detected and reported as `permission_or_sandbox` / `blocked` rather than
+`timeout`. That detection does not exist in the shipped adapter or turn loop (ticket 109 audit). What
+ships instead is the bounded REST-poll interaction loop in `adapters/opencode/turn.js`, which polls
+`/permission` and `/question` on `INTERACTION_POLL_MS` and rejects unanswered interactions once the
+turn's own hard timeout is reached — a coarser, timeout-shaped bound, not a hang-class-specific one.
+Implementing the watchdog is real safety work with its own design and is tracked separately, not
+assumed to already exist.
 
 ---
 

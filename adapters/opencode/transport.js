@@ -1,7 +1,7 @@
 const http = require('node:http');
 const { classifyBackendError } = require('./classify');
+const { resolveDeadline } = require('../../core/deadlines');
 
-const DEFAULT_TIMEOUT_MS = 10000;
 // Socket idle timeout for the long-lived SSE connection itself. Must be
 // comfortably longer than any real model turn's gaps between SSE bytes —
 // this connection legitimately sits with no activity for a while during a
@@ -35,11 +35,15 @@ class HttpTransport {
 
   /**
    * @param {{ method: string, path: string, body?: object, headers?: object,
-   *           signal: AbortSignal }} opts
+   *           signal?: AbortSignal, connectMs?: number, readMs?: number }} opts
+   *   Either `signal` (a single deadline covering the whole call) or the pair
+   *   `connectMs`/`readMs` (two independent deadlines, see below) must be
+   *   supplied — every call must be bounded.
    * @returns {Promise<{ status: number, headers: object, body: string }>}
    */
-  async request({ method, path, body, headers = {}, signal }) {
-    if (!signal) {
+  async request({ method, path, body, headers = {}, signal, connectMs, readMs }) {
+    const twoPhase = signal === undefined && connectMs !== undefined && readMs !== undefined;
+    if (!signal && !twoPhase) {
       throw new Error('transport.request requires a signal: every HTTP call must be bounded');
     }
     const hdrs = { ...headers };
@@ -49,6 +53,20 @@ class HttpTransport {
     }
 
     const url = this._baseUrl + path;
+
+    // Two-phase deadline: connection establishment is bounded by `connectMs`;
+    // once fetch resolves (response headers arrived), that timer is cleared
+    // and replaced by a `readMs` timer bounding the body read. Both phases
+    // share one AbortController so either phase's expiry aborts the call.
+    let controller = null;
+    let phaseTimer = null;
+    let effectiveSignal = signal;
+    if (twoPhase) {
+      controller = new AbortController();
+      effectiveSignal = controller.signal;
+      phaseTimer = setTimeout(() => controller.abort(), connectMs);
+    }
+
     let res;
     let raw;
     try {
@@ -56,8 +74,12 @@ class HttpTransport {
         method,
         headers: hdrs,
         body: body !== undefined && body !== null ? JSON.stringify(body) : undefined,
-        signal,
+        signal: effectiveSignal,
       });
+      if (controller) {
+        clearTimeout(phaseTimer);
+        phaseTimer = setTimeout(() => controller.abort(), readMs);
+      }
       raw = await res.text();
     } catch (err) {
       if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
@@ -66,6 +88,8 @@ class HttpTransport {
         throw timedOut;
       }
       throw err;
+    } finally {
+      if (phaseTimer) clearTimeout(phaseTimer);
     }
 
     return { status: res.status, headers: res.headers, body: raw };
@@ -171,24 +195,37 @@ class HttpTransport {
  * - resolves the parsed JSON body (or the raw text when it is not JSON);
  * - a non-2xx rejects with statusCode/body attached, and classHint set when
  *   the payload identifies a credits/quota failure (classify.js);
- * - the AbortSignal.timeout bounds connect, response and body read together.
+ * - an explicit `timeoutMs` bounds connect, response and body read together
+ *   (a single deadline, e.g. the opencode server's health checks); without
+ *   one, connect and read are bounded independently by
+ *   `resolveDeadline('HTTP_CONNECT_MS')` / `resolveDeadline('HTTP_READ_MS')`.
  *
  * @param {HttpTransport|object} transport  anything with request({...})
  * @param {{ method: string, path: string, body?: object, timeoutMs?: number }} opts
  */
 async function requestJson(transport, { method, path, body, timeoutMs }) {
-  const effectiveTimeout = timeoutMs || DEFAULT_TIMEOUT_MS;
   let res;
   try {
-    res = await transport.request({
-      method,
-      path,
-      body,
-      signal: AbortSignal.timeout(effectiveTimeout),
-    });
+    if (timeoutMs !== undefined && timeoutMs !== null) {
+      res = await transport.request({
+        method,
+        path,
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } else {
+      res = await transport.request({
+        method,
+        path,
+        body,
+        connectMs: resolveDeadline('HTTP_CONNECT_MS'),
+        readMs: resolveDeadline('HTTP_READ_MS'),
+      });
+    }
   } catch (err) {
     if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-      throw new Error(`Request timed out after ${effectiveTimeout}ms: ${method} ${path}`);
+      const budget = timeoutMs !== undefined && timeoutMs !== null ? `${timeoutMs}ms` : 'the connect/read deadlines';
+      throw new Error(`Request timed out after ${budget}: ${method} ${path}`);
     }
     throw err;
   }
@@ -216,7 +253,6 @@ async function requestJson(transport, { method, path, body, timeoutMs }) {
 module.exports = {
   HttpTransport,
   requestJson,
-  DEFAULT_TIMEOUT_MS,
   SSE_SOCKET_TIMEOUT_MS,
   SSE_CONNECT_TIMEOUT_MS,
 };
