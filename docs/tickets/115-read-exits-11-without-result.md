@@ -1,6 +1,6 @@
 # 115 — `read` returns success for a terminal job with no result artifact
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Exit 11 exists precisely for "no usable assistant result"; returning exit 0 with empty
 text for a terminal job whose `result.md` is missing makes an absent result indistinguishable
@@ -78,6 +78,34 @@ npm test -- --grep "read"   # expect: green, including the missing-artifact case
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+**What changed and where.** `core/commands/read.js` — `executeRead()` no longer pre-initializes
+`text = ''` and conditionally reads `result.md`. It now reads `result.md` unconditionally inside a
+try/catch: on success it returns the today behavior (exit 0, text, envelope); on failure (missing or
+unreadable artifact, e.g. ENOENT/EPERM) it throws `err.exitCode = 11` with a message naming the job
+and the artifact path (`Job <id> has no readable result artifact: <path>`), matching the
+apply.js/diff.js pattern. `loadJobOrThrow`, the envelope, and exit 4/0 semantics unchanged.
+
+**Tests.** `tests/core/commands.test.js` — added test 2b (terminal job with no `result.md` →
+`assert.rejects` with `exitCode === 11` and message naming the job) and test 2c (terminal job with a
+zero-byte `result.md` → exit 0, empty text). Tests 1 (running job → exit 4) and 2 (terminal with
+content → exit 0) were pre-existing and still pass.
+
+**Build and suite.** `npm run check` green (exit 0; eslint + full suite). `node tests/core/commands.test.js`
+green including the new tests; `node tests/core/result-persistence.test.js` green (sibling caller of
+`executeRead`).
+
+**Agent checks.**
+1. `rg -n "exitCode: 11|exitCode: 0" core/commands/read.js` → matches only
+   `26: return { exitCode: 0, ...` — the exit-0 return is now reachable only after a successful
+   `readFileSync`; the exit-11 path is a thrown `err.exitCode = 11` (assignment, so not matched by the
+   rg pattern). Expected shape confirmed.
+2. `npm test -- --grep "read"` — not runnable as written: the repo's test runner
+   (`tests/run-tests.js`) has no `--grep` flag. Ran the equivalent targeted files directly
+   (`node tests/core/commands.test.js`, `node tests/core/result-persistence.test.js`), both green
+   including the missing-artifact case.
+
+**Deviations.** None from the ticket's scope. The zero-byte case (`result_bytes: 0` with a persisted
+empty `result.md`) is covered by existing `result-persistence.test.js` as well; the missing-artifact
+case that triggered this ticket (journal says done, no `result.md`) now exits 11 at both the
+`executeRead` level and the CLI (`cli/dcli.js` top-level catch prints the message to stderr and exits
+with `err.exitCode`).

@@ -385,6 +385,75 @@ await withTempDir(async (dir) => {
 });
 
 // ===========================================================================
+// 15b. read exits 11 for terminal job with no result.md
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const repoKey = 'test-repo';
+  const { executeRead } = require('../../core/commands/read');
+
+  store.createJob({
+    jobId: 'read-test-missing', repoKey, repoRoot: '/tmp/test',
+    backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'run', access: 'read-only',
+  });
+  store.createAttemptDir({ repoKey, jobId: 'read-test-missing', attemptNum: 1 });
+  store.journalTransition('read-test-missing', repoKey, {
+    kind: 'attempt_created', attempt: 1, from: null, to: 'created',
+    detail: { attempt_id: 'a1', execution_token: 'tok1' },
+  });
+  store.journalTransition('read-test-missing', repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'done',
+    detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal', result_bytes: 0 },
+  });
+
+  await assert.rejects(
+    executeRead({ store, repoKey, jobId: 'read-test-missing' }),
+    (err) => {
+      assert.strictEqual(err.exitCode, 11, 'read without result.md must exit 11');
+      assert.ok(err.message.includes('read-test-missing'), 'error must name the job');
+      return true;
+    }
+  );
+  console.log('PASS: read test 2b — terminal job without result.md exits 11');
+});
+
+// ===========================================================================
+// 15c. read exits 0 with empty text for zero-byte result.md
+// ===========================================================================
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const repoKey = 'test-repo';
+  const { executeRead } = require('../../core/commands/read');
+
+  store.createJob({
+    jobId: 'read-test-empty', repoKey, repoRoot: '/tmp/test',
+    backend: 'fake', backendVersion: '1.0.0', adapterVersion: '1.0.0',
+    mode: 'run', access: 'read-only',
+  });
+  store.createAttemptDir({ repoKey, jobId: 'read-test-empty', attemptNum: 1 });
+
+  const jobDir = store.getJobDir(repoKey, 'read-test-empty');
+  const attemptDir = path.join(jobDir, 'attempts', '1');
+  fs.mkdirSync(attemptDir, { recursive: true });
+  fs.writeFileSync(path.join(attemptDir, 'result.md'), '', 'utf8');
+
+  store.journalTransition('read-test-empty', repoKey, {
+    kind: 'attempt_created', attempt: 1, from: null, to: 'created',
+    detail: { attempt_id: 'a1', execution_token: 'tok1' },
+  });
+  store.journalTransition('read-test-empty', repoKey, {
+    kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'done',
+    detail: { finished_at: new Date().toISOString(), command_exit_code: 0, phase: 'terminal', result_bytes: 0 },
+  });
+
+  const result = await executeRead({ store, repoKey, jobId: 'read-test-empty' });
+  assert.strictEqual(result.exitCode, 0, 'read with zero-byte result.md must exit 0');
+  assert.strictEqual(result.text, '', 'zero-byte result must read as empty text');
+  console.log('PASS: read test 2c — terminal job with zero-byte result.md exits 0');
+});
+
+// ===========================================================================
 // 16. list is newest-first with --repo filtering
 // ===========================================================================
 await withTempDir(async (dir) => {

@@ -13,9 +13,14 @@ async function executeRead({ store, repoKey, jobId }) {
   }
 
   const resultPath = path.join(attemptDir, 'result.md');
-  let text = '';
-  if (fs.existsSync(resultPath)) {
+  let text;
+  try {
     text = fs.readFileSync(resultPath, 'utf8');
+  } catch (cause) {
+    const err = new Error(`Job ${jobId} has no readable result artifact: ${resultPath}`);
+    err.exitCode = 11;
+    err.cause = cause;
+    throw err;
   }
 
   return { exitCode: 0, isTerminal: true, text, envelope: buildEnvelope(status) };
