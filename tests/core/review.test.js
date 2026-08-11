@@ -187,7 +187,7 @@ repoTemplate = createGitRepoTemplate('dcli-review-template-');
 // ===========================================================================
 {
   try {
-    executeReview({ store: null, adapter: null, repoKey: 'test', repoRoot: '/tmp', access: 'full' });
+    executeReview({ store: null, adapter: null, repoKey: 'test', repoRoot: '/tmp', access: 'workspace' });
     assert.fail('Should have thrown for non-read-only access');
   } catch (err) {
     assert.strictEqual(err.exitCode, 2, 'wrong access must throw exit 2');

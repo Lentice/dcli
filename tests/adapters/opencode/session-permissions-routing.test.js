@@ -117,21 +117,20 @@ async function main() {
 }
 
 // ===========================================================================
-// 3. Full access is broad allow (*, *, allow)
+// 3. Out-of-contract access values are rejected, never granted a ruleset
+//    (ticket 108: `full` previously produced a broad allow (*, *, allow))
 // ===========================================================================
 {
   const dir = tmpDir();
-  const body = await captureSessionBody({ canonicalDir: dir, access: 'full' });
+  const adapter = makeBaseAdapter();
+  assert.throws(
+    () => adapter.PrepareInvocation({}, { canonicalDir: dir, access: 'full' }),
+    /read-only.*workspace|Unknown access/,
+    'an access value outside the contract must throw, not build a ruleset'
+  );
   clean(dir);
 
-  const rules = body.permission;
-  assert.ok(Array.isArray(rules), 'ruleset must be an array');
-  assert.strictEqual(rules.length, 1, 'full ruleset must have exactly 1 rule');
-  assert.strictEqual(rules[0].permission, '*', 'full must have wildcard permission');
-  assert.strictEqual(rules[0].pattern, '*', 'full must have wildcard pattern');
-  assert.strictEqual(rules[0].action, 'allow', 'full must allow all');
-
-  console.log('PASS: full ruleset is broad allow');
+  console.log('PASS: out-of-contract access rejected');
 }
 
 // ===========================================================================
@@ -391,7 +390,7 @@ if (OPENCODE_LIVE_SMOKE && OPENCODE_LIVE_SMOKE !== '0') {
       let serverStarted = false;
 
       try {
-        adapter.PrepareInvocation({}, { canonicalDir: repoDir, access: 'full' });
+        adapter.PrepareInvocation({}, { canonicalDir: repoDir, access: 'workspace' });
         await adapter.Start({});
         serverStarted = true;
         const server = adapter._server;

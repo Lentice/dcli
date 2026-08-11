@@ -106,7 +106,7 @@
         "x"
       ],
       "stdoutB64": "",
-      "stderrB64": "SW52YWxpZCAtLWFjY2VzcyAibm9wZSI6IG11c3QgYmUgInJlYWQtb25seSIsICJ3b3Jrc3BhY2UiLCBvciAiZnVsbCIK",
+      "stderrB64": "SW52YWxpZCAtLWFjY2VzcyAibm9wZSI6IG11c3QgYmUgInJlYWQtb25seSIgb3IgIndvcmtzcGFjZSIK",
       "exitCode": 2
     },
     {

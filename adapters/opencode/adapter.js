@@ -273,9 +273,6 @@ class OpencodeAdapter {
 
   _buildPermissionRuleset(access) {
     switch (access) {
-      case 'full':
-        return [{ permission: '*', pattern: '*', action: 'allow' }];
-
       case 'workspace':
         return [
           { permission: '*', pattern: '*', action: 'allow' },
@@ -283,7 +280,6 @@ class OpencodeAdapter {
         ];
 
       case 'read-only':
-      default:
         return [
           { permission: 'read', pattern: '*', action: 'allow' },
           { permission: 'glob', pattern: '*', action: 'allow' },
@@ -298,6 +294,10 @@ class OpencodeAdapter {
           { permission: 'webfetch', pattern: '*', action: 'deny' },
           { permission: 'websearch', pattern: '*', action: 'deny' },
         ];
+
+      default:
+        // An out-of-contract value must never be silently granted a ruleset.
+        throw new Error(`Unknown access mode "${access}": must be "read-only" or "workspace"`);
     }
   }
 

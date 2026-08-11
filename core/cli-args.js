@@ -3,6 +3,11 @@ const { resolveDeadline } = require('./deadlines');
 const { parseDuration } = require('./commands/cleanup');
 const { KNOWN_BACKENDS } = require('../adapters/registry');
 
+// The only access modes the contract knows (design-spec §16). Exported so the
+// adapter parity gate can derive the parser's accepted set from here instead
+// of hard-coding a second copy that can drift.
+const ACCESS_VALUES = Object.freeze(['read-only', 'workspace']);
+
 // The skill slash commands (`:jobs`, `:ask`, `:implement`, ...) do not
 // map 1:1 onto CLI subcommands, and an agent reading the skill reaches for the
 // slash-command name. Point at the real subcommand instead of printing usage.
@@ -174,8 +179,8 @@ function parseArgs(argv) {
             }
             break;
           case '--access':
-            if (!['read-only', 'workspace', 'full'].includes(val)) {
-              const err = new Error(`Invalid --access "${val}": must be "read-only", "workspace", or "full"`);
+            if (!ACCESS_VALUES.includes(val)) {
+              const err = new Error(`Invalid --access "${val}": must be ${ACCESS_VALUES.map(v => `"${v}"`).join(' or ')}`);
               err.exitCode = 2;
               throw err;
             }
@@ -366,4 +371,4 @@ function readStdinBounded() {
   });
 }
 
-module.exports = { parseArgs, resolvePrompt, maybeAccessHint };
+module.exports = { parseArgs, resolvePrompt, maybeAccessHint, ACCESS_VALUES };

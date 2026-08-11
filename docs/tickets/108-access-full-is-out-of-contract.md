@@ -1,6 +1,6 @@
 # 108 — `--access full` is accepted, undocumented, and means three different things per backend
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** One shared flag with a silently different security posture per backend is exactly what
 ADR-004's "shared options mean the same thing" rule exists to prevent — and opencode's `full`
@@ -114,6 +114,63 @@ rg -n "parity|accepted.*access|read-only.*workspace" tests/adapters/
 
 ## Notes
 
-(Left empty by the author. The implementer fills it in: what was changed and where, build and suite
-results, the Agent checks' actual output, any deviation from this ticket and why, and anything
-discovered that contradicts the docs.)
+**What changed and where**
+
+- `core/cli-args.js`: removed `'full'` from the `--access` accepted set. The set now lives in a
+  single exported constant `ACCESS_VALUES = ['read-only', 'workspace']`, used both by the parser
+  (validation + error message, now `` "must be "read-only" or "workspace"" ``) and exported so the
+  parity gate can derive it instead of hard-coding a second copy. Exit 2, no job created.
+- `adapters/opencode/adapter.js` (`_buildPermissionRuleset`): deleted the `case 'full'` branch. The
+  ticket's parenthetical claimed the switch's `default` "already does" throw — **verified false**:
+  `default` fell through to the read-only ruleset. Changed so `read-only` is an explicit case and
+  `default` throws `Unknown access mode "<v>": must be "read-only" or "workspace"`. An
+  out-of-contract value can now never be silently granted a ruleset.
+- `tests/adapters/access-parity.test.js` (new, quick suite): the parity gate. Imports
+  `ACCESS_VALUES` from `core/cli-args.js` (never hard-codes the set), anchors it against the §16
+  contract, then for each value asserts opencode's ruleset meaning (workspace = wildcard allow +
+  external deny; read-only = edit deny, no wildcard; **both** deny external_directory), codex's
+  sandbox (`-c sandbox_mode="workspace-write"` / `"read-only"` via the cmd.exe spawn-shim pattern
+  from `sandbox-and-workdir.test.js`), and claude's permission mode (`acceptEdits` / `auto`). Also
+  asserts opencode rejects `full`.
+- `tests/core/cli-args.test.js`: new section 12 — `--access full` exits 2 naming both valid values
+  and not offering `full`; `read-only`/`workspace` accepted on `run`/`submit`.
+- `tests/core/review.test.js:190`: the "non-read-only must throw" case now passes `workspace`
+  instead of the deleted `full`.
+- `tests/adapters/opencode/session-permissions-routing.test.js`: section 3 (was "full ruleset is
+  broad allow") replaced with "out-of-contract access rejected"; the live-smoke `PrepareInvocation`
+  now uses `workspace`.
+- `tests/fixtures/cli-golden/cases.json`: the `bad-access` golden capture regenerated for the new
+  message (byte-exact, only the `, "workspace", or "full"` → ` or "workspace"` phrase changed).
+
+**Docs check (ticket item 4):** grep of `README.md`, `docs/reference/*`, `integration/source/*`
+found no copy teaching `--access full`; the only mentions are this ticket and its tracker row.
+
+**Build and suite:** `npm run check` (quick suite, all groups) green — exit 0, no failures.
+Targeted runs pre-commit: `tests/core/cli-args.test.js`, `tests/core/review.test.js`,
+`tests/core/cli-golden.test.js`, `tests/adapters/access-parity.test.js`,
+`tests/adapters/opencode/session-permissions-routing.test.js` (live-smoke sections skip without
+`DCLI_OPENCODE_LIVE_SMOKE=1`). Tracker table regenerated with `node scripts/generate-tickets-table.js`.
+
+**Agent checks — actual output**
+
+1. `node cli/dcli.js run --access full --backend opencode -- "ping"` →
+   `Invalid --access "full": must be "read-only" or "workspace"`, exit 2, no job created. ✔
+2. `rg -n "'full'" core/ adapters/ cli/` → one hit, `core/commands/doctor.js:53` —
+   `coverage: liveSmokeTimeoutMs > 0 ? 'full' : 'static_only'`. That `'full'` is the doctor
+   **coverage** label, not an access mode; no access-mode `'full'` remains in `core/ adapters/ cli/`.
+   Left untouched as out of scope (changing it would be unrelated refactoring). The check's
+   "(nothing)" expectation is therefore met in substance, with that one unrelated label noted.
+3. `rg -n "parity|accepted.*access|read-only.*workspace" tests/adapters/` → the gate
+   (`tests/adapters/access-parity.test.js`) plus the updated rejection assertion in
+   `session-permissions-routing.test.js`. ✔
+
+**Deviations from the ticket**
+
+- Ticket said the opencode switch's `default` already throws (verify). It did not — it was a
+  fall-through to read-only. Fixed by making `default` throw (what the ticket wanted; the
+  parenthetical was wrong, not the instruction).
+- Golden fixture update: the ticket's "What to build" did not name `tests/fixtures/cli-golden/`,
+  but `cli-golden.test.js` byte-pins the CLI error message and went red on the change; the fixture
+  is part of the same behavior change, so it ships in this commit.
+- `rg` check 2 does not literally print "(nothing)": `core/commands/doctor.js` uses the word
+  `'full'` as a doctor coverage value. Not an access mode; documented here rather than deleted.

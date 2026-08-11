@@ -188,7 +188,31 @@ console.log('PASS: path-traversal backend rejected');
 console.log('PASS: double --backend rejected');
 
 // ===========================================================================
-// 12. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
+// 12. --access enum: only the contract values are accepted (ticket 108);
+//     'full' is rejected at the argument boundary with a message naming the
+//     two valid values
+// ===========================================================================
+{
+  try {
+    parseArgs(['--backend', 'fake', 'run', '--access', 'full', 'prompt']);
+    assert.fail('Should have thrown for --access full');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, '--access full must exit 2');
+    assert.ok(err.message.includes('read-only'), `Error must name "read-only": ${err.message}`);
+    assert.ok(err.message.includes('workspace'), `Error must name "workspace": ${err.message}`);
+    assert.ok(!err.message.includes('or "full"'), `Error must not offer "full": ${err.message}`);
+  }
+
+  const ro = parseArgs(['--backend', 'fake', 'run', '--access', 'read-only', 'prompt']);
+  assert.strictEqual(ro.access, 'read-only', '--access read-only must be accepted');
+
+  const ws = parseArgs(['--backend', 'fake', 'submit', '--access', 'workspace', 'prompt']);
+  assert.strictEqual(ws.access, 'workspace', '--access workspace must be accepted on submit');
+}
+console.log('PASS: --access enum boundary');
+
+// ===========================================================================
+// 13. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
 //     access, does NOT fire on plain questions or non-read-only access, and
 //     the JSON envelope path is unaffected (hint is a separate emit).
 // ===========================================================================

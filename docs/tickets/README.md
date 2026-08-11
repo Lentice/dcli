@@ -55,7 +55,6 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
-| [108 — `--access full` is out of contract](108-access-full-is-out-of-contract.md) | ready | — | Accepted, undocumented, and three different postures per backend (opencode grants external access; codex/claude silently downgrade) |
 | [119 — capacity misreported as quota](119-admission-capacity-is-lock-class.md) | ready | — | At-capacity fails exit 14/quota ("never retry") though it is a transient local condition; the `lock` class/17 exists |
 | [115 — read exits 0 with no result](115-read-exits-11-without-result.md) | ready | — | Terminal job without `result.md` returns success; must be exit 11 |
 | [120 — cancelled job loses its snapshot](120-cancelled-job-keeps-snapshot.md) | ready | — | `finishCancelled` is the only terminal exit that skips `finalizeWorktreeSnapshot()` |
@@ -104,6 +103,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [107 — the admission queue strands and relaunches](107-admission-queue-lifecycle.md) | done | — | Queued jobs can wait forever (dequeue only on slot release) and cancelled queued jobs still launch |
 | [112 — worker startup failure record](112-worker-startup-failure-record.md) | done | — | Startup failures write a string into the structured `failure` field and skip the completion sentinel |
 | [114 — the detached worker lacks the redactor](114-worker-initializes-the-redactor.md) | done | — | The worker process never initializes the writer-path redactor; registration is a silent no-op |
+| [108 — `--access full` is out of contract](108-access-full-is-out-of-contract.md) | done | — | Accepted, undocumented, and three different postures per backend (opencode grants external access; codex/claude silently downgrade) |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was
