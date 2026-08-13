@@ -15,6 +15,14 @@ Backend: claude (Claude Code -p --output-format stream-json)
 
 - `--reasoning-effort <level>` — reasoning effort level (use instead of `--variant` or `--effort`)
 
+## Spend cap
+
+Every invocation is launched with `--max-budget-usd 20`. The value is fixed in the
+adapter; no dcli flag raises or lowers it. So a single delegation can cost up to
+USD 20, and a job that stops early may have hit that cap rather than finished the
+work — check the result before assuming the task was completed. Keep
+`--hard-timeout-sec` tight and scope the prompt when cost matters.
+
 ## Commands
 
 ### review

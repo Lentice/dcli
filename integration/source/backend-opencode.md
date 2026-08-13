@@ -6,7 +6,7 @@ Backend: opencode (opencode serve per job over HTTP)
 
 | Capability | Supported |
 |---|---|
-| Interactive permissions | Yes — can answer permissions and questions mid-run |
+| Interactive permissions | Detected, never answered — see below |
 | Graceful cancel | Yes — session abort, server dispose, then hard kill |
 | Structured output | Broken — use wrapper-side findings extraction |
 | Effort/reasoning | `--variant <string>` (unbounded, provider-specific) |
@@ -14,6 +14,26 @@ Backend: opencode (opencode serve per job over HTTP)
 ## Flags specific to this backend
 
 - `--variant <string>` — provider-specific reasoning variant (use instead of `--reasoning-effort`)
+
+## Interactions are auto-rejected
+
+The transport can see a mid-run permission request or question, but nothing can
+answer one: there is no CLI command for replying, and the automation policy that
+would grant a request is never populated. Every pending interaction is rejected
+automatically, recorded as `rejected_unattended`, and reported as a
+`permission_or_sandbox` backend error.
+
+So do not send opencode work that will need to ask for anything — an extra grant,
+a clarifying question, a confirmation. It will not stall waiting for you; it will
+be refused and the job will burn its budget failing. Grant what the task needs up
+front through `--access`, and scope the prompt so no question is required.
+
+## Default model
+
+Omitting `--model` does **not** fall back to the user's own opencode default. The
+adapter selects `opencode-go/deepseek-v4-flash`. That is a specific provider,
+quality level, and billing path — pass `--model <provider>/<id>` explicitly
+whenever the choice matters for the task.
 
 ## Commands
 
@@ -62,8 +82,13 @@ echo "Follow-up prompt" | dcli-opencode resume <job-id> --kind continue_backend_
 ```
 
 - `continue_backend_session` — continues the same backend conversation
-- `fork_from_artifacts` — new session seeded from parent's artifacts
-- `retry_attempt` — re-runs the same request as a new attempt
+- `fork_from_artifacts` — a fresh session whose worktree starts from the parent's
+  result commit. The seed applies only with `--mode implement`, and only if the
+  parent actually produced a result commit; otherwise the new attempt starts from
+  `HEAD` and carries nothing forward from the parent.
+- `retry_attempt` — a fresh session and a new attempt. It does **not** replay the
+  parent's request: the prompt you pass on this call is the prompt that runs, so
+  resend the original text if you want the original request.
 
 ### jobs (status / list / wait)
 

@@ -26,15 +26,23 @@ When you cross a backend boundary deliberately, invoke this skill's own shim.
 
 ## Canonical recipe — send and wait for the report
 
-The shortest correct cross-backend delegation is one synchronous `run` carrying
-both budgets, with the outer tool's own timeout set longer than the hard budget:
+The shortest correct cross-backend delegation is one synchronous `run` bounded by
+its execution budget, invoked through an outer tool whose own timeout is longer
+than that budget:
 
 ```
 <shim> run --repo <repo> --prompt-file <file> \
-  --hard-timeout-sec 900 --timeout-sec 900 --label <label>
+  --hard-timeout-sec 900 --label <label>
 ```
 
 (`<shim>` is this skill's shim command, shown in the examples below.)
+
+**`--timeout-sec` belongs to `wait`, not to `run`.** `run` is already synchronous:
+it returns when the attempt ends or when `--hard-timeout-sec` elapses, and it
+ignores `--timeout-sec` entirely. Passing it here buys nothing — the second bound
+on a synchronous `run` is the timeout of whatever shell or agent tool invoked it.
+Set that outer timeout above the hard budget, or use `submit` + `wait`, where
+`--timeout-sec` is the caller-side budget that actually applies.
 
 Reach for `submit` + `wait` only when the outer runner cannot set a timeout at
 all, or when the work should not hold the caller open.
@@ -85,11 +93,30 @@ Delegate only bounded, worthwhile work:
 - A long-running task submitted to the background
 - A code change in an isolated worktree you inspect before applying
 
+### Pick the mode from what the task produces
+
+| The task is | Use | Where the backend reads |
+|---|---|---|
+| A question, a discussion, a second opinion | `run` (or `submit`) with read-only access | the repository in place |
+| A review of code that already exists | `review` | the repository in place |
+| A code change you will inspect and then apply | `run --mode implement` | an isolated worktree |
+
+`review` builds its own diff; it does not write to the repository and needs no
+worktree. Only `--mode implement` creates an isolated worktree; adding it to a
+discussion or a review checks out a second copy of the repository for a job that
+changes nothing in the original repository.
+
+Read-only access is the default and the only safe setting for the first two
+rows. `run` or `submit` with `--access workspace` does not create a worktree —
+it lets the backend write in the original repository directly.
+
 **Always pass an execution budget and a wait budget.** Every recipe must carry:
 - `--hard-timeout-sec <n>` — the maximum wall-clock time the backend may spend
 - `--timeout-sec <n>` — how long `wait` blocks for completion before returning
 
-Without both, a stalled job can silently consume an entire working session.
+For a synchronous `run` or `resume` there is no `wait` call, so the wait budget is
+the outer runner's own timeout — see the canonical recipe above. Without both
+bounds, a stalled job can silently consume an entire working session.
 
 When `--timeout-sec` is omitted, the CLI uses a 300-second caller-side wait budget. This is a safe
 fallback, not the job's execution deadline: exit 20 means only that the caller stopped waiting while
@@ -112,8 +139,16 @@ set that timeout, use `submit` and return immediately; collect later with
 - **There is no policy engine.** `dcli` has no `.dcli/policy.json`, no auto/ask/off modes, and no checkpoint that can apply on your behalf. `apply` is always an explicit human-approved step. If you have read otherwise anywhere, it does not describe this tool.
 - **Independently verify every finding.** Never present a delegated review's raw output as your own conclusion. Triage each finding: adopt with action, or reject with a stated reason.
 - **Use exact wrapper lineage.** Use `resume <job-id> --kind continue_backend_session` for follow-ups. Never "continue last session" — it is ambiguous and can attach to the wrong conversation.
+- **`resume` does not inherit the parent's mode, but does inherit its access.** A resume without `--mode implement` runs in `run` mode — in the repository itself — even when the parent job was an implement-mode job with its own worktree. Access carries over from the parent unless you override it, so resuming an implement-mode `--access workspace` job with the plain follow-up recipe lets the backend write directly into your working tree. Pass `--mode implement` again for an isolated follow-up (it creates a **new** worktree, not the parent's), or pass `--access read-only` when the follow-up only needs to discuss the earlier work.
 - **React per the failure-class table.** Never retry quota, auth, permission, or timeout failures. A `findings_status: malformed` report is not a clean review — it means the output was unparseable.
 - **Keep review intent neutral.** Intent is context, not evidence of correctness.
+- **Choose the review scope from the repository's actual state.** One `review` covers one scope, and the default is not "everything uncommitted":
+  - no flag / `--working` — unstaged changes to tracked files only. **Staged changes are not included.**
+  - `--staged` — staged changes only.
+  - `--range <base>..<head>` — committed range only.
+  - Untracked files are excluded from every scope unless `--include-untracked` is passed; the result warns and names them, so read that warning rather than assuming the diff was complete.
+
+  Check `git status` first. When work is spread across staged, unstaged, and untracked files, a single default review silently reviews only part of it — stage everything first, or run the scopes you need.
 - **Keep delegated work out of your context until collection.** When token saving is the point, use `submit` + later `read` rather than `run`.
 
 ## Never treat progress as completion
@@ -208,6 +243,8 @@ adopt an unverified finding to close the loop.
 | 14 | Quota or rate-limit | Note it; continue without the work. Never retry. |
 | 15 | Permission/access denied | Refine the permission profile. Never retry automatically. |
 | 16 | Network failure | At most one jittered retry for read-only jobs only. |
+| 17 | Lock, local capacity, or corrupt state | Transient: "System at capacity" means the local queue is full right now, not that a provider refused. Retry with bounded backoff, or use `submit`. A job record that exists but cannot be read also lands here — that one is not retryable, so read the message before retrying. |
+| 18 | Worker launch / startup failure | The local worker process could not be started, so the backend never ran. Nothing was consumed on the provider side; this is not an auth, quota, or backend failure and must not be remediated as one. Run `doctor`, then retry once. |
 | 20 | Caller wait budget elapsed | Job may still be active; check the returned state, increase `--timeout-sec`, or check later. |
 | 21 | Cancellation unconfirmed | Check job status manually. |
 | 22 | Session expired | Start a fresh job with `fork_from_artifacts` or `retry_attempt`. |

@@ -43,8 +43,8 @@ function ensureDir(dir) {
 const SKILL_DESCRIPTIONS = {
   dcli: 'Route bounded cross-backend work to a coding-agent CLI and get a durable, '
     + 'inspectable result back. Use when an intentional backend boundary needs dcli.',
-  opencode: 'Delegate bounded work to the opencode CLI as a different backend, including '
-    + 'interactive-capable runs. Use when wrapper job guarantees are needed.',
+  opencode: 'Delegate bounded work to the opencode CLI as a different backend, running '
+    + 'unattended. Use when wrapper job guarantees are needed.',
   codex: 'Delegate bounded work to the Codex CLI as a different backend and a single-shot '
     + 'exec run. Use when wrapper job guarantees are needed.',
   claude: 'Delegate bounded work to another backend. Use when cross-backend wrapper job '
