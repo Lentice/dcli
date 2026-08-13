@@ -338,7 +338,7 @@ translated, never surfaced.
 | `21` | Cancellation could not be confirmed. (2026-08-11) On Windows a tree-kill rung that left survivors also exits `21` — the survivors are named in the human output and the JSON envelope's `containment_survivors`, and no clean `cancelled` outcome is written. |
 | `22` | Session missing / expired / incompatible with resume |
 | `23` | Repository or worktree preparation failure |
-| `24` | Job hard timeout; process tree killed |
+| `24` | Job hard timeout; the attempt was ended and the record written. (2026-08-13) **Not** a guarantee that the process tree is dead. On Unix the escalation terminates the whole process group; on Windows containment is a declared-degraded tree-kill, and a timeout that left survivors still exits `24` with them named in `containment_survivors` (`attempt-driver.js`). A caller that must know nothing is still holding a lock, a port, or a worktree has to read that set, not the exit code. |
 | `25` | Apply conflict; main repository verified restored |
 | `26` | Backend output/event protocol incompatible or malformed |
 
@@ -364,7 +364,7 @@ structured error type, not the status code.
 | `timeout` | Never retry automatically. |
 | `no_result` | Preserve events; caller may resume or retry manually. |
 | `cancelled` | Intentional. No retry. |
-| `lock` | Bounded backoff retry, then fail. |
+| `lock` | Bounded backoff retry, then fail — **only when the contention is transient**: a held lock (`locking.js`) or local admission capacity (`job-setup.js`). (2026-08-13) Exit `17` also carries the other half of its §7 row, a job directory that exists but whose record cannot be read (`job-lookup.js`), and retrying that never fixes it. The two are distinguished by the failure detail, not by the code, so a caller that reacts to `17` must read which one it got before retrying. |
 | `worker_launch` | Run `doctor`. No blind loop. |
 | `session_expired` | Start a fresh job; never silently substitute a different session. |
 | `apply_conflict` | Restore and report. Never auto-resolve. |
