@@ -40,7 +40,7 @@ const DEFAULT_SCRIPT = {
 async function collectTurn(script, session = { id: 'ses_1', promptSentAt: Date.now(), backendPid: 42 }) {
   const { turn } = makeTurn(script);
   const facts = [];
-  for await (const fact of turn.run({ session, policy: null, deadline: null })) {
+  for await (const fact of turn.run({ session, deadline: null })) {
     facts.push(fact);
     if (fact.type === 'process_exited') break;
   }

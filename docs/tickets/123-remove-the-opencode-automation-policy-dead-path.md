@@ -1,6 +1,6 @@
 # 123 — remove the opencode automation-policy dead path, and the error that sends callers after a flag that does not exist
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Cleanup, with one Trust edge. The dead code costs nothing on its own; the two messages on it
 cost a caller a debugging session each, because they name a remedy that does not exist. `adapter.js`
@@ -165,7 +165,10 @@ node scripts/generate-integration.js --check
 
 ## Notes
 
-The audit noted that `Respond()` currently has no product caller in `core/` at all — the interaction
-responder is reachable only from tests. That is a larger question than this ticket (it may mean the whole
-responder seam is speculative) and was deliberately left out of scope. Do not act on it here; if you
-confirm it while working, write what you found in this section.
+Removed the unreachable policy field and all policy threading/readers. Pending interactions remain
+unconditionally rejected with the same outcome and class; `reply: always` now reports unsupported
+without naming a nonexistent input. No policy field was persisted: new `backend_state` still carries
+only its schema version, and diagnostics were not persisted. `Respond()` has no product caller in
+`core/`; it remains test-reachable, as scoped. Direct opencode interaction tests pass; full suite was
+intentionally not run per the implementation request. Generated and installed integration skills
+were verified byte-identical.

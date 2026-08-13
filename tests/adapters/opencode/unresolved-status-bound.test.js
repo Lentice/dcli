@@ -43,7 +43,6 @@ async function collect(turn) {
   const facts = [];
   for await (const fact of turn.run({
     session: { id: 'ses_81', promptSentAt: Date.now(), backendPid: 4242 },
-    policy: null,
     deadline: null,
   })) {
     facts.push(fact);

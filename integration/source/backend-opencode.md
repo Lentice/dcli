@@ -17,9 +17,8 @@ Backend: opencode (opencode serve per job over HTTP)
 
 ## Interactions are auto-rejected
 
-The transport can see a mid-run permission request or question, but nothing can
-answer one: there is no CLI command for replying, and the automation policy that
-would grant a request is never populated. Every pending interaction is rejected
+The transport can see a mid-run permission request or question, but unattended
+opencode jobs cannot answer one. Every pending interaction is rejected
 automatically, recorded as `rejected_unattended`, and reported as a
 `permission_or_sandbox` backend error.
 

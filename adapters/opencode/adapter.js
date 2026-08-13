@@ -110,7 +110,6 @@ class OpencodeAdapter {
     this._modelObj = null;
     this._variant = null;
 
-    this._automationPolicy = null;
     this._hardDeadlineMs = null;
     this._resumeSessionId = null;
     this._promptSentAt = null;
@@ -486,7 +485,6 @@ class OpencodeAdapter {
         backendPid: this._backendPid,
         containment: this._containment,
       },
-      policy: this._automationPolicy,
       deadline: this._hardDeadlineMs,
       context: { isCancelled: () => this._cancelled },
     });
@@ -500,10 +498,10 @@ class OpencodeAdapter {
     const reply = (typeof decision === 'object' && decision !== null) ? (decision.reply || 'reject') : (decision === 'allow' ? 'once' : 'reject');
     const message = (typeof decision === 'object' && decision !== null) ? decision.message : undefined;
 
-    if (reply === 'always' && !this._automationPolicy) {
+    if (reply === 'always') {
       const err = new Error(
-        'reply: always requires an explicitly supplied automation policy. ' +
-        'Pass --automation-policy to the job to enable persistent grants.'
+        'reply: always is unsupported for unattended opencode jobs. ' +
+        'Grant the required access up front with --access.'
       );
       err.code = 'VALIDATION_FAILED';
       throw err;
@@ -608,7 +606,6 @@ class OpencodeAdapter {
       facts_emitted: this._turn ? this._turn.factCount : 0,
       exit_code: this._turn ? this._turn.exitCode : null,
       interactions_seen: this._turn ? this._turn.seenInteractionCount : 0,
-      has_automation_policy: this._automationPolicy !== null,
     };
   }
 

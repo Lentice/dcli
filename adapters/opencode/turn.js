@@ -66,7 +66,6 @@ class OpencodeTurn {
     this._promptSentAt = null;
     this._sawLiveStatus = false;
     this._seenInteractionIds = new Set();
-    this._policy = null;
     this._deadline = null;
     this._isCancelled = () => false;
 
@@ -99,14 +98,13 @@ class OpencodeTurn {
    * @param {{ prompt?: string|null, session: { id: string,
    *           promptSentAt?: number|null, backendPid?: number|null,
    *           containment?: object|null },
-   *           policy?: object|null, deadline?: number|null,
+   *           deadline?: number|null,
    *           context?: { isCancelled?: () => boolean } }} opts
    */
-  async *run({ prompt, session, policy, deadline, context = {} }) {
+  async *run({ prompt, session, deadline, context = {} }) {
     this._sessionId = session.id;
     this._promptSentAt = session.promptSentAt || null;
     this._backendSessionId = session.id;
-    this._policy = policy || null;
     this._deadline = deadline !== undefined ? deadline : null;
     this._isCancelled = context.isCancelled || (() => false);
     this._sawLiveStatus = false;
@@ -195,24 +193,22 @@ class OpencodeTurn {
             const interactions = await this._pollInteractions();
             for (const interaction of interactions) {
               yield this._record({ type: 'interaction_pending', interaction_id: interaction.interaction_id, kind: interaction.kind, detail: interaction.detail });
-              if (!this._policy) {
-                try {
-                  await this._rejectInteraction(interaction);
-                } catch (err) {
-                  if (err && err.rejectFailed) {
-                    yield this._record({ type: 'stream_closed', reason: 'interaction_reject_failed', detail: { interaction_id: interaction.interaction_id, error: err.message } });
-                    break;
-                  }
-                  throw err;
+              try {
+                await this._rejectInteraction(interaction);
+              } catch (err) {
+                if (err && err.rejectFailed) {
+                  yield this._record({ type: 'stream_closed', reason: 'interaction_reject_failed', detail: { interaction_id: interaction.interaction_id, error: err.message } });
+                  break;
                 }
-                yield this._record({ type: 'interaction_resolved', interaction_id: interaction.interaction_id, outcome: 'rejected_unattended' });
-                const permPayload = interaction.raw ? { permission: interaction.raw.permission || null, patterns: interaction.raw.patterns || null } : {};
-                yield this._record({
-                  type: 'backend_error',
-                  class_hint: 'permission_or_sandbox',
-                  structured_payload: { ...permPayload, message: 'Interaction rejected: no authorized responder available' },
-                });
+                throw err;
               }
+              yield this._record({ type: 'interaction_resolved', interaction_id: interaction.interaction_id, outcome: 'rejected_unattended' });
+              const permPayload = interaction.raw ? { permission: interaction.raw.permission || null, patterns: interaction.raw.patterns || null } : {};
+              yield this._record({
+                type: 'backend_error',
+                class_hint: 'permission_or_sandbox',
+                structured_payload: { ...permPayload, message: 'Interaction rejected: no authorized responder available' },
+              });
             }
           }
         }
@@ -446,7 +442,7 @@ class OpencodeTurn {
           path: this._buildPath(`/permission/${interaction.interaction_id}/reply`),
           body: {
             reply: 'reject',
-            message: 'Automatically rejected: no authorized responder is available to answer this permission request. Provide an automation policy or run interactively.',
+            message: 'Automatically rejected: no authorized responder is available to answer this permission request. Grant the required access up front with --access.',
           },
           timeoutMs: 5000,
         });

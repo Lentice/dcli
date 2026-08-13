@@ -42,7 +42,6 @@ async function makeInteractionFacts(script, sessionId = 'ses_test') {
   const facts = [];
   for await (const fact of turn.run({
     session: { id: sessionId, promptSentAt: Date.now(), backendPid: 42 },
-    policy: null,
     deadline: null,
   })) {
     facts.push(fact);
@@ -81,7 +80,7 @@ async function main() {
       },
     });
     const turn = new OpencodeTurn({ transport, buildPath: (ep) => ep, timings: TURN_TIMINGS });
-    for await (const fact of turn.run({ session: { id: 'ses_test', promptSentAt: Date.now(), backendPid: 42 }, policy: null, deadline: null })) {
+    for await (const fact of turn.run({ session: { id: 'ses_test', promptSentAt: Date.now(), backendPid: 42 }, deadline: null })) {
       if (fact.type === 'process_exited') break;
     }
     assert.ok(permCalls > 0, 'GET /permission must be called at least once');
@@ -159,39 +158,29 @@ async function main() {
   });
 
   // ===========================================================================
-  // 6. Answering requires explicit automation policy
+  // 6. Answering is unsupported for unattended opencode jobs
   // ===========================================================================
-  await run('Respond rejects reply:always without automation policy', async () => {
+  await run('Respond rejects unsupported reply:always', async () => {
     const adapter = makeAdapter();
     try {
       await adapter.Respond('per_1', { kind: 'permission', reply: 'always' });
-      assert.fail('Expected error for reply:always without policy');
+      assert.fail('Expected error for unsupported reply:always');
     } catch (err) {
-      assert.ok(err.message.includes('automation policy'), `Error must mention automation policy: ${err.message}`);
+      assert.ok(err.message.includes('unsupported for unattended'));
     }
   });
 
   // ===========================================================================
-  // 7. No blanket approval — cannot configure a wildcard always-allow
+  // 7. No blanket approval — always-allow is unsupported
   // ===========================================================================
-  await run('No blanket approval — always-allow not configurable', async () => {
+  await run('No blanket approval — always-allow unsupported', async () => {
     const adapter = makeAdapter();
     try {
       await adapter.Respond('per_1', { kind: 'permission', reply: 'always' });
-      assert.fail('Expected error for reply:always without policy');
+      assert.fail('Expected error for unsupported reply:always');
     } catch (err) {
-      assert.ok(err.message.includes('automation policy'));
+      assert.ok(err.message.includes('unsupported for unattended'));
     }
-    // With a policy, the call goes through the injected transport
-    const transport = new FakeTransport({
-      script: {
-        '/permission/per_1/reply': { success: true },
-      },
-    });
-    const policyAdapter = new OpencodeAdapter({ transport });
-    policyAdapter._automationPolicy = [{ permission: '*', pattern: '*', action: 'allow' }];
-    const result = await policyAdapter.Respond('per_1', { kind: 'permission', reply: 'always' });
-    assert.ok(result, 'Respond must return a result');
   });
 
   // ===========================================================================
@@ -226,25 +215,16 @@ async function main() {
   });
 
   // ===========================================================================
-  // 10. reply: 'always' is never used without explicit policy in respond
+  // 10. reply: 'always' is unsupported in respond
   // ===========================================================================
-  await run('reply:always requires explicit policy — direct call', async () => {
+  await run('reply:always is unsupported — direct call', async () => {
     const adapter = makeAdapter();
     try {
       await adapter.Respond('per_1', { kind: 'permission', reply: 'always' });
-      assert.fail('Expected error for reply:always without policy');
+      assert.fail('Expected error for unsupported reply:always');
     } catch (err) {
-      assert.ok(err.message.includes('automation policy'));
+      assert.ok(err.message.includes('unsupported for unattended'));
     }
-    const transport = new FakeTransport({
-      script: {
-        '/permission/per_1/reply': { success: true },
-      },
-    });
-    const policyAdapter = new OpencodeAdapter({ transport });
-    policyAdapter._automationPolicy = [{ permission: '*', pattern: '*', action: 'allow' }];
-    const result = await policyAdapter.Respond('per_1', { kind: 'permission', reply: 'always' });
-    assert.ok(result, 'Respond must return a result');
   });
 
   // ===========================================================================
@@ -378,7 +358,6 @@ async function main() {
     const facts = [];
     for await (const fact of turn.run({
       session: { id: 'ses_deadline', promptSentAt: Date.now(), backendPid: 42 },
-      policy: null,
       deadline: Date.now() - 1000, // already expired
     })) {
       facts.push(fact);

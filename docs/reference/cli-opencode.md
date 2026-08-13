@@ -224,7 +224,7 @@ runs opencode. Not used by the wrapper.
 | reasoning effort | `variant` — **surfaced as `dcli-opencode --variant`, never `--effort`** (ADR-004) |
 | agent | `POST /session` `agent` |
 | access / isolation | per-session `permission: PermissionRuleset` — `read-only` denies mutation (edit, webfetch, external_directory) and allows read tools; `workspace` allows everything except `external_directory`; `full` is `* → allow` (explicit named opt-in, never default). See ticket 18. |
-| respond (permission) | `Respond(interactionId, decision)` → `POST /permission/{id}/reply` or `/question/{id}/reply`; 404 is benign (interaction already resolved); `reply: always` requires explicit `_automationPolicy` |
+| respond (permission) | `Respond(interactionId, decision)` → `POST /permission/{id}/reply` or `/question/{id}/reply`; 404 is benign (interaction already resolved); `reply: always` is unsupported |
 | resume | `POST /session` `parentID`, or reuse the recorded session id |
 | fork | `POST /session/{id}/fork` |
 | working directory | canonical job dir: launch cwd **and** `directory` query param on every request |
@@ -290,5 +290,8 @@ dcli-opencode apply --reset-author --message "feat: add input validation" <job-i
 | Unknown flag | `1` |
 | Nonexistent provider/model | `1` |
 | Credit/billing failure (reported as HTTP 401 in the event) | `1` |
+| Backend execution failure with no more specific class | `10` |
+| No usable result | `11` |
+| Apply repository state not verified | `27` |
 
 No granular contract. The wrapper translates to its own codes (spec §7).
