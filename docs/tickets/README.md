@@ -55,6 +55,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 <!-- GENERATED: open ticket table -->
 | Ticket | Status | Blocked by | Scope |
 |---|---|---|---|
+| [121 — a failed backend run exits 1, but every document says it exits 10](121-exit-10-is-documented-but-unreachable.md) | ready | — |  |
 <!-- /GENERATED: ticket table -->
 
 ## Closed
