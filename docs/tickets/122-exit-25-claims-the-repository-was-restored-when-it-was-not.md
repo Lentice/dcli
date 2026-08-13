@@ -1,6 +1,6 @@
 # 122 — exit 25 promises the repository was restored, and is also returned when it provably was not
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Trust. `apply` is the one command that writes to the engineer's own working tree, and exit `25`
 is the only signal the caller gets about what state that tree was left in. The contract promises
@@ -172,4 +172,8 @@ node scripts/generate-integration.js --check
 
 ## Notes
 
-(Empty — the implementer fills this in.)
+Added exit `27` with class `repository_state_unverified`. The three rollback non-restoration
+paths and residual git-state failure after a landed apply use `27`; exit `25` remains for the
+verified-restored cherry-pick/apply-conflict paths. JSON apply errors now carry
+`repository_restored` plus the exit code and failure class. Direct worktree and envelope tests
+cover both outcomes; full suite was intentionally not run per the implementation request.

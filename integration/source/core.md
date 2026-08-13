@@ -253,6 +253,7 @@ adopt an unverified finding to close the loop.
 | 24 | Hard timeout | The execution budget elapsed and the attempt was ended. The backend's process tree is **not** guaranteed to be dead — see "A budget bounds the wrapper, not the backend" below. Increase `--hard-timeout-sec` if the task legitimately needs more time. Never retry unchanged. |
 | 25 | Apply conflict | Main repo verified restored. Resolve and retry. |
 | 26 | Protocol incompatible | Requires a compatibility update. Run `doctor`. |
+| 27 | Repository state unverified after apply failure | Stop. Do not touch the main repository again automatically; surface it for manual inspection. |
 
 ## Findings contract
 

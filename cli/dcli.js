@@ -100,7 +100,7 @@ if (process.argv.includes('--help')) {
 }
 
 const { parseArgs, resolvePrompt, maybeAccessHint } = require('../core/cli-args');
-const { buildEnvelope } = require('../core/envelope');
+const { buildEnvelope, buildErrorEnvelope } = require('../core/envelope');
 const { JobStore } = require('../core/job-store');
 const { getStateRoot, ensureStateRoot } = require('../core/state-root');
 const { computeRepoKeyWithPath } = require('../core/repo-key');
@@ -706,12 +706,8 @@ async function main() {
 }
 
 main().catch(err => {
-  if (parsedArgs && parsedArgs.json && err.failureClass) {
-    console.log(JSON.stringify({
-      schema_version: 1,
-      failure_class: err.failureClass,
-      detail: err.message,
-    }));
+  if (parsedArgs && parsedArgs.json && (err.failureClass || err.repositoryRestored !== undefined)) {
+    console.log(JSON.stringify(buildErrorEnvelope(err)));
   } else {
     console.error(err.message);
   }

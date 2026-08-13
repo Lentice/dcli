@@ -1,7 +1,7 @@
 // @suite quick
 const assert = require('node:assert');
 
-const { buildEnvelope } = require('../../core/envelope');
+const { buildEnvelope, buildErrorEnvelope } = require('../../core/envelope');
 
 async function main() {
 
@@ -62,6 +62,17 @@ console.log('PASS: --json envelope test');
   assert.strictEqual(envelope.backend_exit_code, null);
 }
 console.log('PASS: status --json envelope');
+
+const restoredApplyError = Object.assign(new Error('apply conflict'), {
+  failureClass: 'apply_conflict', exitCode: 25, repositoryRestored: true,
+});
+const unrestoredApplyError = Object.assign(new Error('manual inspection required'), {
+  failureClass: 'repository_state_unverified', exitCode: 27, repositoryRestored: false,
+});
+assert.strictEqual(buildErrorEnvelope(restoredApplyError).repository_restored, true);
+assert.strictEqual(buildErrorEnvelope(unrestoredApplyError).repository_restored, false);
+assert.strictEqual(buildErrorEnvelope(unrestoredApplyError).exit_code, 27);
+console.log('PASS: apply JSON error envelope distinguishes restored state');
 
 }
 

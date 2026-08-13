@@ -21,4 +21,14 @@ function buildEnvelope(status) {
   };
 }
 
-module.exports = { buildEnvelope };
+function buildErrorEnvelope(error) {
+  return {
+    schema_version: 1,
+    failure_class: error.failureClass || null,
+    exit_code: error.exitCode || 1,
+    repository_restored: error.repositoryRestored === undefined ? null : error.repositoryRestored,
+    detail: error.message,
+  };
+}
+
+module.exports = { buildEnvelope, buildErrorEnvelope };

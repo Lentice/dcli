@@ -125,7 +125,10 @@ function executeApply({ store, repoKey, jobId, resetAuthor, message, allowUntrac
       clearResidualGitState(repoRoot);
       if (hasResidualGitState(repoRoot)) {
         const e = new Error('Could not clear residual git state after apply');
-        e.exitCode = 25; throw e;
+        e.exitCode = 27;
+        e.failureClass = 'repository_state_unverified';
+        e.repositoryRestored = false;
+        throw e;
       }
     }
 
@@ -147,11 +150,15 @@ function _rollbackOrReport(repoRoot, preHead, preStatusText, preUntracked, origi
       `Skipping reset to preserve changes. Manual inspection required.\n` +
       `Original: ${originalError.message}`
     );
-    e.exitCode = 25;
+    e.exitCode = 27;
+    e.failureClass = 'repository_state_unverified';
+    e.repositoryRestored = false;
     throw e;
   }
 
   _hardReset(repoRoot, preHead, preTrackedLines, originalError);
+  originalError.failureClass = 'apply_conflict';
+  originalError.repositoryRestored = true;
 }
 
 function _hardReset(repoRoot, preHead, preTrackedLines, originalError) {
@@ -167,7 +174,9 @@ function _hardReset(repoRoot, preHead, preTrackedLines, originalError) {
       `Manual inspection required.\n` +
       `Original: ${originalError.message}`
     );
-    e.exitCode = 25;
+    e.exitCode = 27;
+    e.failureClass = 'repository_state_unverified';
+    e.repositoryRestored = false;
     throw e;
   }
   if (hasResidualGitState(repoRoot)) {
@@ -202,7 +211,9 @@ function _verifyRestored(repoRoot, preHead, preTrackedLines, originalError) {
       `Manual inspection required.\n` +
       `Original: ${originalError.message}`
     );
-    e.exitCode = 25;
+    e.exitCode = 27;
+    e.failureClass = 'repository_state_unverified';
+    e.repositoryRestored = false;
     throw e;
   }
 }

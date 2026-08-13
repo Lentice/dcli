@@ -137,6 +137,8 @@ that are. Records are per repository, so read a job with the same `--repo` you s
   permission decision is reported as *blocked*, with the permission named — not as a timeout.
 - **Nothing is applied automatically.** Delegated changes land in an isolated git worktree. You inspect the diff
   and decide. There is no automatic path to `apply`, at any policy checkpoint.
+- **Apply reports repository safety explicitly.** Exit `25` means the failed apply was verified restored; exit `27`
+  means restoration could not be verified, so stop and inspect the repository before retrying.
 - **Cleanup owns the whole artifact.** For eligible terminal implement jobs, `cleanup` removes the job record,
   worktree directory, and its git registration together. It also reports and removes orphan worktrees under the
   dcli state root. Use `cleanup --dry-run` first; it lists each worktree and its byte count, while busy artifacts

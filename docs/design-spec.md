@@ -342,6 +342,7 @@ translated, never surfaced.
 | `24` | Job hard timeout; the attempt was ended and the record written. (2026-08-13) **Not** a guarantee that the process tree is dead. On Unix the escalation terminates the whole process group; on Windows containment is a declared-degraded tree-kill, and a timeout that left survivors still exits `24` with them named in `containment_survivors` (`attempt-driver.js`). A caller that must know nothing is still holding a lock, a port, or a worktree has to read that set, not the exit code. |
 | `25` | Apply conflict; main repository verified restored |
 | `26` | Backend output/event protocol incompatible or malformed |
+| `27` | Apply failed; repository state could not be verified restored |
 
 ---
 
@@ -370,6 +371,7 @@ structured error type, not the status code.
 | `backend_execution_failed` | Preserve the backend failure and report it. Do not treat it as a wrapper launch failure. |
 | `session_expired` | Start a fresh job; never silently substitute a different session. |
 | `apply_conflict` | Restore and report. Never auto-resolve. |
+| `repository_state_unverified` | Stop. Do not touch the repository again automatically; surface it for manual inspection. |
 | `protocol` | Requires a compatibility update. |
 | `unknown` | Preserve all evidence; recommend `debug` / `doctor`. |
 

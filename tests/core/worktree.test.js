@@ -493,7 +493,7 @@ async function main() {
   // 21. Rollback re-checks git status and SKIPS reset when an unproven
   //     tracked modification appeared during the operation window —
   //     regression for AGENTS.md mistake #8. Must report non-restoration
-  //     (exit 25) and the planted edit must survive untouched.
+  //     (exit 27) and the planted edit must survive untouched.
   // ===========================================================================
   await testAsync('21. Rollback skips reset and reports non-restoration when unproven modification appears', async () => {
     const { _rollbackOrReport } = require('../../core/commands/apply');
@@ -517,7 +517,8 @@ async function main() {
       }
 
       assert.ok(threw, 'rollback must throw rather than silently succeed');
-      assert.strictEqual(threw.exitCode, 25, 'must report exit 25 (apply conflict, non-restoration)');
+      assert.strictEqual(threw.exitCode, 27, 'must report exit 27 (repository state unverified)');
+      assert.strictEqual(threw.repositoryRestored, false);
       assert.ok(
         /unexpected tracked modification/i.test(threw.message),
         `error must explain non-restoration: ${threw.message}`
@@ -701,7 +702,7 @@ async function main() {
   // 27. Rollback fails closed when `git reset --hard` itself fails — regression
   //     for the 2026-08-08 apply audit (ticket 89). A reset that does not
   //     complete must NOT read as a successful rollback: _rollbackOrReport must
-  //     throw exit 25 naming that restoration was not verified, preserve the
+  //     throw exit 27 naming that restoration was not verified, preserve the
   //     original failure context, and leave the repository's unverified state
   //     untouched.
   // ===========================================================================
@@ -725,9 +726,10 @@ async function main() {
       } catch (e) { threw = e; }
 
       assertRealFailure(threw, {
-        exitCode: 25,
+        exitCode: 27,
         match: /NOT verified restored/i,
       }, 'rollback with a failing git reset --hard');
+      assert.strictEqual(threw.repositoryRestored, false);
 
       assert.ok(/simulated apply failure/.test(threw.message),
         'error must preserve the original failure context');
