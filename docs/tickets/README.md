@@ -58,6 +58,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [121 — a failed backend run exits 1, but every document says it exits 10](121-exit-10-is-documented-but-unreachable.md) | ready | — |  |
 | [122 — exit 25 promises the repository was restored, and is also returned when it provably was not](122-exit-25-claims-the-repository-was-restored-when-it-was-not.md) | ready | — |  |
 | [123 — remove the opencode automation-policy dead path, and the error that sends callers after a flag that does not exist](123-remove-the-opencode-automation-policy-dead-path.md) | ready | — |  |
+| [124 — the interaction responder seam has no product caller, and three of its four outcomes cannot be produced](124-the-interaction-responder-seam-has-no-caller.md) | ready |  |  |
 <!-- /GENERATED: ticket table -->
 
 ## Closed
