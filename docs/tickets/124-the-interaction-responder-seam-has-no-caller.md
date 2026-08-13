@@ -1,8 +1,7 @@
 # 124 — the interaction responder seam has no product caller, and three of its four outcomes cannot be produced
 
-**Status:** ready
-**Blocked by:** 123 — that ticket removes the opencode half of this seam (`_automationPolicy` and its
-branches). Land it first, then re-measure what is left here; some of the surface below disappears with it.
+**Status:** done
+**Blocked by:** —
 **Tier:** Cleanup, and a contract question. `Respond()` is part of the adapter interface — all four
 adapters implement it — but nothing in `core/` ever calls it. `core/interaction-outcome.js` defines four
 outcomes and only one is reachable. So the interface obliges every future adapter to implement a method
@@ -148,5 +147,11 @@ grep -rn "rejected_unattended\|interaction_reject_failed" core/ adapters/
 
 ## Notes
 
-(Empty — the implementer fills this in. Steps 1 and "Binding constraints" both write here; a merged
-implementation with an empty Notes section has not done the ticket.)
+Took branch 2b (deferred). ADR-002 states that the wrapper must reject unexpected permission requests
+and never wait for interactive input, while allowing an explicitly supplied automation policy in a
+future attended/backend-native path. ADR-007 preserves the shared four-outcome contract. The current
+engine has no `Respond()` caller, so only `rejected_unattended` is produced; the other three values
+remain documented in `docs/design-spec.md` and `docs/architecture-decisions.md` but were not found in
+persisted `status.json` records or runtime emissions. The interface and live interaction facts remain
+unchanged; comments now state the deferred seam and current reachability. Direct interaction and fact
+tests pass; full suite was intentionally not run per the implementation request.

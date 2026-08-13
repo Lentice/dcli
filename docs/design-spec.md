@@ -394,6 +394,11 @@ to exactly one of:
 `rejected_unattended` is the study §5 hang class, correctly named. An unattended wrapper must never
 invent an answer, and must never wait indefinitely for one.
 
+The responder capability is deliberately deferred: no `core/` or `cli/` path calls `Respond()` today,
+so the shipped engine currently produces only `rejected_unattended`. The other outcome values remain
+in the append-only fact contract for a future attended or explicitly backend-native responder; adding
+the interface without an engine caller is not evidence that those outcomes are currently reachable.
+
 ---
 
 ## 9. Adapter interface
@@ -413,7 +418,7 @@ Start(attempt)                     → begin execution; return an execution hand
 Observe(attempt)                   → stream of FACTS (see below)
 SendPrompt(attempt, prompt)        → deliver the prompt
 Resume(attempt, kind, prompt)      → kind ∈ continue_backend_session | fork_from_artifacts
-Respond(interactionId, decision)   → OPTIONAL, by capability
+Respond(interactionId, decision)   → OPTIONAL, by capability; deferred until core has a caller
 RequestCancel(attempt, rung)       → perform one declared rung; postcondition stated per adapter
 CollectResult(attempt)             → final text, usage, backend session identity
 CollectDiagnostics(attempt)        → feeds `debug` / `doctor`; redacted (§20)
