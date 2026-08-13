@@ -322,6 +322,7 @@ translated, never surfaced.
 | Code | Meaning |
 |---:|---|
 | `0` | Success |
+| `1` | Unclassified wrapper-side error |
 | `2` | Usage / validation error, incl. unsupported-option rejection (ADR-004). No job created. **The `--json` output must carry a distinct `failure_class`** — `usage_error` ("your syntax is wrong") and `unsupported_capability` ("a valid request this backend cannot serve") are different problems for an agent, even though they share a shell exit code. |
 | `3` | Job not found. (2026-08-04) A job id that does not match `^\d{8}T\d{6}Z-[a-z0-9]{8}$` is rejected in `validatePositionals()` as **`2`**, at the argument boundary — the only place a foreign id enters, so core lookups keep taking ids the engine minted: an id minted by another runtime cannot name a dcli job, and "Job not found: <repo_key>/<id>" told the caller to keep hunting for it. (2026-08-01) Absence must be **proven by `ENOENT`/`ENOTDIR`**, never inferred from a failed stat: `fs.existsSync()` returns false for *any* stat error, including the `EPERM`/`EBUSY` Windows hands out on a tree being written or scanned, so it cannot tell "no such job" from "could not look". A directory that exists but whose record cannot be read is **`17`**, not `3` — exit 3 tells an agent to stop looking. `resume`, `submit --resume`, `diff` and `apply` each had their own catch-all mapping every read failure to `3`; they all go through `loadJobOrThrow()` now. (2026-07-31) Determined by the job directory's existence, **not** by whether `regenerateStatus()` throws — an absent journal regenerates to the default projection (`job_id: null`, `state: "created"`), so a typo'd id used to read as a freshly created job at exit 0 and an agent would poll it forever. All read-side commands go through `loadJobOrThrow()`. |
 | `4` | Job not terminal (e.g. `read` on a running job) |
@@ -366,6 +367,7 @@ structured error type, not the status code.
 | `cancelled` | Intentional. No retry. |
 | `lock` | Bounded backoff retry, then fail — **only when the contention is transient**: a held lock (`locking.js`) or local admission capacity (`job-setup.js`). (2026-08-13) Exit `17` also carries the other half of its §7 row, a job directory that exists but whose record cannot be read (`job-lookup.js`), and retrying that never fixes it. The two are distinguished by the failure detail, not by the code, so a caller that reacts to `17` must read which one it got before retrying. |
 | `worker_launch` | Run `doctor`. No blind loop. |
+| `backend_execution_failed` | Preserve the backend failure and report it. Do not treat it as a wrapper launch failure. |
 | `session_expired` | Start a fresh job; never silently substitute a different session. |
 | `apply_conflict` | Restore and report. Never auto-resolve. |
 | `protocol` | Requires a compatibility update. |

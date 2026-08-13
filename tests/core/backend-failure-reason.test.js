@@ -77,10 +77,12 @@ await withTempDir(async (dir) => {
 
   const status = store.readStatus({ repoKey: 'fail-1', jobId: output.jobId });
   assert.strictEqual(status.state, 'failed', `expected failed, got ${status.state}`);
-  assert.strictEqual(status.command_exit_code, 1, `expected exit 1, got ${status.command_exit_code}`);
+  assert.strictEqual(status.command_exit_code, 1, `child exit must remain 1, got ${status.command_exit_code}`);
+  assert.strictEqual(output.exitCode, 11, `no usable result must exit 11, got ${output.exitCode}`);
   assert.strictEqual(status.failure_reason, 'backend_exited_no_result',
     `failure_reason must be backend_exited_no_result, got ${JSON.stringify(status.failure_reason)}`);
   assert.ok(status.failure, 'failure must be observable for non-zero exit');
+  assert.strictEqual(status.failure.class, 'no_result');
   assert.strictEqual(status.failure && status.failure.reason, 'process_error',
     `failure.reason must be process_error (from reducer), got ${JSON.stringify(status.failure)}`);
 
@@ -105,6 +107,8 @@ await withTempDir(async (dir) => {
   const status = store.readStatus({ repoKey: 'fail-2', jobId: output.jobId });
   assert.strictEqual(status.state, 'failed', `expected failed, got ${status.state}`);
   assert.strictEqual(status.command_exit_code, 1);
+  assert.strictEqual(output.exitCode, 10, 'backend execution failure with a result must exit 10');
+  assert.strictEqual(status.failure.class, 'backend_execution_failed');
   assert.ok(status.failure, 'failure must be observable for non-zero exit (reducer propagation)');
   assert.strictEqual(status.failure.reason, 'process_error');
   assert.notStrictEqual(status.failure_reason, 'backend_exited_no_result',
@@ -170,6 +174,7 @@ await withTempDir(async (dir) => {
     reducerResult: { failure_reason: null, failure: { reason: 'process_error', code: 1 } },
   });
   assert.strictEqual(r.failure_reason, 'backend_exited_no_result');
+  assert.strictEqual(r.failure.class, 'no_result');
   assert.strictEqual(r.failure.reason, 'process_error');
 
   const r2 = classifyTerminalFailure({

@@ -9,6 +9,8 @@
  */
 
 const FAILURE_CLASS_TO_EXIT_CODE = Object.freeze({
+  backend_execution_failed: 10,
+  no_result: 11,
   environment: 12,
   authentication: 13,
   quota_or_rate_limit: 14,
@@ -16,6 +18,7 @@ const FAILURE_CLASS_TO_EXIT_CODE = Object.freeze({
   network_error: 16,
   lock: 17,
   protocol: 26,
+  repository_state_unverified: 27,
 });
 
 const FAILURE_CLASSES = Object.freeze(Object.keys(FAILURE_CLASS_TO_EXIT_CODE));
@@ -65,14 +68,21 @@ function classifyTerminalFailure({ exitCode, resultBytes, reducerResult, resultS
   // defect: the caller gets `done` with an empty result and no reason.
   if (resultStatus === 'missing') {
     return {
-      failure_reason: failure_reason || 'result_missing',
-      failure: failure || { class: 'artifact_persistence', message: 'Backend produced no result file' },
+      failure_reason: 'result_missing',
+      failure: { ...(failure || {}), class: 'no_result', message: 'Backend produced no result file' },
       terminalState: 'failed',
     };
   }
   if (exitCode && exitCode !== 0 &&
       typeof resultBytes === 'number' && resultBytes < NO_RESULT_BYTE_THRESHOLD) {
-    if (!failure_reason) return { failure_reason: 'backend_exited_no_result', failure };
+    // Precedence: a missing/unusable result is 11; only a failed execution
+    // with usable output is the generic backend failure 10.
+    if (!failure_reason || failure_reason === 'backend_execution_failed') {
+      return {
+        failure_reason: 'backend_exited_no_result',
+        failure: { ...(failure || {}), class: 'no_result' },
+      };
+    }
   }
   return { failure_reason, failure };
 }
@@ -81,7 +91,8 @@ function terminalExitCode(state, failure, failureReason) {
   if (state === 'done' || state === 'interrupted' || state === 'cancelled') return 0;
   if (failureReason === 'hard_timeout') return 24;
   if (failureReason === 'result_persistence_failed') return 11;
-  return FAILURE_CLASS_TO_EXIT_CODE[(failure && (failure.class || failure.class_hint)) || failureReason] || 1;
+  // 1 is reserved for an unclassified wrapper-side error.
+  return FAILURE_CLASS_TO_EXIT_CODE[(failure && (failure.class || failure.class_hint)) || failureReason] ?? 1;
 }
 
 module.exports = {

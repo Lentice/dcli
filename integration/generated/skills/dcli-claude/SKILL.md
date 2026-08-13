@@ -240,6 +240,7 @@ adopt an unverified finding to close the loop.
 
 | Exit | Class | Reaction |
 |------|-------|----------|
+| 1 | Unclassified wrapper-side error | Preserve the error and use `debug` / `doctor`; it is not a backend classification. |
 | 2 | Usage/validation error | Fix the invocation. No job was created. Includes an id that is not a dcli job id at all. |
 | 3 | Job not found | Well-formed id, no such job here. Check the id and that `--repo` matches the submitting repository. |
 | 4 | Job not terminal | Wait longer or check status. |
@@ -261,6 +262,15 @@ adopt an unverified finding to close the loop.
 | 26 | Protocol incompatible | Requires a compatibility update. Run `doctor`. |
 
 ## Findings contract
+
+**Only `review` participates in this contract.** `review` appends the appendix
+specification to the prompt it builds and parses the result, so `findings_status`
+and `findings` appear in its envelope. `run`, `submit` and `resume` send your
+prompt verbatim and never parse the output: asking one of them for "the required
+findings appendix" tells the backend nothing — it has not seen the marker, the
+fence, or the field list — and no `findings_status` is produced either way. If a
+delegated audit is not a diff review and you still want a machine-readable
+verdict, paste the whole specification below into your own prompt.
 
 A review result carries a machine-readable findings appendix. The marker sits on
 its own line, **before** the fence — a marker inside the fence does not parse:

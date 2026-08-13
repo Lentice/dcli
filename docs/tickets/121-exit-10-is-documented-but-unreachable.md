@@ -1,6 +1,6 @@
 # 121 — a failed backend run exits 1, but every document says it exits 10
 
-**Status:** ready
+**Status:** done
 **Blocked by:** —
 **Tier:** Trust. Exit codes are the delegating agent's entire branching surface. The one code that names
 the commonest failure — the backend ran and failed — is documented in the design spec, in `README.md`,
@@ -186,4 +186,9 @@ node scripts/generate-integration.js --check
 
 ## Notes
 
-(Empty — the implementer fills this in.)
+Added the `backend_execution_failed` class at exit `10` and assign it in the reducer for
+unclassified backend failures. Added `no_result` at exit `11`; the result-size/missing-artifact
+classifier gives it precedence over the generic backend execution class. Exit `1` remains the
+documented unclassified wrapper-side fallback. Direct failure-class, backend-failure, envelope,
+worktree, and opencode tests pass; full suite was intentionally not run per the implementation
+request. Generated and installed integration skills were verified byte-identical.

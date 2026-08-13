@@ -17,6 +17,7 @@
 const TERMINAL = Object.freeze(new Set(['done', 'failed', 'timed_out', 'cancelled', 'interrupted']));
 const STREAM_CLOSED_ERROR_REASONS = new Set(['sse_disconnect', 'interaction_reject_failed', 'finalization_error']);
 const { exitCodeToFailureClass } = require('./failure-class');
+const BACKEND_EXECUTION_FAILURE = 'backend_execution_failed';
 
 /**
  * Engine-owned lifecycle reducer. Takes current state + adapter facts + durable
@@ -137,9 +138,11 @@ function reduce(state, facts, evidence) {
       state: processExited.code === 0 ? 'done' : 'failed',
       phase: 'terminal',
       failure: processExited.code !== 0
-        ? { class: classHint, reason: 'process_error', code: processExited.code }
+        ? { class: classHint || BACKEND_EXECUTION_FAILURE, reason: 'process_error', code: processExited.code }
         : null,
-      failure_reason: (processExited.code !== 0 ? classHint : null) || state.failure_reason || null,
+      failure_reason: processExited.code !== 0
+        ? (classHint || state.failure_reason || BACKEND_EXECUTION_FAILURE)
+        : state.failure_reason || null,
       backend_session_id: state.backend_session_id || null,
       publishable: publishableOnEvidence,
     };
@@ -150,8 +153,8 @@ function reduce(state, facts, evidence) {
     return {
       state: 'failed',
       phase: 'terminal',
-      failure: { class: classHint, reason: 'backend_error' },
-      failure_reason: classHint || state.failure_reason || null,
+      failure: { class: classHint || BACKEND_EXECUTION_FAILURE, reason: 'backend_error' },
+      failure_reason: classHint || state.failure_reason || BACKEND_EXECUTION_FAILURE,
       backend_session_id: state.backend_session_id || null,
       publishable: publishableOnEvidence,
     };
