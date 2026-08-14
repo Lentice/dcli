@@ -55,7 +55,7 @@ Options:
   --json                    JSON output envelope
   --timeout-sec <n>         Wait timeout in seconds (default: ${WAIT_TIMEOUT_SEC})
   --all                     Wait for all matching jobs
-  --older-than <Nd|Nh>      Retention threshold (positive days or hours)
+  --older-than <Nd|Nh>      Retention threshold (positive days or hours); omitted means every eligible age
   --dry-run                 Preview cleanup without deleting
   --scrub-session-ids       Blank recorded backend session ids
   --max-bytes <n>           Maximum bytes for tail (default: 4096)
@@ -63,7 +63,7 @@ Options:
   --reasoning-effort <s>    Reasoning effort level (backend-specific)
   --variant <s>             opencode-specific reasoning variant
   --effort <s>              Codex/Claude effort level
-  --access <s>              Access mode: read-only (default), workspace, full
+  --access <s>              Access mode: read-only (default), workspace
   --mode <s>                run mode: run (default), implement (worktree-isolated)
   --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: ${LIVE_SMOKE_TIMEOUT_SEC}; 0 = static-only)
   --staged                      Review staged changes (git diff --staged)

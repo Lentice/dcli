@@ -223,7 +223,7 @@ runs opencode. Not used by the wrapper.
 | model | `POST /session` `model: {providerID, id, variant?}` |
 | reasoning effort | `variant` — **surfaced as `dcli-opencode --variant`, never `--effort`** (ADR-004) |
 | agent | `POST /session` `agent` |
-| access / isolation | per-session `permission: PermissionRuleset` — `read-only` denies mutation (edit, webfetch, external_directory) and allows read tools; `workspace` allows everything except `external_directory`; `full` is `* → allow` (explicit named opt-in, never default). See ticket 18. |
+| access / isolation | per-session `permission: PermissionRuleset` — `read-only` denies mutation (edit, webfetch, external_directory) and allows read tools; `workspace` allows everything except `external_directory`. The native `full` ruleset exists in opencode but is not exposed by dcli; the wrapper accepts only `read-only` and `workspace`, and rejects `--access full` with exit `2` before a job is created. See ticket 18. |
 | respond (permission) | `Respond(interactionId, decision)` → `POST /permission/{id}/reply` or `/question/{id}/reply`; 404 is benign (interaction already resolved); `reply: always` is unsupported |
 | resume | `POST /session` `parentID`, or reuse the recorded session id |
 | fork | `POST /session/{id}/fork` |
@@ -255,6 +255,9 @@ dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
 
 `N` must be a positive integer; `d` means days and `h` means hours.
+
+If `--older-than` is omitted, `cleanup` includes eligible terminal jobs of **every** age. Run with
+`--dry-run` first.
 
 For eligible terminal implement jobs it removes the job record, isolated
 worktree, and git registration together. It also discovers orphan worktrees

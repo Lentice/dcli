@@ -214,6 +214,8 @@ holds a lock, a port, or a worktree — check for one before re-running the job.
 - **Preview before deleting.** Run `cleanup --dry-run` first and read what it
   lists. Retention once removed a worktree mid-operation and destroyed the only
   artifact needed to retry the work.
+- If `--older-than` is omitted, `cleanup` includes eligible terminal jobs of **every** age. Run with
+  `--dry-run` first.
 - Cleanup removes eligible terminal job records together with their isolated
   worktree directories and git registrations. It also discovers orphan
   worktree directories under dcli's state root. The preview names every
@@ -395,6 +397,9 @@ dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 ```
 
 `N` must be a positive integer; `d` means days and `h` means hours.
+
+If `--older-than` is omitted, `cleanup` includes eligible terminal jobs of **every** age. Run with
+`--dry-run` first.
 
 Removes aged terminal job records and their isolated worktrees/git
 registrations, and removes orphan worktrees under the dcli state root. Use

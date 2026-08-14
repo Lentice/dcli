@@ -221,6 +221,9 @@ dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
 
 `N` must be a positive integer; `d` means days and `h` means hours.
 
+If `--older-than` is omitted, `cleanup` includes eligible terminal jobs of **every** age. Run with
+`--dry-run` first.
+
 For eligible terminal implement jobs it removes the job record, isolated
 worktree, and git registration together. It also discovers orphan worktrees
 under the dcli state root. `--dry-run` names each worktree and reports its
