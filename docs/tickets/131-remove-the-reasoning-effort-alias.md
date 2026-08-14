@@ -284,7 +284,8 @@ mean every future agent session learns a flag that now exits 2.
 - [ ] **C.** An out-of-enum `--effort` value is still a `usage_error` with exit `2` and no job record —
   128's behavior is unchanged.
 - [ ] **D.** No occurrence of `reasoning-effort` or `reasoningEffort` remains anywhere outside
-  `docs/tickets/`.
+  `docs/tickets/`, `.tmp-test/` (scratch artifacts of old test runs, not source), and the single
+  deliberate regression case in `tests/core/cli-args.test.js` that proves **A**.
 - [ ] **E.** Neither `command.json` nor `params.json` carries a `reasoningEffort` key for a newly
   created job.
 - [ ] **F.** `docs/design-spec.md` §14 and `docs/product-spec.md` carry the exact replacement text quoted
@@ -309,10 +310,11 @@ grep -rn "reasoningEffort" core/status*.js core/job-store*.js 2>/dev/null
 grep -rn "reasoningEffort" core/commands/worker.js core/commands/submit.js
 # expect: no output
 
-# The spelling is gone from code and docs alike (tickets keep their history):
+# The spelling is gone from code and docs alike. Tickets keep their history, .tmp-test holds scratch
+# artifacts from old test runs, and cli-args.test.js is where the flag is deliberately kept named:
 grep -rn "reasoning-effort\|reasoningEffort" --exclude-dir=node_modules --exclude-dir=.git \
-  --exclude-dir=tickets .
-# expect: no output
+  --exclude-dir=tickets --exclude-dir=.tmp-test .
+# expect: only tests/core/cli-args.test.js, section 6
 
 # The old flag is loudly rejected, before any job exists:
 echo hi | node cli/dcli.js --backend claude run --repo . --reasoning-effort high --hard-timeout-sec 60; echo "exit=$?"
