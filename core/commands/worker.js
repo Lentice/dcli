@@ -159,7 +159,6 @@ async function main() {
     adapter.ValidateRequest({
       model: params.model || null,
       canonicalDir: worktreePath || repoRoot,
-      reasoningEffort: params.reasoningEffort || null,
       variant: params.variant || null,
       effort: params.effort || null,
       access: params.access || 'read-only',
@@ -193,7 +192,6 @@ async function main() {
       access: params.access || 'read-only',
       mode: params.mode || 'run',
       hardTimeoutMs: params.hardTimeoutMs || 0,
-      reasoningEffort: params.reasoningEffort || null,
       variant: params.variant || null,
       effort: params.effort || null,
     },

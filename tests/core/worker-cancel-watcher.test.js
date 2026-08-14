@@ -86,7 +86,7 @@ async function main() {
     fs.writeFileSync(path.join(jobDir, 'params.json'), JSON.stringify({
       canonicalDir: repoRoot,
       model: null, access: 'read-only',
-      reasoningEffort: null, variant: null, effort: null,
+      variant: null, effort: null,
       mode: 'run', hardTimeoutMs: 0,
       _adapterScript: {
         facts: [

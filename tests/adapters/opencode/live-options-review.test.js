@@ -54,14 +54,14 @@ async function main() {
   }
 
   // ==========================================================================
-  // P2.2 — --reasoning-effort is rejected by opencode adapter
+  // P2.2 — --effort is rejected by opencode adapter
   // ==========================================================================
   {
-    const r = dcli(['run', '--hard-timeout-sec', '5', '--reasoning-effort', 'high', 'test']);
-    assert.notStrictEqual(r.status, 0, '--reasoning-effort must be rejected');
-    assert.ok(r.stderr.includes('not supported') || r.stderr.includes('reasoning-effort'),
-      `--reasoning-effort rejection stderr: ${r.stderr}`);
-    console.log(`PASS: P2.2 --reasoning-effort rejected (exit ${r.status})`);
+    const r = dcli(['run', '--hard-timeout-sec', '5', '--effort', 'high', 'test']);
+    assert.notStrictEqual(r.status, 0, '--effort must be rejected');
+    assert.ok(r.stderr.includes('not supported') || r.stderr.includes('effort'),
+      `--effort rejection stderr: ${r.stderr}`);
+    console.log(`PASS: P2.2 --effort rejected (exit ${r.status})`);
   }
 
   // ==========================================================================

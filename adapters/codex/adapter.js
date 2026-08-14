@@ -104,7 +104,6 @@ function resolveCodexPath() {
  * @param {string} [opts.sandbox]
  * @param {string} [opts.model]
  * @param {string} [opts.effort]
- * @param {string} [opts.reasoningEffort]
  * @param {string[]} [opts.addDirs]
  * @param {boolean} [opts.skipGitRepoCheck]  force --skip-git-repo-check; auto-detected otherwise
  * @returns {string[]}
@@ -170,7 +169,7 @@ function buildArgv(opts) {
   }
 
   // Reasoning effort maps to -c model_reasoning_effort=<level>
-  const effort = opts.effort || opts.reasoningEffort;
+  const effort = opts.effort;
   if (effort) {
     argv.push('-c', 'model_reasoning_effort=' + effort);
   }
@@ -279,7 +278,6 @@ class CodexAdapter {
 
     for (const [optionName, value] of [
       ['--effort', request.effort],
-      ['--reasoning-effort', request.reasoningEffort],
     ]) {
       if (value !== undefined && value !== null && !EFFORT_LEVELS.has(value)) {
         const err = new Error(
@@ -323,7 +321,6 @@ class CodexAdapter {
         sandbox,
         model: request.model || undefined,
         effort: request.effort || undefined,
-        reasoningEffort: request.reasoningEffort || undefined,
         addDirs: request.addDirs || undefined,
         skipGitRepoCheck: request.skipGitRepoCheck || false,
       });

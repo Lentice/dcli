@@ -13,7 +13,7 @@ Backend: opencode (opencode serve per job over HTTP)
 
 ## Flags specific to this backend
 
-- `--variant <string>` — provider-specific reasoning variant. Both `--effort` and `--reasoning-effort` are rejected before a job is created.
+- `--variant <string>` — provider-specific reasoning variant. `--effort` is rejected before a job is created.
 
 ## Interactions are auto-rejected
 

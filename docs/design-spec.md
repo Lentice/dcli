@@ -831,8 +831,8 @@ not transfer between backends.
 **Backend-qualified options** (ADR-004 — deliberately not unified):
 
 ```
-dcli-codex --reasoning-effort none|low|medium|high|ultra
-dcli-claude   --reasoning-effort low|medium|high|xhigh|max
+dcli-codex    --effort none|minimal|low|medium|high|xhigh|max|ultra
+dcli-claude   --effort low|medium|high|xhigh|max
 dcli-opencode --variant <provider-specific string>
 ```
 

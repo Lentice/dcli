@@ -134,7 +134,7 @@ check();
   const flagOwners = {
     'dcli-opencode': ['--variant'],
     'dcli-codex': ['--effort'],
-    'dcli-claude': ['--reasoning-effort'],
+    'dcli-claude': ['--effort'],
   };
 
   for (const [owner, flags] of Object.entries(flagOwners)) {
@@ -144,6 +144,7 @@ check();
       if (!fs.existsSync(skillPath)) continue;
       const content = fs.readFileSync(skillPath, 'utf8');
       for (const flag of otherFlags) {
+        if (flag === '--effort' && flags.includes('--effort')) continue;
         // The old form of this check exonerated a whole file whenever it
         // contained the substring "use " anywhere — true of essentially every
         // document, so a genuine leak could never fail it. Judge per line, and

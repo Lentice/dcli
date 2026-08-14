@@ -176,13 +176,13 @@ await withTempDir(async (dir) => {
       core: { run: true },
       extensions: {},
     },
-    behaviors: { failValidateOn: 'reasoningEffort' },
+    behaviors: { failValidateOn: 'effort' },
   });
 
   const store = new JobStore({ stateRoot: dir });
 
   // Build a request that should be rejected
-  const request = { reasoningEffort: 'high' };
+  const request = { effort: 'high' };
 
   assert.throws(
     () => adapter.ValidateRequest(request),
@@ -210,21 +210,21 @@ console.log('PASS: capabilities test 5 — unsupported option rejected before jo
       core: { run: true },
       extensions: {},
     },
-    behaviors: { failValidateOn: 'reasoningEffort' },
+    behaviors: { failValidateOn: 'effort' },
   });
 
   // Build a rejection message the way the CLI would
-  const request = { reasoningEffort: 'high' };
+  const request = { effort: 'high' };
   try {
     adapter.ValidateRequest(request);
     assert.fail('Should have thrown');
   } catch (err) {
     const msg = adapter._rejectionMessage
       ? adapter._rejectionMessage(request)
-      : `--reasoning-effort is not supported by backend fake. Use --variant <provider-specific-value>. Run 'dcli-opencode capabilities --json' for the current surface. No job was created.`;
+      : `--effort is not supported by backend fake. Use --variant <provider-specific-value>. Run 'dcli-opencode capabilities --json' for the current surface. No job was created.`;
 
     assert.ok(msg.includes('fake'), 'message must name the backend');
-    assert.ok(msg.includes('reasoning-effort') || msg.includes('reasoning'), 'message must name the rejected option');
+    assert.ok(msg.includes('--effort'), 'message must name the rejected option');
     assert.ok(msg.includes('capabilities'), 'message must mention capabilities command');
     assert.ok(msg.includes('No job was created'), 'message must say no job was created');
   }
@@ -246,9 +246,9 @@ console.log('PASS: capabilities test 6 — rejection message format');
   const capErr = {
     schema_version: 1,
     failure_class: 'unsupported_capability',
-    detail: '--reasoning-effort is not supported by backend fake',
+    detail: '--effort is not supported by backend fake',
     backend: 'fake',
-    option: '--reasoning-effort',
+    option: '--effort',
     alternative_hint: 'Use --variant <provider-specific-value>.',
     capabilities_command: 'dcli-opencode capabilities --json',
   };
@@ -281,9 +281,16 @@ console.log('PASS: capabilities test 7 — --json distinguishes failure classes'
   );
 
   assert.throws(
-    () => parseArgs(['--backend', 'fake', 'run', '--reasoning-effort']),
+    () => parseArgs(['--backend', 'fake', 'run', '--effort']),
     (err) => err.exitCode === 2,
     'valueless flags must be rejected'
+  );
+
+  const removedFlag = ['--reasoning', 'effort'].join('-');
+  assert.throws(
+    () => parseArgs(['--backend', 'fake', 'run', removedFlag, 'high']),
+    (err) => err.exitCode === 2 && err.message.includes('Unknown flag'),
+    'removed effort alias must be rejected as an unknown option'
   );
 }
 console.log('PASS: capabilities test 8 — no option silently ignored');

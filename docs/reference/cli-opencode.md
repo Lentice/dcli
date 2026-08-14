@@ -221,7 +221,7 @@ runs opencode. Not used by the wrapper.
 | execution backend | **per-job `opencode serve --port 0 --hostname 127.0.0.1` + HTTP** (ADR-002) |
 | prompt | `POST /session/{id}/prompt_async` body (no shell length limits) |
 | model | `POST /session` `model: {providerID, id, variant?}` |
-| reasoning effort | `variant` — **surfaced only as `dcli-opencode --variant`; both `--effort` and `--reasoning-effort` are rejected** (ADR-004) |
+| reasoning effort | `variant` — **surfaced only as `dcli-opencode --variant`; `--effort` is rejected** (ADR-004) |
 | agent | `POST /session` `agent` |
 | access / isolation | per-session `permission: PermissionRuleset` — `read-only` denies mutation (edit, webfetch, external_directory) and allows read tools; `workspace` allows everything except `external_directory`. The native `full` ruleset exists in opencode but is not exposed by dcli; the wrapper accepts only `read-only` and `workspace`, and rejects `--access full` with exit `2` before a job is created. See ticket 18. |
 | respond (permission) | `Respond(interactionId, decision)` → `POST /permission/{id}/reply` or `/question/{id}/reply`; 404 is benign (interaction already resolved); `reply: always` is unsupported |

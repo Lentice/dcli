@@ -80,7 +80,7 @@ const BOOL_FLAGS = {
 // hard error — never silently accepted.
 const VALUE_FLAGS = new Set(['--backend', '--repo', '--prompt-file', '--hard-timeout-sec',
   '--group', '--label', '--model', '--timeout-sec', '--older-than', '--max-bytes',
-  '--reasoning-effort', '--variant', '--effort', '--live-smoke-timeout-sec',
+  '--variant', '--effort', '--live-smoke-timeout-sec',
   '--access', '--range', '--path', '--intent', '--focus',
   '--message', '--mode', '--kind', '--resume']);
 
@@ -192,7 +192,6 @@ function parseArgs(argv) {
             }
             result.access = val;
             break;
-          case '--reasoning-effort': result.reasoningEffort = val; break;
           case '--variant': result.variant = val; break;
           case '--effort': result.effort = val; break;
           case '--live-smoke-timeout-sec':

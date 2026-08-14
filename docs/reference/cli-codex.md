@@ -65,8 +65,8 @@ If no subcommand is given, options are forwarded to the interactive TUI.
 
 ### Reasoning effort is NOT a flag
 
-Codex's native CLI has **no `--effort` flag**. The dcli wrapper exposes `--effort` (preferred) and
-`--reasoning-effort` (accepted compatibility alias); effort is passed to Codex through config:
+Codex's native CLI has **no `--effort` flag**. The dcli wrapper exposes `--effort`; effort is passed
+to Codex through config:
 
 ```
 -c model_reasoning_effort=<level>
@@ -183,7 +183,7 @@ as JSON).
 | final result | `-o/--output-last-message <file>` |
 | event stream | `--json` → JSONL on stdout |
 | model | `-m/--model` |
-| reasoning effort | `-c model_reasoning_effort=<level>` — surfaced as `dcli-codex --effort`; `--reasoning-effort` is an accepted compatibility alias |
+| reasoning effort | `-c model_reasoning_effort=<level>` — surfaced as `dcli-codex --effort` |
 | access `read-only` | `-c sandbox_mode="read-only"` (plus `-s read-only`, see below) |
 | access `workspace` | `-c sandbox_mode="workspace-write"` **and** `-c approvals_reviewer="auto_review"` |
 | approval policy | no `-a` flag exists on `exec`; the reviewer config above is the only lever |

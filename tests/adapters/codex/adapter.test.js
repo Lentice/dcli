@@ -265,7 +265,7 @@ if (process.platform !== 'win32') {
 }
 
 // ===========================================================================
-// 5. ValidateRequest rejects variant, accepts effort and reasoningEffort
+// 5. ValidateRequest rejects variant and accepts effort
 // ===========================================================================
 {
   const adapter = makeMinimalAdapter();
@@ -273,16 +273,13 @@ if (process.platform !== 'win32') {
   // effort is accepted
   adapter.ValidateRequest({ effort: 'high' });
 
-  // reasoningEffort is accepted
-  adapter.ValidateRequest({ reasoningEffort: 'high' });
-
   // variant is rejected
   const adapter2 = makeMinimalAdapter();
   assert.throws(() => {
     adapter2.ValidateRequest({ variant: 'high' });
   }, (err) => err.code === 'VALIDATION_FAILED');
 
-  console.log('PASS: ValidateRequest rejects variant, accepts effort/reasoningEffort');
+  console.log('PASS: ValidateRequest rejects variant and accepts effort');
 }
 
 // ===========================================================================
@@ -296,29 +293,25 @@ if (process.platform !== 'win32') {
 }
 
 // ===========================================================================
-// 6a. Effort aliases validate and prefer --effort
+// 6a. Effort validates and the old alias is gone
 // ===========================================================================
 {
   for (const level of EFFORT_LEVELS) {
     const adapter = makeMinimalAdapter();
     adapter.ValidateRequest({ effort: level });
-    adapter.ValidateRequest({ reasoningEffort: level });
   }
 
-  for (const optionName of ['effort', 'reasoningEffort']) {
-    const adapter = makeMinimalAdapter();
-    assert.throws(() => adapter.ValidateRequest({ [optionName]: 'turbo' }), (err) => (
-      err.code === 'VALIDATION_FAILED' &&
-      err.failureClass === 'usage_error' &&
-      err.optionName === `--${optionName.replace(/[A-Z]/g, match => '-' + match.toLowerCase())}` &&
-      err.message.includes('No job was created.')
-    ));
-  }
+  const adapter = makeMinimalAdapter();
+  assert.throws(() => adapter.ValidateRequest({ effort: 'turbo' }), (err) => (
+    err.code === 'VALIDATION_FAILED' &&
+    err.failureClass === 'usage_error' &&
+    err.optionName === '--effort' &&
+    err.message.includes('No job was created.')
+  ));
 
-  const argv = buildArgv({ workDir: process.cwd(), resultFilePath: 'result.txt', effort: 'high', reasoningEffort: 'low' });
+  const argv = buildArgv({ workDir: process.cwd(), resultFilePath: 'result.txt', effort: 'high' });
   assert.ok(argv.includes('model_reasoning_effort=high'));
-  assert.ok(!argv.includes('model_reasoning_effort=low'));
-  console.log('PASS: Codex effort aliases validate and prefer --effort');
+  console.log('PASS: Codex effort validates and uses --effort');
 }
 
 // ===========================================================================
@@ -513,7 +506,7 @@ if (process.platform !== 'win32') {
 // ===========================================================================
 {
   const adapter = makeMinimalAdapter();
-  const request = { model: 'o3-mini', effort: 'high', reasoningEffort: 'high' };
+  const request = { model: 'o3-mini', effort: 'high' };
   adapter.PrepareInvocation({}, request);
   assert.deepStrictEqual(adapter._lastRequest, request);
   console.log('PASS: PrepareInvocation stores request');

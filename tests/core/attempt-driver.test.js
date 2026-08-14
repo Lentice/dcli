@@ -63,7 +63,6 @@ const BASELINE_SCRIPT = {
 const REQUEST = {
   model: null,
   canonicalDir: process.cwd(),
-  reasoningEffort: null,
   variant: null,
   effort: null,
   access: 'read-only',
@@ -280,7 +279,7 @@ async function main() {
       fs.writeFileSync(path.join(wkJobDir, 'prompt.txt'), 'baseline', 'utf8');
       fs.writeFileSync(path.join(wkJobDir, 'params.json'), JSON.stringify({
         canonicalDir: dir, model: null, access: 'read-only',
-        reasoningEffort: null, variant: null, effort: null,
+        variant: null, effort: null,
         mode: 'run', hardTimeoutMs: 60000,
         executionToken: 'tok-worker',
         _adapterScript: BASELINE_SCRIPT,

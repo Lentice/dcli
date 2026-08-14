@@ -174,7 +174,6 @@ class ClaudeAdapter {
 
     for (const [optionName, value] of [
       ['--effort', request.effort],
-      ['--reasoning-effort', request.reasoningEffort],
     ]) {
       if (value !== undefined && value !== null && !EFFORT_LEVELS.has(value)) {
         const err = new Error(
@@ -217,7 +216,7 @@ class ClaudeAdapter {
       safeMode: true,
       maxBudgetUsd: maxBudget,
       model: request.model || undefined,
-      effort: request.effort || request.reasoningEffort || undefined,
+      effort: request.effort || undefined,
       addDirs: request.addDirs || undefined,
     });
 

@@ -17,7 +17,6 @@ function persistInitFiles({ store, repoKey, jobId, attemptNum, prompt, commandPa
     access: commandParams.access || null,
     mode: commandParams.mode || null,
     hardTimeoutMs: commandParams.hardTimeoutMs || null,
-    reasoningEffort: commandParams.reasoningEffort || null,
     variant: commandParams.variant || null,
     effort: commandParams.effort || null,
   };

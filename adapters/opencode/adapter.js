@@ -232,19 +232,6 @@ class OpencodeAdapter {
   ValidateRequest(request) {
     if (!request || typeof request !== 'object') return;
 
-    if (request.reasoningEffort !== undefined && request.reasoningEffort !== null) {
-      const err = new Error(
-        '--reasoning-effort is not supported by backend opencode. ' +
-        'Use --variant <provider-specific-value>. ' +
-        "Run 'dcli-opencode capabilities --json' for the current surface. " +
-        'No job was created.'
-      );
-      err.code = 'VALIDATION_FAILED';
-      err.failureClass = 'unsupported_capability';
-      err.optionName = '--reasoning-effort';
-      err.backendName = 'opencode';
-      throw err;
-    }
     if (request.effort !== undefined && request.effort !== null) {
       const err = new Error(
         '--effort is not supported by backend opencode. ' +

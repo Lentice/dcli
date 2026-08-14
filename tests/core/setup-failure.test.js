@@ -97,7 +97,7 @@ function openImplementAttempt({ store, repoRoot, stateRoot, admission }) {
   return openAttempt({
     store,
     adapter: makeAdapter(),
-    request: { model: null, canonicalDir: repoRoot, reasoningEffort: null, variant: null, effort: null, access: 'read-only' },
+    request: { model: null, canonicalDir: repoRoot, variant: null, effort: null, access: 'read-only' },
     prompt: 'implement something',
     repoKey: 'setup-fail', repoRoot,
     mode: 'implement', access: 'read-only',

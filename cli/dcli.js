@@ -61,7 +61,6 @@ Options:
   --max-bytes <n>           Maximum bytes for tail (default: 4096)
   --kind <s>                Resume kind: continue_backend_session, fork_from_artifacts, retry_attempt
   --resume <job-id>         Submit a detached child forked from a parent job's artifacts
-  --reasoning-effort <s>    Reasoning effort level (backend-specific)
   --variant <s>             opencode-specific reasoning variant
   --effort <s>              Codex/Claude effort level
   --access <s>              Access mode: read-only (default), workspace
@@ -215,7 +214,6 @@ async function main() {
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
         access: parsed.access,
-        reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
         admission: admissionController,
@@ -252,7 +250,6 @@ async function main() {
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
         access: parsed.access,
-        reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
         admission: admissionController,
@@ -397,7 +394,6 @@ async function main() {
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
         access: parsed.access,
-        reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
         admission: admissionController,
@@ -484,7 +480,6 @@ async function main() {
         hardTimeoutSec: parsed.hardTimeoutSec,
         group: parsed.group, label: parsed.label, model: parsed.model,
         access: 'read-only',
-        reasoningEffort: parsed.reasoningEffort,
         variant: parsed.variant,
         effort: parsed.effort,
         admission: admissionController,

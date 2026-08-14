@@ -217,7 +217,7 @@ if (process.platform === 'win32') {
 }
 
 // ===========================================================================
-// 5. ValidateRequest rejects reasoningEffort and effort, accepts variant
+// 5. ValidateRequest rejects effort and accepts variant
 // ===========================================================================
 {
   const adapter = makeAdapter();
@@ -225,17 +225,12 @@ if (process.platform === 'win32') {
   // variant is accepted
   adapter.ValidateRequest({ variant: 'high' });
 
-  // reasoningEffort is rejected
-  assert.throws(() => {
-    adapter.ValidateRequest({ reasoningEffort: 'high' });
-  }, (err) => err.code === 'VALIDATION_FAILED');
-
   // effort is rejected
   assert.throws(() => {
     adapter.ValidateRequest({ effort: 'high' });
   }, (err) => err.code === 'VALIDATION_FAILED');
 
-  console.log('PASS: ValidateRequest rejects reasoningEffort, accepts variant');
+  console.log('PASS: ValidateRequest rejects effort and accepts variant');
 }
 
 // ===========================================================================

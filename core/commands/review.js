@@ -33,7 +33,7 @@ function sliceByBytes(str, maxBytes) {
   return buf.slice(0, end).toString('utf8');
 }
 
-function executeReview({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, reviewScope, rangeBase, rangeHead, paths, includeUntracked, embedDiff, intent, focus }) {
+function executeReview({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, variant, effort, admission, reviewScope, rangeBase, rangeHead, paths, includeUntracked, embedDiff, intent, focus }) {
   if (access && access !== 'read-only') {
     const err = new Error('--access must be "read-only" for review. Got: ' + access);
     err.exitCode = 2;
@@ -51,7 +51,7 @@ function executeReview({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutS
     prompt: reviewPrompt,
     hardTimeoutSec, group, label, model,
     access: 'read-only',
-    reasoningEffort, variant, effort, admission,
+    variant, effort, admission,
   });
 
   return result.then(output => {

@@ -1,10 +1,10 @@
 const { openAttempt } = require('../job-setup');
 const { driveAttempt, createCancelSignal } = require('./attempt-driver');
 
-async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, mode, stateRoot }) {
+async function executeRun({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, variant, effort, admission, mode, stateRoot }) {
   const effectiveMode = mode === 'implement' ? 'implement' : 'run';
   const effectiveAccess = access || 'read-only';
-  const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
+  const request = { model, canonicalDir: repoRoot, variant, effort, access };
 
   const attempt = await openAttempt({
     store, adapter, request, prompt,

@@ -103,7 +103,7 @@ class FakeAdapter {
       throw err;
     }
 
-    const unsupportedByDefault = ['reasoningEffort'];
+    const unsupportedByDefault = ['effort'];
     for (const key of unsupportedByDefault) {
       if (request[key] !== undefined && request[key] !== null && key !== failOn) {
         if (!this._script.behaviors.allowedOptions || !this._script.behaviors.allowedOptions.includes(key)) {

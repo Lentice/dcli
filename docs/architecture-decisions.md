@@ -221,7 +221,7 @@ regardless of native support. That is a separate wrapper facility, not a pretenc
 **Unsupported options must hard-fail with exit `2`, before any job is reserved:**
 
 ```
-dcli-opencode: --reasoning-effort is not supported by backend opencode.
+dcli-opencode: --effort is not supported by backend opencode.
 Use --variant <provider-specific-value>.
 Run 'dcli-opencode capabilities --json' for the current surface.
 ```

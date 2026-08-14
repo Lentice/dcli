@@ -4,7 +4,7 @@ const { loadJobOrThrow } = require('../job-lookup');
 
 const VALID_KINDS = new Set(['continue_backend_session', 'fork_from_artifacts', 'retry_attempt']);
 
-async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, mode, stateRoot, parentJobId }) {
+async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, hardTimeoutSec, group, label, model, access, variant, effort, admission, mode, stateRoot, parentJobId }) {
   if (!kind) {
     const err = new Error('--kind is required (continue_backend_session, fork_from_artifacts, or retry_attempt)');
     err.exitCode = 2;
@@ -74,7 +74,7 @@ async function executeResume({ store, adapter, repoKey, repoRoot, prompt, kind, 
   // had none of the parent's context. Adapters that cannot continue a session
   // ignore the field.
   const request = {
-    model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access: inheritedAccess,
+    model, canonicalDir: repoRoot, variant, effort, access: inheritedAccess,
     ...(kind === 'continue_backend_session' ? { resumeSessionId: parentBackendSessionId } : {}),
   };
 

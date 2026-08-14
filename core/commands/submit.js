@@ -5,7 +5,7 @@ const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { generateExecutionToken } = require('../process-identity');
 const { spawnWorker, journalWorkerSpawnFailure } = require('../worker-spawn');
 
-async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, mode, stateRoot, backend, kind }) {
+async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, variant, effort, admission, resumeJobId, mode, stateRoot, backend, kind }) {
   stateRoot = stateRoot || store.stateRoot;
   repoRoot = repoRoot || process.cwd();
 
@@ -37,7 +37,7 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     }
   }
 
-  const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
+  const request = { model, canonicalDir: repoRoot, variant, effort, access };
   const inheritedGroup = group || (parentStatus ? parentStatus.group : null);
   const inheritedLabel = label || (parentStatus ? parentStatus.label : null);
   const inheritedAccess = access || (parentStatus ? parentStatus.access : null) || 'read-only';
@@ -72,7 +72,6 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     canonicalDir: attempt.worktree || repoRoot,
     model,
     access: inheritedAccess,
-    reasoningEffort: reasoningEffort || null,
     variant: variant || null,
     effort: effort || null,
     mode: effectiveMode,

@@ -151,7 +151,7 @@ await withTempDir(async (dir) => {
 });
 
 // =============================================================================
-// 2. run, implement mode — prepareBackend throws (unsupported reasoningEffort)
+// 2. run, implement mode — prepareBackend throws (unsupported effort)
 //    before the slot is acquired. The created worktree must still be removed,
 //    and no slot may ever be acquired or released.
 // =============================================================================
@@ -166,7 +166,7 @@ await withTempDir(async (dir) => {
     await executeRun({
       store, adapter: adapterFor('never reached'), repoKey: 'run-prepare-fail', repoRoot,
       prompt: 'implement', hardTimeoutSec: 60, mode: 'implement', stateRoot,
-      admission: controller, reasoningEffort: 'high',
+      admission: controller, effort: 'high',
     });
   } catch (err) { error = err; }
 

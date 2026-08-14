@@ -143,7 +143,6 @@ function openAttempt({
         access: effectiveAccess,
         mode: commandMode,
         hardTimeoutMs: hardTimeoutMs !== null ? hardTimeoutMs : resolveHardTimeoutMs(hardTimeoutSec),
-        reasoningEffort: request.reasoningEffort,
         variant: request.variant,
         effort: request.effort,
       },

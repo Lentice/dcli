@@ -48,8 +48,8 @@ Where the backends genuinely differ, the tool says so out loud rather than paper
 
 - Options that don't exist on a backend **hard-fail with exit 2 and name the alternative**, before
   any job is created. Never silently ignored, downgraded, or emulated.
-- Options whose *meaning* differs get **backend-qualified names** — `dcli-codex --reasoning-effort`,
-  `dcli-claude --reasoning-effort`, `dcli-opencode --variant` — instead of one flag with three meanings.
+- Options whose *meaning* differs get **backend-qualified names** — `dcli-codex --effort`,
+  `dcli-claude --effort`, `dcli-opencode --variant` — instead of one flag with three meanings.
 - Each backend gets **its own generated skill**, so the agent reading it sees exactly one coherent
   surface. Agents load skills by name, so three skills costs the agent nothing; generating them from
   one source costs the maintainer nothing either.

@@ -75,7 +75,6 @@ await withTempDir(async (dir) => {
     hardTimeoutSec: 60,
     model: 'test-model',
     access: 'read-only',
-    reasoningEffort: null,
     variant: null,
     effort: null,
   });
@@ -97,7 +96,6 @@ await withTempDir(async (dir) => {
   assert.strictEqual(command.access, 'read-only');
   assert.strictEqual(command.mode, 'run');
   assert.strictEqual(command.hardTimeoutMs, 60000);
-  assert.strictEqual(command.reasoningEffort, null);
   assert.strictEqual(command.variant, null);
   assert.strictEqual(command.effort, null);
 

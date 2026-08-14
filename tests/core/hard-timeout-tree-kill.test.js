@@ -25,7 +25,6 @@ const CAPABILITIES = {
 const REQUEST = {
   model: null,
   canonicalDir: process.cwd(),
-  reasoningEffort: null,
   variant: null,
   effort: null,
   access: 'read-only',
