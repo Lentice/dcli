@@ -175,5 +175,14 @@ node scripts/generate-integration.js --check
 Added exit `27` with class `repository_state_unverified`. The three rollback non-restoration
 paths and residual git-state failure after a landed apply use `27`; exit `25` remains for the
 verified-restored cherry-pick/apply-conflict paths. JSON apply errors now carry
-`repository_restored` plus the exit code and failure class. Direct worktree and envelope tests
-cover both outcomes; full suite was intentionally not run per the implementation request.
+`repository_restored` plus the exit code and failure class.
+
+**Criterion C (2026-08-14).** The first implementation covered only two of the three routes to `27`:
+the reset skipped to preserve unexpected modifications, and `git reset --hard` failing outright.
+Nothing exercised `_verifyRestored()` — a rollback that *completes* and still cannot prove
+restoration, which is the case the ticket was filed about. Added `tests/core/worktree.test.js`
+test 28: a pre-apply snapshot claiming a tracked modification the clean repository does not have, so
+the reset runs and succeeds and only the verification disagrees. No mocking; 28/28 pass.
+
+**Full suite (2026-08-14).** `npm run check` green apart from a pre-existing flake in
+`tests/core/test-runner.test.js` under full-suite load — see ticket 121's Notes for the measurement.

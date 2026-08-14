@@ -745,6 +745,52 @@ async function main() {
     });
   });
 
+  // ===========================================================================
+  // 28. Rollback fails closed when the post-reset verification disagrees with
+  //     the pre-apply snapshot (ticket 122, criterion C). The reset itself
+  //     succeeds here — the only failing step is _verifyRestored — so this
+  //     covers the third route to exit 27, which test 27 does not reach:
+  //     a rollback that ran to completion and still cannot prove restoration.
+  // ===========================================================================
+  await testAsync('28. Rollback reports non-restoration when post-reset verification disagrees', async () => {
+    const { _rollbackOrReport } = require('../../core/commands/apply');
+    const { assertRealFailure } = require('../helpers/assert-failure');
+    await withTempDir(async (root) => {
+      const repoRoot = path.join(root, 'repo');
+      initRepo(repoRoot);
+      const preHead = getHeadCommit(repoRoot);
+
+      // A pre-snapshot claiming a tracked modification the clean repository does
+      // not have. Nothing NEW appears after the failure, so the reset is not
+      // skipped; `git reset --hard <preHead>` then succeeds; and verification
+      // compares an empty tracked set against this one and finds them different.
+      // No mocking, and every step fails for the reason under test.
+      const preStatusText = ' M tracked-file-that-is-not-modified.txt';
+
+      let threw = null;
+      try {
+        _rollbackOrReport(repoRoot, preHead, preStatusText, [], new Error('simulated apply failure'));
+      } catch (e) { threw = e; }
+
+      assertRealFailure(threw, {
+        exitCode: 27,
+        match: /NOT verified restored/i,
+      }, 'rollback whose post-reset verification disagrees');
+      assert.strictEqual(threw.repositoryRestored, false);
+
+      assert.ok(/tracked files do not match the pre-apply state/i.test(threw.message),
+        'error must name which verification check failed');
+      assert.ok(/simulated apply failure/.test(threw.message),
+        'error must preserve the original failure context');
+
+      // The reset did run and did land: HEAD is where it was asked to go. The
+      // exit code reports that restoration could not be *proven*, which is not
+      // the same as the reset having failed — test 27 covers that case.
+      assert.strictEqual(getHeadCommit(repoRoot), preHead,
+        'the reset itself must have succeeded');
+    });
+  });
+
   console.log(`\nAll tests: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
 }
