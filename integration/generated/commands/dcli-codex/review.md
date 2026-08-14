@@ -2,7 +2,7 @@
 
 Wrapper-generated diff (not backend-native).
 dcli-codex review [--working|--staged|--range <base>..<head>] [--path <p>]
-  [--intent <s>] [--focus <s>] [--embed-diff] [--include-untracked]
+  [--intent <s>] [--focus <s>] [--no-embed-diff] [--include-untracked]
   --hard-timeout-sec <n>
 
 Review intent is context, not evidence. Keep it neutral.

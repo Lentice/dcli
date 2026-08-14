@@ -69,7 +69,7 @@ Isolated implementation in a detached git worktree. Inspect `diff` before `apply
 echo "Description of change" | dcli-opencode run --mode implement --access workspace --hard-timeout-sec <n>
 dcli-opencode diff <job-id> --stat
 dcli-opencode diff <job-id>
-dcli-opencode apply [--reset-author] [--message <s>] <job-id>
+dcli-opencode apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>
 ```
 
 ### resume
@@ -88,6 +88,14 @@ echo "Follow-up prompt" | dcli-opencode resume <job-id> --kind continue_backend_
 - `retry_attempt` — a fresh session and a new attempt. It does **not** replay the
   parent's request: the prompt you pass on this call is the prompt that runs, so
   resend the original text if you want the original request.
+
+### submit --resume
+
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
 
 ### jobs (status / list / wait)
 

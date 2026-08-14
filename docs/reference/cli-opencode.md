@@ -246,6 +246,12 @@ runs opencode. Not used by the wrapper.
 attempt watches the same `cancel.request` file the detached worker watches, so
 a foreground job and a backgrounded one both end `cancelled`.
 
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
+
 ## dcli wrapper cleanup
 
 The wrapper command is:
@@ -282,7 +288,7 @@ echo "Add input validation to the user registration form" |
 dcli-opencode wait --all --group nightly --timeout-sec $budget --json
 dcli-opencode diff <job-id> --stat
 dcli-opencode diff <job-id>
-dcli-opencode apply --reset-author --message "feat: add input validation" <job-id>
+dcli-opencode apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>
 ```
 
 ## Observed exit codes

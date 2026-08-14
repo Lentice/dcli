@@ -146,6 +146,7 @@ set that timeout, use `submit` and return immediately; collect later with
 - **There is no policy engine.** `dcli` has no `.dcli/policy.json`, no auto/ask/off modes, and no checkpoint that can apply on your behalf. `apply` is always an explicit human-approved step. If you have read otherwise anywhere, it does not describe this tool.
 - **Independently verify every finding.** Never present a delegated review's raw output as your own conclusion. Triage each finding: adopt with action, or reject with a stated reason.
 - **Use exact wrapper lineage.** Use `resume <job-id> --kind continue_backend_session` for follow-ups. Never "continue last session" — it is ambiguous and can attach to the wrong conversation.
+- **`submit --resume <job-id>` creates a detached child with fixed strategy `fork_from_artifacts`.** In implement mode its worktree is seeded from the parent's result commit, and it inherits the parent's group, label and access unless overridden. It does not continue the backend session; use `resume <job-id> --kind continue_backend_session` for conversational continuation. `--kind` does not apply to `submit`.
 - **`resume` does not inherit the parent's mode, but does inherit its access.** A resume without `--mode implement` runs in `run` mode — in the repository itself — even when the parent job was an implement-mode job with its own worktree. Access carries over from the parent unless you override it, so resuming an implement-mode `--access workspace` job with the plain follow-up recipe lets the backend write directly into your working tree. Pass `--mode implement` again for an isolated follow-up (it creates a **new** worktree, not the parent's), or pass `--access read-only` when the follow-up only needs to discuss the earlier work.
 - **React per the failure-class table.** Never retry quota, auth, permission, or timeout failures. A `findings_status: malformed` report is not a clean review — it means the output was unparseable.
 - **Keep review intent neutral.** Intent is context, not evidence of correctness.
@@ -367,7 +368,7 @@ result with `wait --timeout-sec <n>` instead.
 ```
 echo "Description" | dcli-claude run --mode implement --access workspace --hard-timeout-sec <n>
 dcli-claude diff <job-id>
-dcli-claude apply <job-id>
+dcli-claude apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>
 ```
 
 ### resume
@@ -375,6 +376,14 @@ dcli-claude apply <job-id>
 ```
 echo "Follow-up" | dcli-claude resume <job-id> --kind continue_backend_session --hard-timeout-sec <n>
 ```
+
+### submit --resume
+
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
 
 ### jobs
 

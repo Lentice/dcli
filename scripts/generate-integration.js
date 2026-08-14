@@ -112,7 +112,7 @@ function generateTo(dir) {
         `echo "Description" | dcli-${backend} run --mode implement --access workspace --hard-timeout-sec <n>`,
         `dcli-${backend} diff <job-id> --stat`,
         `dcli-${backend} diff <job-id>`,
-        `dcli-${backend} apply [--reset-author] [--message <s>] <job-id>`,
+        `dcli-${backend} apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>`,
         '',
         'Never auto-apply. Always inspect diff before applying.',
         '',

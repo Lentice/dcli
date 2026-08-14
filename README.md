@@ -111,6 +111,9 @@ dcli-opencode resume <job-id> --kind retry_attempt --hard-timeout-sec 600 "Re-ru
 # resume — fork from a completed result
 dcli-opencode resume <job-id> --kind fork_from_artifacts --hard-timeout-sec 600 "Build on what you found"
 
+# submit a detached child forked from a parent's artifacts
+dcli-opencode submit --resume <job-id> --mode implement --hard-timeout-sec 600 "Build on what you found"
+
 # preview and then remove aged jobs and their worktree artifacts (days or hours)
 dcli-codex cleanup --older-than 1d --dry-run
 dcli-codex cleanup --older-than 1d
@@ -122,6 +125,12 @@ dcli-opencode doctor --json
 Both a backgrounded `submit` and a foreground `run`/`resume` respond to `dcli cancel <job-id>`:
 the running attempt watches the same `cancel.request` file `cancel` writes, so the job reaches
 `cancelled` instead of `done` or `timed_out`.
+
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
 
 Every recipe carries an execution budget and a wait budget. That is not decoration — an unbounded wait once cost a
 user eight hours. The job hard-timeout default is 1800 seconds; the caller-side `wait` default is 300 seconds.

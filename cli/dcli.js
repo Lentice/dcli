@@ -60,6 +60,7 @@ Options:
   --scrub-session-ids       Blank recorded backend session ids
   --max-bytes <n>           Maximum bytes for tail (default: 4096)
   --kind <s>                Resume kind: continue_backend_session, fork_from_artifacts, retry_attempt
+  --resume <job-id>         Submit a detached child forked from a parent job's artifacts
   --reasoning-effort <s>    Reasoning effort level (backend-specific)
   --variant <s>             opencode-specific reasoning variant
   --effort <s>              Codex/Claude effort level
@@ -257,6 +258,7 @@ async function main() {
         admission: admissionController,
         resumeJobId: parsed.resume || null,
         mode: parsed.mode || 'run',
+        kind: parsed.kind,
         stateRoot,
         backend,
       });

@@ -884,6 +884,12 @@ label all three "resume" (review record finding 7):
 | `fork_from_artifacts` | Branch from a recorded result — new backend session, seeded from the parent's artifacts / worktree commit | Always available |
 | `retry_attempt` | Re-run the *same* request as a new attempt, after an `interrupted` or transient failure | Always available |
 
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
+
 `resume` selects the kind explicitly, records it as `session_strategy`, and **never silently
 substitutes one for another** — a `session_expired` failure must surface, not quietly become a fork.
 After ADR-008, a controller crash always yields `retry_attempt` or `fork_from_artifacts`; a running

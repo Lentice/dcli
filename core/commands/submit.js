@@ -5,9 +5,15 @@ const { writeTextFileAtomic, writeJsonFileAtomic } = require('../fs-text');
 const { generateExecutionToken } = require('../process-identity');
 const { spawnWorker, journalWorkerSpawnFailure } = require('../worker-spawn');
 
-async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, mode, stateRoot, backend }) {
+async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTimeoutSec, group, label, model, access, reasoningEffort, variant, effort, admission, resumeJobId, mode, stateRoot, backend, kind }) {
   stateRoot = stateRoot || store.stateRoot;
   repoRoot = repoRoot || process.cwd();
+
+  if (kind !== undefined && kind !== null) {
+    const err = new Error('--kind applies to resume, not submit. Use resume <job-id> --kind <kind>.');
+    err.exitCode = 2;
+    throw err;
+  }
 
   // The job record keeps 'submit' for run-mode submits (its historical value)
   // and records 'implement' only when a worktree is actually prepared, so the
@@ -17,6 +23,7 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
 
   let parentStatus = null;
   let parentRootJobId = null;
+  let parentSnapshotCommit = null;
   if (resumeJobId) {
     try {
       parentStatus = loadJobOrThrow({ store, repoKey, jobId: resumeJobId, regenerate: false }).status;
@@ -25,6 +32,9 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
       throw err;
     }
     parentRootJobId = parentStatus.root_job_id || resumeJobId;
+    if (effectiveMode === 'implement' && parentStatus.worktree && parentStatus.worktree.result_commit) {
+      parentSnapshotCommit = parentStatus.worktree.result_commit;
+    }
   }
 
   const request = { model, canonicalDir: repoRoot, reasoningEffort, variant, effort, access };
@@ -41,6 +51,7 @@ async function executeSubmit({ store, adapter, repoKey, repoRoot, prompt, hardTi
     lineage: resumeJobId
       ? { parentJobId: resumeJobId, sessionStrategy: 'fork_from_artifacts', rootJobId: parentRootJobId || null }
       : null,
+    seedCommit: effectiveMode === 'implement' && parentSnapshotCommit ? parentSnapshotCommit : null,
     // The detached worker owns the admission slot, and it journals the attempt
     // launch; openAttempt must neither acquire a slot nor journal for submit.
     admission: null,

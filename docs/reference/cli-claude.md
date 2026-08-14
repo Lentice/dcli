@@ -211,6 +211,12 @@ adapter for this backend, not delegated as it can be for Codex.
 attempt watches the same `cancel.request` file the detached worker watches, so
 a foreground job and a backgrounded one both end `cancelled`.
 
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
+
 ## dcli wrapper cleanup
 
 The wrapper command is:
@@ -246,7 +252,7 @@ echo "Description" |
   dcli-claude submit --mode implement --access workspace --group nightly --hard-timeout-sec $budget
 dcli-claude wait --all --group nightly --timeout-sec $budget --json
 dcli-claude diff <job-id>
-dcli-claude apply <job-id>
+dcli-claude apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>
 ```
 
 ---

@@ -47,7 +47,7 @@ result with `wait --timeout-sec <n>` instead.
 ```
 echo "Description" | dcli-claude run --mode implement --access workspace --hard-timeout-sec <n>
 dcli-claude diff <job-id>
-dcli-claude apply <job-id>
+dcli-claude apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>
 ```
 
 ### resume
@@ -55,6 +55,14 @@ dcli-claude apply <job-id>
 ```
 echo "Follow-up" | dcli-claude resume <job-id> --kind continue_backend_session --hard-timeout-sec <n>
 ```
+
+### submit --resume
+
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
 
 ### jobs
 

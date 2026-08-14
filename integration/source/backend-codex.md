@@ -40,7 +40,7 @@ result with `wait --timeout-sec <n>` instead.
 echo "Description of change" | dcli-codex run --mode implement --access workspace --hard-timeout-sec <n>
 dcli-codex diff <job-id> --stat
 dcli-codex diff <job-id>
-dcli-codex apply [--reset-author] [--message <s>] <job-id>
+dcli-codex apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>
 ```
 
 ### resume
@@ -51,6 +51,14 @@ echo "Follow-up" | dcli-codex resume <job-id> --kind continue_backend_session --
 
 The same outer-timeout rule applies to synchronous `resume`. For a long
 follow-up, submit a new attempt and use a bounded `wait` from the caller.
+
+### submit --resume
+
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
 
 ### jobs (status / list / wait)
 

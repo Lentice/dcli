@@ -205,6 +205,12 @@ runtime permission reply, while opencode has both. A shared `--approval ask` or 
 attempt watches the same `cancel.request` file the detached worker watches, so
 a foreground job and a backgrounded one both end `cancelled`.
 
+`submit --resume <job-id>` creates a **detached** child job with the fixed strategy
+`fork_from_artifacts`: in implement mode its worktree is seeded from the parent's result commit, and it
+inherits the parent's group, label and access unless overridden. It does **not** continue the backend
+session. For conversational continuation use `resume <job-id> --kind continue_backend_session`.
+`--kind` does not apply to `submit`.
+
 ## dcli wrapper cleanup
 
 The wrapper command is:
@@ -241,7 +247,7 @@ echo "Refactor the database layer" |
 dcli-codex wait --all --group nightly --timeout-sec $budget --json
 dcli-codex diff <job-id> --stat
 dcli-codex diff <job-id>
-dcli-codex apply --message "refactor: database layer" <job-id>
+dcli-codex apply [--reset-author] [--message <s>] [--allow-untracked] <job-id>
 ```
 
 ---
