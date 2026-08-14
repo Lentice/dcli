@@ -48,6 +48,7 @@ The second bound is the calling tool's own timeout: it must be longer than
 
 Options:
   --help                    Show this message (accepted anywhere on the line)
+  --version                 Print the dcli version and exit
   --backend <name>          Backend to use (opencode, codex, claude, fake;
                             default: fake — the test double, not a real backend.
                             The dcli-<b> shims pin this for you.)
@@ -106,6 +107,11 @@ Each backend has its own shim: dcli-opencode, dcli-codex, dcli-claude.
 
 if (process.argv.includes('--help')) {
   console.log(help);
+  process.exit(0);
+}
+
+if (process.argv.includes('--version')) {
+  console.log(require('../package.json').version);
   process.exit(0);
 }
 
