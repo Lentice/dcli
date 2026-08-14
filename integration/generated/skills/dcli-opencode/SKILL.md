@@ -71,6 +71,23 @@ The slash-command names are not CLI subcommands — `jobs` is not a command:
 A mistyped subcommand is rejected with a suggestion (`Unknown command: jobs —
 did you mean 'list'?`), not with usage text.
 
+## Commands with no slash command
+
+These have no `:slash` shortcut and are easy to miss, but several of the rules
+below assume them:
+
+```
+<shim> read <job-id>                    # the result of a terminal job (the collect half of submit + read)
+<shim> cancel <job-id>                  # request cancellation; exit 21 means unconfirmed
+<shim> tail <job-id> [--max-bytes <n>] [--json]   # bounded tail of the job log (default 4096 bytes)
+<shim> debug <job-id> [--json]          # compact diagnosis when a job failed
+<shim> capabilities --json              # effective capability manifest for this backend
+<shim> diff <job-id> --name-only        # filenames only; mutually exclusive with --stat (exit 2)
+```
+
+`tail`, `debug` and `cleanup` accept `--json` and emit a `schema_version: 1`
+envelope; without it they print human text.
+
 ## Doctor
 
 `<shim> doctor --json` runs the common checks and, by default, starts the selected
@@ -154,6 +171,7 @@ set that timeout, use `submit` and return immediately; collect later with
   - no flag / `--working` — unstaged changes to tracked files only. **Staged changes are not included.**
   - `--staged` — staged changes only.
   - `--range <base>..<head>` — committed range only.
+  - Pass exactly one scope flag. Any conflicting pair (`--staged --working`, `--staged --range a..b`, …) is rejected with exit `2` before a job is created.
   - Untracked files are excluded from every scope unless `--include-untracked` is passed; the result warns and names them, so read that warning rather than assuming the diff was complete.
 
   Check `git status` first. When work is spread across staged, unstaged, and untracked files, a single default review silently reviews only part of it — stage everything first, or run the scopes you need.
@@ -365,7 +383,7 @@ Scoped code review. The wrapper generates the diff and embeds it in the prompt.
 dcli-opencode review [--working|--staged|--range <base>..<head>] [--path <p>] [--intent <s>] [--focus <s>] [--no-embed-diff] [--include-untracked] --hard-timeout-sec <n>
 ```
 
-- `--access` is always `read-only` for review
+- `review` requires `--access read-only` (the default). It is not silently forced: any other value is rejected with exit `2` before a job is created.
 - `--embed-diff` is the default
 - Intent is context, not evidence — keep it neutral
 
@@ -440,7 +458,7 @@ The command runs a bounded live smoke by default. Add
 ### cleanup
 
 ```
-dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
+dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids] [--json]
 ```
 
 `N` must be a positive integer; `d` means days and `h` means hours.

@@ -44,7 +44,7 @@ Scoped code review. The wrapper generates the diff and embeds it in the prompt.
 dcli-opencode review [--working|--staged|--range <base>..<head>] [--path <p>] [--intent <s>] [--focus <s>] [--no-embed-diff] [--include-untracked] --hard-timeout-sec <n>
 ```
 
-- `--access` is always `read-only` for review
+- `review` requires `--access read-only` (the default). It is not silently forced: any other value is rejected with exit `2` before a job is created.
 - `--embed-diff` is the default
 - Intent is context, not evidence — keep it neutral
 
@@ -119,7 +119,7 @@ The command runs a bounded live smoke by default. Add
 ### cleanup
 
 ```
-dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
+dcli-opencode cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids] [--json]
 ```
 
 `N` must be a positive integer; `d` means days and `h` means hours.

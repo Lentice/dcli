@@ -221,7 +221,7 @@ session. For conversational continuation use `resume <job-id> --kind continue_ba
 The wrapper command is:
 
 ```text
-dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
+dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids] [--json]
 ```
 
 `N` must be a positive integer; `d` means days and `h` means hours.

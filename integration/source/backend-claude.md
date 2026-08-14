@@ -85,7 +85,7 @@ explicitly reported static-only check.
 ### cleanup
 
 ```
-dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
+dcli-claude cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids] [--json]
 ```
 
 `N` must be a positive integer; `d` means days and `h` means hours.

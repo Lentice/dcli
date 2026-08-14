@@ -72,9 +72,12 @@ deleted. Use `npm link` only for deliberate live development against this checko
 ## What it does
 
 ```powershell
-# the canonical shape: one synchronous run, both budgets, prompt from a file
+# the canonical shape: one synchronous run, prompt from a file
+# run ignores --timeout-sec (that flag belongs to wait). The second bound is the
+# timeout of whatever tool invokes this line; a bare shell does not impose one,
+# so if you cannot set it, use submit + wait --timeout-sec <n> instead.
 dcli-codex run --repo D:\path\to\repo --prompt-file .\prompt.md `
-  --hard-timeout-sec 900 --timeout-sec 900 --label diagnose-cache
+  --hard-timeout-sec 900 --label diagnose-cache
 
 # a second opinion, synchronously
 "Compare these two designs." | dcli-opencode run --hard-timeout-sec 900
@@ -82,9 +85,9 @@ dcli-codex run --repo D:\path\to\repo --prompt-file .\prompt.md `
 # a scoped review; the wrapper generates and embeds the diff itself
 dcli-opencode review --range main..HEAD --path src/ --intent "Add cache invalidation" --hard-timeout-sec 900
 
-# something long, in the background
-"Run the full test suite." | dcli-claude submit --access workspace --hard-timeout-sec 3600
-dcli-opencode wait --all --group nightly --timeout-sec 3600 --json
+# something long, in the background — wait --all --group only finds jobs submitted with that group
+"Run the full test suite." | dcli-claude submit --access workspace --group nightly --hard-timeout-sec 3600
+dcli-claude wait --all --group nightly --timeout-sec 3600 --json
 
 # a code change, isolated — you review it before it lands
 dcli-codex run --mode implement --access workspace --hard-timeout-sec 1800 "Add retry logic to the fetch helper"

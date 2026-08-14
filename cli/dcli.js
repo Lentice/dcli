@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const fs = require('fs');
 const path = require('path');
 const { DEFAULTS } = require('../core/deadlines');
 
@@ -17,7 +18,7 @@ Commands:
   status    Show job status
   wait      Wait for a job to complete
   read      Read a terminal job's result
-  list      List jobs
+  list      List jobs (--json returns {jobs, errors}, not a single-job envelope)
   resume    Resume a completed job (--kind: continue_backend_session | fork_from_artifacts | retry_attempt)
   cancel    Cancel a job
   review    Run a code review
@@ -38,22 +39,26 @@ Skill slash command -> CLI subcommand:
   dcli-<b>:doctor     -> dcli --backend <b> doctor
   dcli-<b>:cleanup    -> dcli --backend <b> cleanup
 
-Canonical recipe — one synchronous run, both budgets set:
+Canonical recipe — one synchronous run:
   dcli --backend <name> run --repo <path> --prompt-file <file> \\
-    --hard-timeout-sec 900 --timeout-sec 900 --label <label>
-The calling tool's own timeout must be longer than --hard-timeout-sec.
+    --hard-timeout-sec 900 --label <label>
+run is already synchronous and ignores --timeout-sec, which belongs to wait.
+The second bound is the calling tool's own timeout: it must be longer than
+--hard-timeout-sec. If it cannot be set, use submit + wait --timeout-sec <n>.
 
 Options:
-  --help                    Show this message
-  --backend <name>          Backend to use (opencode, codex, claude, fake)
+  --help                    Show this message (accepted anywhere on the line)
+  --backend <name>          Backend to use (opencode, codex, claude, fake;
+                            default: fake — the test double, not a real backend.
+                            The dcli-<b> shims pin this for you.)
   --repo <path>             Repository path
   --prompt-file <path>      Read prompt from file (canonical way to supply a follow-up prompt for resume)
   --hard-timeout-sec <n>    Job hard timeout in seconds (default: ${HARD_TIMEOUT_SEC})
-  --group <g>               Job group label
+  --group <g>               Job group label; also filters list and selects wait --all
   --label <l>               Job label
   --model <id>              Model identifier
   --json                    JSON output envelope
-  --timeout-sec <n>         Wait timeout in seconds (default: ${WAIT_TIMEOUT_SEC})
+  --timeout-sec <n>         Wait timeout in seconds (wait only; default: ${WAIT_TIMEOUT_SEC})
   --all                     Wait for all matching jobs
   --older-than <Nd|Nh>      Retention threshold (positive days or hours); omitted means every eligible age
   --dry-run                 Preview cleanup without deleting
@@ -64,24 +69,28 @@ Options:
   --variant <s>             opencode-specific reasoning variant
   --effort <s>              Codex/Claude effort level
   --access <s>              Access mode: read-only (default), workspace
+                            (review rejects anything but read-only with exit 2)
   --mode <s>                run mode: run (default), implement (worktree-isolated)
   --live-smoke-timeout-sec <n>  Doctor live smoke timeout in seconds (default: ${LIVE_SMOKE_TIMEOUT_SEC}; 0 = static-only)
   --staged                      Review staged changes (git diff --staged)
   --working                     Review working tree changes (default)
   --range <base>..<head>        Review changes between base and head
+                                (one scope flag only; a conflicting pair is exit 2)
   --path <p>                    Limit to specific path(s) (repeatable)
   --include-untracked           Include untracked files in review
   --embed-diff                  Embed the diff in the prompt (default)
   --no-embed-diff               Do not embed the diff; the backend reads the tree itself
   --intent <s>                  One-line description of review intent
   --focus <s>                   Specific aspect to focus on
+                            (a value starting with -- is rejected: --intent "--wip" is exit 2)
   --stat                        Show diffstat (diff command)
   --name-only                   Show filenames only (diff command)
   --reset-author                Reauthor the landed commit (apply command)
   --message <s>                 Retitle the landed commit (apply command)
   --allow-untracked             Allow unrelated untracked files in working tree (apply command)
 
-Every recipe with a wait should set both --timeout-sec and --hard-timeout-sec.
+Every recipe with a wait should set --timeout-sec on the wait and
+--hard-timeout-sec on the job that produced it.
 When --timeout-sec is omitted, wait uses ${WAIT_TIMEOUT_SEC}s for the caller-side budget;
 this never changes the job hard timeout. JSON wait output includes wait_timed_out and
 wait_timeout_sec so a caller can distinguish its own deadline from the job state.
@@ -98,6 +107,20 @@ Each backend has its own shim: dcli-opencode, dcli-codex, dcli-claude.
 if (process.argv.includes('--help')) {
   console.log(help);
   process.exit(0);
+}
+
+// console.log queues an asynchronous write when stdout is a pipe (macOS), and
+// the process.exit that follows every command here can cut it off mid-JSON. A
+// synchronous write cannot be truncated that way, and it is looped because one
+// writeSync is not obliged to consume the whole buffer.
+// ponytail: the older JSON paths in this file still use console.log; route them
+// through here too if a truncated envelope is ever observed from one of them.
+function printJson(obj) {
+  const buf = Buffer.from(JSON.stringify(obj, null, 2) + '\n', 'utf8');
+  let written = 0;
+  while (written < buf.length) {
+    written += fs.writeSync(1, buf, written, buf.length - written);
+  }
 }
 
 const { parseArgs, resolvePrompt, maybeAccessHint } = require('../core/cli-args');
@@ -455,8 +478,13 @@ async function main() {
       }
 
       let reviewScope = 'working';
-      if (parsed.staged && parsed.working) {
-        console.error('Cannot specify both --staged and --working');
+      // One review covers one scope. A conflicting pair used to let the later
+      // check win silently, so `--staged --range a..b` reviewed the range while
+      // the caller believed it was reviewing the index.
+      const scopeFlags = [parsed.staged && '--staged', parsed.working && '--working',
+        parsed.range && '--range'].filter(Boolean);
+      if (scopeFlags.length > 1) {
+        console.error(`Cannot specify more than one review scope: ${scopeFlags.join(', ')}`);
         process.exit(2);
       }
       if (parsed.staged) reviewScope = 'staged';
@@ -518,6 +546,16 @@ async function main() {
         maxBytes: parsed.maxBytes,
       });
 
+      if (parsed.json) {
+        printJson({
+          schema_version: 1,
+          job_id: jobId,
+          worker: result.worker || null,
+          backend_events: result.backendEvents || null,
+        });
+        process.exit(0);
+      }
+
       if (result.worker) {
         console.log(`=== worker.log (${result.worker.totalBytes} bytes, showing ${result.worker.returnedBytes}) ===`);
         console.log(result.worker.content);
@@ -541,6 +579,11 @@ async function main() {
       }
 
       const report = await executeDebug({ store, repoKey, jobId });
+
+      if (parsed.json) {
+        printJson({ schema_version: 1, ...report });
+        process.exit(0);
+      }
 
       console.log(`Job: ${report.job_id}`);
       console.log(`State: ${report.state}  Phase: ${report.phase || '-'}  Attempt: ${report.attempt}`);
@@ -578,6 +621,21 @@ async function main() {
         scrubSessionIds: parsed.scrubSessionIds,
       });
       const worktreeBytes = result.worktrees.reduce((sum, worktree) => sum + worktree.bytes, 0);
+
+      if (parsed.json) {
+        printJson({
+          schema_version: 1,
+          dry_run: result.dryRun === true,
+          removed: result.removed,
+          skipped: result.skipped,
+          scrubbed: result.scrubbed,
+          worktrees: result.worktrees,
+          worktree_bytes: worktreeBytes,
+          skipped_items: result.skippedItems,
+          errors: result.errors,
+        });
+        process.exit(result.exitCode || 0);
+      }
 
       if (result.errors.length > 0) {
         for (const err of result.errors) {

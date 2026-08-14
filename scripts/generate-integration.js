@@ -166,7 +166,7 @@ function generateTo(dir) {
         'plus orphan worktrees under the dcli state root; optionally scrub',
         'session ids (durable: journaled, terminal jobs only).',
         '',
-        `  dcli-${backend} cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]`,
+        `  dcli-${backend} cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids] [--json]`,
         '  N must be a positive integer; d means days and h means hours.',
         '',
         'Use --dry-run first: it names each worktree and reports its bytes.',

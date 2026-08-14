@@ -81,7 +81,7 @@ explicitly reported static-only check.
 ### cleanup
 
 ```
-dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids]
+dcli-codex cleanup [--older-than <Nd|Nh>] [--dry-run] [--scrub-session-ids] [--json]
 ```
 
 `N` must be a positive integer; `d` means days and `h` means hours.
