@@ -152,7 +152,7 @@ check();
         lines.forEach((line, i) => {
           const regex = new RegExp(`[\\s\`]${flag}[\\s\`]`, 'i');
           if (!regex.test(line)) return;
-          const exempted = /not supported|instead of|use .* instead/i.test(line);
+          const exempted = /not supported|instead of|use .* instead|accepted compatibility alias|(?:is|are) rejected/i.test(line);
           assert.ok(
             exempted,
             `${owner}/SKILL.md:${i + 1} uses ${flag}, which is owned by ${otherOwner}: ${line.trim()}`

@@ -65,7 +65,8 @@ If no subcommand is given, options are forwarded to the interactive TUI.
 
 ### Reasoning effort is NOT a flag
 
-Codex has **no `--effort` flag**. Effort is set through config:
+Codex's native CLI has **no `--effort` flag**. The dcli wrapper exposes `--effort` (preferred) and
+`--reasoning-effort` (accepted compatibility alias); effort is passed to Codex through config:
 
 ```
 -c model_reasoning_effort=<level>
@@ -75,8 +76,8 @@ as a single `-c` pair (this is exactly what `ccodex` does). Observed enum on 0.1
 `none | minimal | low | medium | high | xhigh | max | ultra`. **Re-derive on every upgrade** — this
 enum has already changed once.
 
-This is a first-class reason `--effort` must not be a shared cross-backend flag (ADR-004): on Codex
-it is not even a flag.
+This is why the wrapper validates effort per backend rather than treating the native flag spelling as
+shared across backends (ADR-004).
 
 ---
 
@@ -182,7 +183,7 @@ as JSON).
 | final result | `-o/--output-last-message <file>` |
 | event stream | `--json` → JSONL on stdout |
 | model | `-m/--model` |
-| reasoning effort | `-c model_reasoning_effort=<level>` — surfaced as `dcli-codex --reasoning-effort` |
+| reasoning effort | `-c model_reasoning_effort=<level>` — surfaced as `dcli-codex --effort`; `--reasoning-effort` is an accepted compatibility alias |
 | access `read-only` | `-c sandbox_mode="read-only"` (plus `-s read-only`, see below) |
 | access `workspace` | `-c sandbox_mode="workspace-write"` **and** `-c approvals_reviewer="auto_review"` |
 | approval policy | no `-a` flag exists on `exec`; the reviewer config above is the only lever |

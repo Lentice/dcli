@@ -57,7 +57,6 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 |---|---|---|---|
 | [126 — exit 18 claims the backend never ran when it did, and is unreachable from `submit`](126-exit-18-lies-in-one-direction-and-is-unreachable-in-the-other.md) | in progress | — | `SendPrompt` failures exit `18` after the child process already started; the detached worker's top-level catch discards `err.exitCode` and exits `1`. Third instance of the 121/122 family. Exit `26` audited in the same pass and found correct |
 | [125 — the runner's own byte-exact test compares a load-dependent section](125-test-runner-byte-exact-comparison-is-load-dependent.md) | in progress | — | Ticket 105's `--- LOAD ---` report varies with concurrency by design, and block 1's scrubber does not remove it, so `npm run check` fails at random under load |
-| [128 — the two effort flags are documented as mutually exclusive alternatives when both work, and an out-of-enum level is silently dropped](128-effort-flag-story-is-contradictory-and-unvalidated.md) | ready | — |  |
 | [129 — every review synopsis offers `--embed-diff` as an option, but nothing can turn embedding off](129-embed-diff-is-documented-as-a-choice-but-cannot-be-turned-off.md) | ready | — |  |
 | [130 — `submit --resume` records `fork_from_artifacts` but starts from `HEAD`, and three `apply` flags are missing from every synopsis](130-submit-resume-is-undocumented-and-forks-from-the-wrong-commit.md) | ready | — |  |
 <!-- /GENERATED: ticket table -->
@@ -114,6 +113,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [123 — remove the opencode automation-policy dead path, and the error that sends callers after a flag that does not exist](123-remove-the-opencode-automation-policy-dead-path.md) | done | — |  |
 | [124 — the interaction responder seam has no product caller, and three of its four outcomes cannot be produced](124-the-interaction-responder-seam-has-no-caller.md) | done | — |  |
 | [127 — the help advertises an `--access` mode that exits 2, and never says `cleanup` with no `--older-than` deletes every age](127-access-full-and-cleanup-default-are-documented-wrong.md) | done | — |  |
+| [128 — the two effort flags are documented as mutually exclusive alternatives when both work, and an out-of-enum level is silently dropped](128-effort-flag-story-is-contradictory-and-unvalidated.md) | done | — |  |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

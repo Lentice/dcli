@@ -70,7 +70,7 @@ function buildArgv(opts) {
     argv.push('--model', opts.model);
   }
 
-  if (opts.effort && EFFORT_LEVELS.has(opts.effort)) {
+  if (opts.effort) {
     argv.push('--effort', opts.effort);
   }
 
@@ -161,7 +161,7 @@ class ClaudeAdapter {
     if (request.variant !== undefined && request.variant !== null) {
       const err = new Error(
         '--variant is not supported by backend claude. ' +
-        'Use --reasoning-effort <level> to set reasoning effort. ' +
+        'Use --effort <level> to set reasoning effort. ' +
         "Run 'dcli-claude capabilities --json' for the current surface. " +
         'No job was created.'
       );
@@ -170,6 +170,23 @@ class ClaudeAdapter {
       err.optionName = '--variant';
       err.backendName = 'claude';
       throw err;
+    }
+
+    for (const [optionName, value] of [
+      ['--effort', request.effort],
+      ['--reasoning-effort', request.reasoningEffort],
+    ]) {
+      if (value !== undefined && value !== null && !EFFORT_LEVELS.has(value)) {
+        const err = new Error(
+          `${optionName} must be one of ${[...EFFORT_LEVELS].join(', ')} for backend claude. ` +
+          'No job was created.'
+        );
+        err.code = 'VALIDATION_FAILED';
+        err.failureClass = 'usage_error';
+        err.optionName = optionName;
+        err.backendName = 'claude';
+        throw err;
+      }
     }
   }
 

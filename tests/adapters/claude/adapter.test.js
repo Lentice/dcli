@@ -167,6 +167,31 @@ if (process.platform === 'win32') {
 }
 
 // ===========================================================================
+// 6a. Effort aliases validate and prefer --effort
+// ===========================================================================
+{
+  for (const level of EFFORT_LEVELS) {
+    const adapter = makeMinimalAdapter();
+    adapter.ValidateRequest({ effort: level });
+    adapter.ValidateRequest({ reasoningEffort: level });
+  }
+
+  for (const optionName of ['effort', 'reasoningEffort']) {
+    const adapter = makeMinimalAdapter();
+    assert.throws(() => adapter.ValidateRequest({ [optionName]: 'turbo' }), (err) => (
+      err.code === 'VALIDATION_FAILED' &&
+      err.failureClass === 'usage_error' &&
+      err.optionName === `--${optionName.replace(/[A-Z]/g, match => '-' + match.toLowerCase())}` &&
+      err.message.includes('No job was created.')
+    ));
+  }
+
+  const argv = buildArgv({ effort: 'high', reasoningEffort: 'low' });
+  assert.deepStrictEqual(argv.slice(argv.indexOf('--effort'), argv.indexOf('--effort') + 2), ['--effort', 'high']);
+  console.log('PASS: Claude effort aliases validate and prefer --effort');
+}
+
+// ===========================================================================
 // 7. Contract operations exist
 // ===========================================================================
 {

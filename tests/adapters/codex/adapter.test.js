@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { CodexAdapter, buildArgv, resolveCodexPath } = require('../../../adapters/codex/adapter');
+const { CodexAdapter, buildArgv, resolveCodexPath, EFFORT_LEVELS } = require('../../../adapters/codex/adapter');
 const { executableNames, resolveExecutablePath } = require('../../../adapters/shared/resolve-executable');
 const { validateFact } = require('../../../core/fact-types');
 const { ScriptedChild } = require('../../../tests/fixtures/scripted-child');
@@ -293,6 +293,32 @@ if (process.platform !== 'win32') {
   const iterator = adapter.Observe({});
   assert.ok(iterator && typeof iterator[Symbol.asyncIterator] === 'function');
   console.log('PASS: Observe returns async iterator');
+}
+
+// ===========================================================================
+// 6a. Effort aliases validate and prefer --effort
+// ===========================================================================
+{
+  for (const level of EFFORT_LEVELS) {
+    const adapter = makeMinimalAdapter();
+    adapter.ValidateRequest({ effort: level });
+    adapter.ValidateRequest({ reasoningEffort: level });
+  }
+
+  for (const optionName of ['effort', 'reasoningEffort']) {
+    const adapter = makeMinimalAdapter();
+    assert.throws(() => adapter.ValidateRequest({ [optionName]: 'turbo' }), (err) => (
+      err.code === 'VALIDATION_FAILED' &&
+      err.failureClass === 'usage_error' &&
+      err.optionName === `--${optionName.replace(/[A-Z]/g, match => '-' + match.toLowerCase())}` &&
+      err.message.includes('No job was created.')
+    ));
+  }
+
+  const argv = buildArgv({ workDir: process.cwd(), resultFilePath: 'result.txt', effort: 'high', reasoningEffort: 'low' });
+  assert.ok(argv.includes('model_reasoning_effort=high'));
+  assert.ok(!argv.includes('model_reasoning_effort=low'));
+  console.log('PASS: Codex effort aliases validate and prefer --effort');
 }
 
 // ===========================================================================

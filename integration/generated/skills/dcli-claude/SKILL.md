@@ -329,11 +329,11 @@ Backend: claude (Claude Code -p --output-format stream-json)
 | Interactive permissions | No — unattended mode only |
 | Graceful cancel | No — only hard kill |
 | Structured output | Yes (`--json-schema`) — but unused; wrapper uses text-based findings |
-| Effort/reasoning | `--reasoning-effort <level>` (enum: low, medium, high, xhigh, max) |
+| Effort/reasoning | `--effort <level>` (preferred) or `--reasoning-effort <level>` (accepted compatibility alias); enum: low, medium, high, xhigh, max |
 
 ## Flags specific to this backend
 
-- `--reasoning-effort <level>` — reasoning effort level (use instead of `--variant` or `--effort`)
+- `--effort <level>` — preferred spelling. `--reasoning-effort <level>` is an accepted compatibility alias for the same setting; if both are supplied, `--effort` wins. `--variant` is rejected. A value outside the enum is rejected with exit `2` before a job is created.
 
 ## Spend cap
 

@@ -19,6 +19,7 @@ const DETECT_VERSION_TIMEOUT_MS = 10000;
 const STARTUP_SENTINEL_MS = 10000;
 const LIVE_SMOKE_TIMEOUT_MS = 30000;
 const MAX_RESULT_BYTES = 1024 * 1024;
+const EFFORT_LEVELS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 
 /**
  * Given a resolved npm-global JS wrapper path for the `codex` package
@@ -274,6 +275,23 @@ class CodexAdapter {
       err.optionName = '--variant';
       err.backendName = 'codex';
       throw err;
+    }
+
+    for (const [optionName, value] of [
+      ['--effort', request.effort],
+      ['--reasoning-effort', request.reasoningEffort],
+    ]) {
+      if (value !== undefined && value !== null && !EFFORT_LEVELS.has(value)) {
+        const err = new Error(
+          `${optionName} must be one of ${[...EFFORT_LEVELS].join(', ')} for backend codex. ` +
+          'No job was created.'
+        );
+        err.code = 'VALIDATION_FAILED';
+        err.failureClass = 'usage_error';
+        err.optionName = optionName;
+        err.backendName = 'codex';
+        throw err;
+      }
     }
   }
 
@@ -735,4 +753,4 @@ class CodexAdapter {
 
 applyProcessLifecycle(CodexAdapter);
 
-module.exports = { CodexAdapter, buildArgv, resolveCodexPath };
+module.exports = { CodexAdapter, buildArgv, resolveCodexPath, EFFORT_LEVELS };

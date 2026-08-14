@@ -52,9 +52,9 @@ way opencode's CLI does and treat it as the study §5 hazard class.
 | `--effort <level>` | **`low` \| `medium` \| `high` \| `xhigh` \| `max`** |
 | `--betas <betas...>` | beta headers (API-key users only) |
 
-`--effort`'s enum here differs from Codex's (`none..ultra`, and not even a flag there) and from
-opencode's unbounded `--variant` string. Hence `dcli-claude --reasoning-effort low|medium|high|xhigh|max`
-rather than a shared `--effort` (ADR-004).
+`--effort`'s enum here differs from Codex's (`none..ultra`) and from opencode's unbounded `--variant`
+string. `--effort` is the preferred dcli spelling; `--reasoning-effort` is an accepted compatibility
+alias, and `--effort` wins when both are supplied (ADR-004).
 
 ## Permissions and tools
 
@@ -190,7 +190,7 @@ adapter for this backend, not delegated as it can be for Codex.
 | final result | last assistant message from the stream (or `--output-format json`) |
 | event stream | `stream-json` on stdout |
 | model | `--model` |
-| reasoning effort | `--effort low..max` — surfaced as `dcli-claude --reasoning-effort` |
+| reasoning effort | `--effort low..max` — surfaced as `dcli-claude --effort`; `--reasoning-effort` is an accepted compatibility alias |
 | access `read-only` | `--permission-mode` + `--disallowedTools`/`--tools`, wrapper-verified |
 | access `workspace` | `--permission-mode acceptEdits` inside the wrapper's worktree |
 | working directory | process cwd (+ `--add-dir` for extras) |

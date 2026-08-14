@@ -9,11 +9,11 @@ Backend: codex (codex exec --json, prompt on stdin)
 | Interactive permissions | No — sandbox mode is the only access control |
 | Graceful cancel | No — only hard kill |
 | Structured output | Yes (`--output-schema`) — but unused; wrapper uses text-based findings |
-| Effort/reasoning | `--effort <level>` (enum: none, minimal, low, medium, high, xhigh, max, ultra) |
+| Effort/reasoning | `--effort <level>` (preferred) or `--reasoning-effort <level>` (accepted compatibility alias); enum: none, minimal, low, medium, high, xhigh, max, ultra |
 
 ## Flags specific to this backend
 
-- `--effort <level>` — reasoning effort level (use instead of `--variant` or `--reasoning-effort`)
+- `--effort <level>` — preferred spelling. `--reasoning-effort <level>` is an accepted compatibility alias for the same setting; if both are supplied, `--effort` wins. `--variant` is rejected. A value outside the enum is rejected with exit `2` before a job is created.
 
 ## Commands
 
