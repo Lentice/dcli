@@ -1,0 +1,19 @@
+node_modules/
+*.log
+.DS_Store
+.superpowers/
+.scratch/
+.dcli-state/
+.live-smoke-state-*/
+.claude/settings.local.json
+
+# Keep the built Windows containment helper in packed installs.
+native/windows-job-helper/obj/
+native/windows-job-helper/bin/*
+!native/windows-job-helper/bin/Debug/
+!native/windows-job-helper/bin/Debug/net10.0/
+!native/windows-job-helper/bin/Debug/net10.0/contain.exe
+!native/windows-job-helper/bin/Release/
+!native/windows-job-helper/bin/Release/contain.exe
+
+.tmp-test/

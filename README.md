@@ -29,7 +29,7 @@ Two sequenced steps, from a clone of this repo:
 
 ```powershell
 # 1. Put dcli, dcli-codex, dcli-opencode, dcli-claude on PATH
-npm install -g .
+npm install -g . --install-links
 
 # 2. Install the agent integration (skills, commands, rules)
 pwsh -NoProfile -File install.ps1
@@ -65,7 +65,9 @@ dcli-codex --help
 dcli-claude --help
 ```
 
-For local development on this repo instead of a standalone install, use `npm link` in place of `npm install -g .`.
+The `--install-links` option makes this local-path install copy the package into npm's global directory instead of
+creating a junction back to the repository. The installed shims therefore keep working if this checkout is moved or
+deleted. Use `npm link` only for deliberate live development against this checkout.
 
 ## What it does
 
