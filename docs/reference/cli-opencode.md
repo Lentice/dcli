@@ -295,3 +295,5 @@ dcli-opencode apply --reset-author --message "feat: add input validation" <job-i
 | Apply repository state not verified | `27` |
 
 No granular contract. The wrapper translates to its own codes (spec §7).
+The wrapper's `18` is reserved for a worker/backend launch failure before the backend starts; a
+prompt-delivery failure after `Start()` succeeds is `10` instead.

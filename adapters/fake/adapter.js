@@ -136,6 +136,7 @@ class FakeAdapter {
   }
 
   Start(attempt) {
+    if (this._script.behaviors.failStart) throw new Error(this._script.behaviors.failStart);
     return { handle: 'fake-handle' };
   }
 

@@ -275,6 +275,9 @@ understands:
   something the wrapper orchestrated), that nested process inherits the sentinel automatically and
   fails fast at startup.
 
+For the wrapper contract, exit `18` means the worker or Claude process never started. A prompt-delivery
+failure after Claude has started is backend execution failure, exit `10`.
+
 ---
 
 ## Verification results (verified 2026-07-29 on claude 2.1.220)

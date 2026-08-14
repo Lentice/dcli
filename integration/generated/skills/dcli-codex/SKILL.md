@@ -252,7 +252,7 @@ adopt an unverified finding to close the loop.
 | 15 | Permission/access denied | Refine the permission profile. Never retry automatically. |
 | 16 | Network failure | At most one jittered retry for read-only jobs only. |
 | 17 | Lock, local capacity, or corrupt state | Transient: "System at capacity" means the local queue is full right now, not that a provider refused. Retry with bounded backoff, or use `submit`. A job record that exists but cannot be read also lands here — that one is not retryable, so read the message before retrying. |
-| 18 | Worker launch / startup failure | The local worker process could not be started, so the backend never ran. Nothing was consumed on the provider side; this is not an auth, quota, or backend failure and must not be remediated as one. Run `doctor`, then retry once. |
+| 18 | Worker launch / startup failure | The worker or backend process could not be started, so the backend never ran. Nothing was consumed on the provider side. A failure after the backend starts (including prompt delivery) is exit `10`, not `18`. Run `doctor`, then retry once. |
 | 20 | Caller wait budget elapsed | Job may still be active; check the returned state, increase `--timeout-sec`, or check later. |
 | 21 | Cancellation unconfirmed | Check job status manually. |
 | 22 | Session expired | Start a fresh job with `fork_from_artifacts` or `retry_attempt`. |

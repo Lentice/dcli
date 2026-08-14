@@ -152,6 +152,32 @@ await withTempDir(async (dir) => {
 });
 
 // =============================================================================
+// 1c. A prompt-send failure happens after the backend has started
+// =============================================================================
+await withTempDir(async (dir) => {
+  const store = new JobStore({ stateRoot: dir });
+  const adapter = adapterFor('never reached');
+  adapter.SendPrompt = () => { throw new Error('prompt pipe closed'); };
+
+  let error;
+  try {
+    await executeRun({ store, adapter, repoKey: 'prompt-failure', repoRoot: dir, prompt: 'run', hardTimeoutSec: 60 });
+  } catch (err) {
+    error = err;
+  }
+
+  assert.ok(error, 'prompt-send failure must be reported to the caller');
+  assert.strictEqual(error.exitCode, 10, 'a post-start prompt failure must use backend execution exit 10');
+  const jobId = fs.readdirSync(path.join(dir, 'jobs', 'prompt-failure'))[0];
+  const status = store.readStatus({ repoKey: 'prompt-failure', jobId });
+  assert.strictEqual(status.state, 'failed');
+  assert.strictEqual(status.failure_reason, 'backend_execution_failed');
+  assert.strictEqual(status.failure.class, 'backend_execution_failed');
+  assert.notStrictEqual(status.failure_reason, 'adapter_start_failed');
+  console.log('PASS: post-start prompt failure is backend execution failure');
+});
+
+// =============================================================================
 // 2. run.js — implements mode writes prompt.md, command.json, result.md
 // =============================================================================
 await withTempDir(async (dir) => {

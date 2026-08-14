@@ -303,4 +303,5 @@ argv positional form is subject to OS command-line length limits. `--output-last
 
 Codex's own exit codes are not a granular contract; `ccodex` translates them. Notable: the wrapper's
 `10` (backend execution failed), `11` (no usable result), `24` (hard timeout) all map onto
-Codex-native failures that do not distinguish themselves by exit code alone.
+Codex-native failures that do not distinguish themselves by exit code alone. Wrapper exit `18` is
+reserved for a launch failure before Codex starts; prompt delivery after startup is exit `10`.

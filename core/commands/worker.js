@@ -280,19 +280,22 @@ function dropQueueClaim(queueClaimPath) {
 }
 
 main().catch(err => {
-  console.error('Worker fatal:', err.message);
-  try {
-    const s = new (require('../job-store').JobStore)({ stateRoot: process.env.DCLI_STATE_ROOT });
-    s.journalTransition(process.env.DCLI_JOB_ID, process.env.DCLI_REPO_KEY, {
-      kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'failed',
-      detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: 'worker_crash', failure: { class: 'worker_crash', message: err.message, source: 'wrapper' } },
-    });
-  } catch {}
+  const exitCode = err && Number.isInteger(err.exitCode) ? err.exitCode : 1;
+  console.error('Worker fatal:', err && err.message ? err.message : err);
+  if (exitCode === 1) {
+    try {
+      const s = new (require('../job-store').JobStore)({ stateRoot: process.env.DCLI_STATE_ROOT });
+      s.journalTransition(process.env.DCLI_JOB_ID, process.env.DCLI_REPO_KEY, {
+        kind: 'attempt_state_changed', attempt: 1, from: 'created', to: 'failed',
+        detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: 'worker_crash', failure: { class: 'worker_crash', message: err && err.message ? err.message : 'Worker crashed', source: 'wrapper' } },
+      });
+    } catch {}
+  }
   writeSentinel(
     process.env.DCLI_STATE_ROOT && process.env.DCLI_REPO_KEY && process.env.DCLI_JOB_ID
       ? path.join(process.env.DCLI_STATE_ROOT, 'jobs', process.env.DCLI_REPO_KEY, process.env.DCLI_JOB_ID)
       : null,
-    1,
+    exitCode,
     'failed'
   );
   try {
@@ -304,5 +307,5 @@ main().catch(err => {
     });
     admission.releaseSlot(process.env.DCLI_SLOT_ID);
   } catch {}
-  process.exit(1);
+  process.exit(exitCode);
 });

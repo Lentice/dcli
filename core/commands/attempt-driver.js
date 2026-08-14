@@ -17,7 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { buildEnvelope } = require('../envelope');
-const { classifyTerminalFailure, terminalExitCode } = require('../failure-class');
+const { classifyTerminalFailure, failureClassToExitCode, terminalExitCode } = require('../failure-class');
 const { reduce, TERMINAL } = require('../reducer');
 const { resolveDeadline, resolveHardTimeoutMs } = require('../deadlines');
 const { finalizeSnapshot, removeWorktree } = require('../worktree');
@@ -266,7 +266,9 @@ async function driveAttempt({
 
   // Teardown for a genuine error: dispose the adapter (killing the child)
   // BEFORE removing the worktree it was running inside.
-  async function abandon(err) {
+  async function abandon(err, started) {
+    const failureClass = started ? 'backend_execution_failed' : 'worker_launch';
+    const failureReason = started ? 'backend_execution_failed' : 'adapter_start_failed';
     await tryDisposeAdapter(adapter, attempt);
     if (worktreePath) removeWorktree(repoRoot, worktreePath);
     releaseSlot();
@@ -281,19 +283,27 @@ async function driveAttempt({
           detail: {
             finished_at: new Date().toISOString(),
             phase: 'terminal',
-            failure_reason: 'adapter_start_failed',
-            failure: { class: 'worker_launch', message: err && err.message ? err.message : 'Adapter failed to start' },
+            failure_reason: failureReason,
+            failure: { class: failureClass, message: err && err.message ? err.message : 'Adapter failed' },
           },
         });
       }
     } catch {}
-    if (err && !err.exitCode) err.exitCode = 18;
+    if (err) err.exitCode = failureClassToExitCode(failureClass) ?? 1;
     throw err;
   }
 
   try {
     adapter.PrepareInvocation(attempt, request);
     await adapter.Start(attempt);
+  } catch (err) {
+    clearTimeout(hardTimeoutTimer);
+    if (hardTimedOut) return finishTimedOut();
+    if (cancelled) return finishCancelled();
+    return abandon(err, false);
+  }
+
+  try {
     if (hardTimedOut || cancelled) throw null;
     if (onStarted) onStarted(attempt);
     await adapter.SendPrompt(attempt, prompt);
@@ -302,7 +312,7 @@ async function driveAttempt({
     clearTimeout(hardTimeoutTimer);
     if (hardTimedOut) return finishTimedOut();
     if (cancelled) return finishCancelled();
-    return abandon(err);
+    return abandon(err, true);
   }
 
   const resolveSessionId = (collected) => collected.backend_session_id || fallbackSessionId || null;

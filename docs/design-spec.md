@@ -334,7 +334,7 @@ translated, never surfaced.
 | `15` | Permission / access-policy denial |
 | `16` | Network / transport failure |
 | `17` | Lock acquisition or corrupt-state failure. (2026-08-11) Local admission capacity — "System at capacity", the local queue is full — classifies here as `lock` (bounded backoff retry), never as `14`. |
-| `18` | Worker launch / startup-sentinel failure |
+| `18` | Worker launch / startup-sentinel failure before the backend starts. A failure after `Start()` succeeds is backend execution failure (`10`), not a claim that no provider work occurred. |
 | `20` | Caller's `wait` timed out; job still active |
 | `21` | Cancellation could not be confirmed. (2026-08-11) On Windows a tree-kill rung that left survivors also exits `21` — the survivors are named in the human output and the JSON envelope's `containment_survivors`, and no clean `cancelled` outcome is written. |
 | `22` | Session missing / expired / incompatible with resume |
@@ -367,8 +367,8 @@ structured error type, not the status code.
 | `no_result` | Preserve events; caller may resume or retry manually. |
 | `cancelled` | Intentional. No retry. |
 | `lock` | Bounded backoff retry, then fail — **only when the contention is transient**: a held lock (`locking.js`) or local admission capacity (`job-setup.js`). (2026-08-13) Exit `17` also carries the other half of its §7 row, a job directory that exists but whose record cannot be read (`job-lookup.js`), and retrying that never fixes it. The two are distinguished by the failure detail, not by the code, so a caller that reacts to `17` must read which one it got before retrying. |
-| `worker_launch` | Run `doctor`. No blind loop. |
-| `backend_execution_failed` | Preserve the backend failure and report it. Do not treat it as a wrapper launch failure. |
+| `worker_launch` | The worker or backend process never started; no provider resources were consumed. Run `doctor`. No blind loop. |
+| `backend_execution_failed` | Preserve the backend failure and report it. This includes a prompt-send failure after `Start()` succeeds; do not treat it as a wrapper launch failure. |
 | `session_expired` | Start a fresh job; never silently substitute a different session. |
 | `apply_conflict` | Restore and report. Never auto-resolve. |
 | `repository_state_unverified` | Stop. Do not touch the repository again automatically; surface it for manual inspection. |

@@ -1,6 +1,6 @@
 # 126 — exit 18 claims the backend never ran when it did, and cannot be produced at all by the submit path
 
-**Status:** ready
+**Status:** in progress
 **Blocked by:** —
 **Tier:** Trust. Exit `18` is the one code that tells a delegating agent "no provider resources were
 consumed — re-running this is free". It is wrong in both directions: the foreground path returns it after
@@ -286,4 +286,29 @@ node scripts/generate-integration.js --check
 
 ## Notes
 
-(empty)
+Implemented the launch/started split:
+
+- `PrepareInvocation` and `Start` failures remain `failure_reason: adapter_start_failed`, now with the
+  named `worker_launch` class and exit `18` in both directions through `core/failure-class.js`.
+- A `SendPrompt` failure after `Start()` succeeds is recorded as
+  `failure_reason: backend_execution_failed`, class `backend_execution_failed`, and exit `10`; it no
+  longer claims the backend failed to start.
+- The detached worker preserves a carried exit code and skips the duplicate `worker_crash` journal
+  entry, so a detached launch failure writes sentinel exit `18` and projects `worker_launch`.
+- Added foreground, detached-worker, and mapping regressions. Existing `core/worker-spawn.js` exit `18`
+  behavior remains unchanged.
+- Updated `docs/design-spec.md`, all three CLI references, `integration/source/core.md`, generated
+  skills, and reinstalled/verified the Claude and agents skill copies byte-for-byte.
+
+Direct checks passed:
+
+- `node tests/core/failure-class.test.js`
+- `node tests/core/attempt-population.test.js`
+- `node tests/core/worker-startup-failure.test.js`
+- `node tests/core/test-runner.test.js`
+- `node tests/core/attempt-driver.test.js`
+- `node tests/core/worker-spawn.test.js`
+- targeted `npx eslint` and `git diff --check`
+
+Per the user's instruction, `npm run check` was not run; the ticket remains `in progress` pending the
+full gate.

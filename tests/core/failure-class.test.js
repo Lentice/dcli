@@ -46,6 +46,8 @@ assert.strictEqual(exitCodeToFailureClass(12), 'environment');
 assert.strictEqual(exitCodeToFailureClass(26), 'protocol');
 assert.strictEqual(exitCodeToFailureClass(10), 'backend_execution_failed');
 assert.strictEqual(exitCodeToFailureClass(11), 'no_result');
+assert.strictEqual(failureClassToExitCode('worker_launch'), 18);
+assert.strictEqual(exitCodeToFailureClass(18), 'worker_launch');
 assert.strictEqual(terminalExitCode('failed', { class: 'backend_execution_failed' }, null), 10);
 assert.strictEqual(terminalExitCode('failed', { class: 'no_result' }, null), 11);
 assert.strictEqual(terminalExitCode('failed', { class: 'quota_or_rate_limit' }, null), 14);

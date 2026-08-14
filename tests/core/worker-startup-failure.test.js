@@ -134,6 +134,37 @@ async function main() {
     }
   }
 
+  // 3. Adapter start failure — the backend never started, so the driver's
+  // named worker_launch failure must survive the worker catch and sentinel.
+  {
+    const dir = tmpDir();
+    try {
+      const params = {
+        canonicalDir: process.cwd(), mode: 'run', access: 'read-only', hardTimeoutMs: 60000,
+        _adapterScript: {
+          behaviors: { failStart: 'backend executable unavailable' },
+          facts: [{ type: 'process_exited', code: 0 }],
+        },
+      };
+      const store = seedJob(dir, 'startup-3', JSON.stringify(params));
+      fs.writeFileSync(path.join(store.getJobDir(REPO_KEY, 'startup-3'), 'prompt.txt'), 'hello', 'utf8');
+      const exitCode = await runWorker(dir, 'startup-3');
+      assert.strictEqual(exitCode, 18, 'adapter start failure must exit 18');
+
+      const status = store.readStatus({ repoKey: REPO_KEY, jobId: 'startup-3' });
+      assert.strictEqual(status.state, 'failed');
+      assert.strictEqual(status.failure_reason, 'adapter_start_failed');
+      assert.strictEqual(status.failure.class, 'worker_launch');
+
+      const sentinel = readSentinel(store, 'startup-3');
+      assert.strictEqual(sentinel.exit_code, 18);
+      assert.strictEqual(sentinel.state, 'failed');
+      console.log('PASS: detached adapter start failure preserves worker_launch and exit 18');
+    } finally {
+      clean(dir);
+    }
+  }
+
   console.log('\nAll worker startup-failure tests passed.');
 }
 

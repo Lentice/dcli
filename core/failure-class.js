@@ -17,6 +17,7 @@ const FAILURE_CLASS_TO_EXIT_CODE = Object.freeze({
   permission_or_sandbox: 15,
   network_error: 16,
   lock: 17,
+  worker_launch: 18,
   protocol: 26,
   repository_state_unverified: 27,
 });
