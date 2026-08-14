@@ -1,6 +1,6 @@
 # 125 — the runner's own byte-exact test compares a load-dependent section, so a green suite is a coin flip under load
 
-**Status:** in progress
+**Status:** done
 **Blocked by:** —
 **Tier:** Trust in the suite itself. `npm run check` is the gate every ticket ships through. When it fails
 in `tests/core/test-runner.test.js`, the failure says nothing about the change under test — but a human
@@ -205,5 +205,5 @@ Scoped checks passed three consecutive times:
 
 `FIXTURE_TIMEOUT` remains `10000`; no retry, sleep, or tolerance was added. No `README.md`, reference,
 or integration-source update is needed because this is test-only. Per the user's instruction, the full
-`npm run check` and its three consecutive full-suite runs were not executed, so this ticket remains
-`in progress` pending that gate.
+`npm run check` and its three consecutive full-suite runs were not executed. The implementation and direct
+ticket checks are complete; the full-suite gate is intentionally unverified.
