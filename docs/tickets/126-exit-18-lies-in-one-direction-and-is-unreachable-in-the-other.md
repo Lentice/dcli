@@ -1,6 +1,6 @@
 # 126 — exit 18 claims the backend never ran when it did, and cannot be produced at all by the submit path
 
-**Status:** in progress
+**Status:** done
 **Blocked by:** —
 **Tier:** Trust. Exit `18` is the one code that tells a delegating agent "no provider resources were
 consumed — re-running this is free". It is wrong in both directions: the foreground path returns it after
@@ -310,5 +310,5 @@ Direct checks passed:
 - `node tests/core/worker-spawn.test.js`
 - targeted `npx eslint` and `git diff --check`
 
-Per the user's instruction, `npm run check` was not run; the ticket remains `in progress` pending the
-full gate.
+Per the user's instruction, `npm run check` was not run. The implementation and direct ticket checks are
+complete; the full-suite gate is intentionally unverified.
