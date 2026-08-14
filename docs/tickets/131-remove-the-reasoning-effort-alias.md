@@ -4,10 +4,19 @@
 **Blocked by:** —
 **Tier:** Ergonomics and doc trust. Two spellings for one setting is the drift engine that produced
 ticket 128 in the first place — four documents, three stories. One flag cannot contradict itself.
-**Filed from:** a maintainer decision on 2026-08-14, taken while reviewing 128. dcli has exactly one
-user, who confirms no script, recipe, or saved invocation uses `--reasoning-effort`; every remaining
-occurrence in this repository is either documentation or dcli's own generated skills, all of which
-ship from this same commit.
+**Filed from:** a maintainer decision on 2026-08-14, taken while reviewing 128, and verified by a
+`dcli-codex` audit of the full parser option surface the same day. dcli has exactly one user, who
+confirms that **no script, recipe, or saved invocation of theirs** uses `--reasoning-effort`, and who
+will reinstall the skills from this commit. (The flag is of course still wired through the parser, the
+CLI, four adapters, eight `core/` modules and ~14 test files — that wiring is precisely what this
+ticket deletes.)
+
+**Audit result, so the implementer does not re-derive it:** across all 37 option spellings the parser
+accepts, `--effort` / `--reasoning-effort` is the **only** pair that sets the same thing, and there is
+**no** option that is accepted but never consumed. `--embed-diff` / `--no-embed-diff` write one key with
+opposite values, and `--working` / `--staged` / `--range` select three different review scopes; neither
+is an alias. The shims (`cli/dcli-{codex,claude,opencode}.js`) add no options of their own — each only
+injects `--backend <b>`. So this ticket is the whole job, not the first of a series.
 
 ---
 
@@ -25,13 +34,15 @@ entirely, so there is nothing left to keep consistent. After this ticket:
 
 ```
 $ echo hi | dcli-claude run --reasoning-effort high --hard-timeout-sec 60
-dcli: unknown option --reasoning-effort
+Unknown flag: --reasoning-effort
 # exit 2, no job created
 ```
 
+That message is the parser's existing unknown-flag error, quoted exactly. Do not invent a new one.
+
 The goal includes the field behind the flag. Once no flag sets `reasoningEffort`, the field is dead
-weight threaded through eight `core/` modules and written into every attempt's `command.json` as a
-permanent `null`. Delete it too.
+weight threaded through eight `core/` modules and written as a permanent `null` into **two** persisted
+artifacts — every attempt's `command.json`, and every background job's `params.json`. Delete it too.
 
 ## Root cause
 
@@ -99,18 +110,24 @@ dcli-opencode --variant <provider-specific string>
 Flag surface:
 
 - `core/cli-args.js` — `VALUE_FLAGS` (the `'--reasoning-effort'` entry) and the
-  `case '--reasoning-effort': result.reasoningEffort = val; break;` line, plus the `reasoningEffort`
-  key in the `result` initializer. Removing the `VALUE_FLAGS` entry is what makes the flag land in
-  `result.unknown` — trace how `unknown` produces exit 2 and confirm it does so *before* job creation.
+  `case '--reasoning-effort': result.reasoningEffort = val; break;` line. There is **no**
+  `reasoningEffort` key in the `result` initializer — do not go looking for one. Removing the
+  `VALUE_FLAGS` entry makes the flag an unknown flag, which the parse loop **throws** on directly
+  (`throw new Error('Unknown flag: ' + tok)`); `result.unknown` is initialized and never written or
+  read, so it is not part of this path. `cli/dcli.js`'s top-level catch prints `err.message` and exits
+  `2`, before any job record exists.
 - `cli/dcli.js` — the `--reasoning-effort <s>` help line, and **four** `reasoningEffort: parsed.reasoningEffort`
   call sites feeding run / submit / resume / review.
 
 Adapters:
 
-- `adapters/codex/adapter.js` — `const effort = opts.effort || opts.reasoningEffort;` in `buildArgv()`,
-  the `['--reasoning-effort', request.reasoningEffort]` enum-validation pair in `ValidateRequest()`,
-  the `reasoningEffort:` field in the spawn/record path, and the `@param` JSDoc.
-- `adapters/claude/adapter.js` — the same four shapes.
+- `adapters/codex/adapter.js` — four shapes: the `@param` JSDoc, `const effort = opts.effort ||
+  opts.reasoningEffort;` in `buildArgv()`, the `['--reasoning-effort', request.reasoningEffort]`
+  enum-validation pair in `ValidateRequest()`, and the `reasoningEffort:` field in the spawn/record path.
+- `adapters/claude/adapter.js` — only **two** shapes, not four: the `['--reasoning-effort',
+  request.reasoningEffort]` validation pair, and `request.effort || request.reasoningEffort || undefined`
+  on the spawn path. Claude's `buildArgv()` already reads `opts.effort` alone, and has no
+  `reasoningEffort` JSDoc.
 - `adapters/opencode/adapter.js` — `ValidateRequest()` rejects `reasoningEffort` **and** `effort` in two
   near-identical branches. The `reasoningEffort` branch becomes unreachable once no flag sets it; delete
   that branch, keep the `--effort` one.
@@ -119,10 +136,14 @@ Adapters:
   rather than deleting it; `_buildValidationError()` derives the flag name from the key, so the message
   becomes `--effort is not supported by backend fake`.
 
-Core plumbing (the field, always `null` after the flag is gone):
+Core plumbing — **eight** modules, and the field reaches **two** persisted artifacts, not one:
 
 - `core/commands/run.js`, `submit.js`, `resume.js`, `review.js` — each destructures `reasoningEffort`
-  from its options and forwards it into the request.
+  from its options and forwards it into the request. `submit.js` additionally persists it into
+  **`params.json`**, the background-job parameter file.
+- `core/commands/worker.js` — reads `reasoningEffort` back out of `params.json`, hands it to the
+  adapter's `ValidateRequest()`, and passes it on to `command.json` persistence. **Easy to miss: the
+  worker is the consumer that makes the `params.json` copy load-bearing.**
 - `core/job-setup.js`, `core/result-artifact.js` — where it reaches `command.json`.
 
 Tests that will go red and must be updated, not deleted:
@@ -133,6 +154,10 @@ Tests that will go red and must be updated, not deleted:
   testing what it names.
 - `tests/core/attempt-population.test.js`, `tests/core/attempt-driver.test.js` — assert
   `command.reasoningEffort === null` and pass `reasoningEffort: null` in fixtures.
+- `tests/core/worker-hard-timeout.test.js`, `worker-cancel-watcher.test.js`,
+  `hard-timeout-tree-kill.test.js`, `setup-cleanup.test.js`, `setup-failure.test.js` — all carry
+  `reasoningEffort` in their `params.json` / request fixtures. These are the ones a search restricted to
+  the obvious files will miss.
 - `tests/adapters/claude/adapter.test.js`, `tests/adapters/codex/adapter.test.js` — the 128 alias tests
   ("accepted via `--reasoning-effort`", "`--effort` wins when both supplied"). The precedence test has
   no meaning once there is one spelling; replace it, do not just delete it — see §5.
@@ -140,6 +165,9 @@ Tests that will go red and must be updated, not deleted:
   `--reasoning-effort` rejection.
 - `tests/integration/generate.test.js` — `'dcli-claude': ['--reasoning-effort']` in a skill-content
   expectation map.
+- `tests/core/cli-args.test.js` — its unknown-flag test is the **only** place acceptance criterion **A**
+  can actually be proven. No adapter unit test can show that the CLI boundary rejects a removed flag; add
+  the case here.
 
 Documents:
 
@@ -154,15 +182,17 @@ Line numbers drift; the function names and code shapes are the spec.
 
 ### 1. Delete the flag from the parser
 
-In `core/cli-args.js`: drop `'--reasoning-effort'` from `VALUE_FLAGS`, drop its `case`, drop
-`reasoningEffort` from the `result` initializer. Nothing else in this file changes. The flag then falls
-through to `result.unknown` and exits 2 with `unknown option`, before any job record exists.
+In `core/cli-args.js`: drop `'--reasoning-effort'` from `VALUE_FLAGS` and drop its `case`. Nothing else
+in this file changes. The flag is then an unknown flag and the parse loop throws
+`Unknown flag: --reasoning-effort`, which `cli/dcli.js` prints and exits `2` on, before any job record
+exists. That exact string — not `dcli: unknown option` — is what the tests must assert.
 
 ### 2. Delete the field from `core/` and the CLI
 
 `cli/dcli.js`: remove the help line and all four `reasoningEffort: parsed.reasoningEffort` arguments.
-`core/commands/{run,submit,resume,review}.js`, `core/job-setup.js`, `core/result-artifact.js`: remove the
-parameter and the field. `command.json` loses its permanently-`null` `reasoningEffort` key.
+`core/commands/{run,submit,resume,review}.js`, `core/commands/worker.js`, `core/job-setup.js`,
+`core/result-artifact.js`: remove the parameter and the field. Both `params.json` (written by `submit`,
+read by `worker`) and `command.json` lose their permanently-`null` `reasoningEffort` key.
 
 ### 3. Collapse the adapters to one spelling
 
@@ -206,11 +236,12 @@ paragraph is where the reversal lives.
 
 Update, do not delete:
 
-- Replace each "accepted via `--reasoning-effort`" case with an assertion that `--reasoning-effort` is
-  now an **unknown option**: exit `2`, and no job record created.
-- Replace the "`--effort` wins when both supplied" precedence test with the same unknown-option
-  assertion — the precedence rule no longer exists, but the fact that the old spelling is *loudly* gone
-  is the thing worth pinning.
+- Delete each "accepted via `--reasoning-effort`" case and each "`--effort` wins when both supplied"
+  precedence case from the adapter tests. They test a rule that no longer exists, and an adapter unit
+  test **cannot** stand in for the replacement — adapters never see argv.
+- Add the replacement in `tests/core/cli-args.test.js`, beside its existing unknown-flag case:
+  `parseArgs([... , '--reasoning-effort', 'high'])` throws `Unknown flag: --reasoning-effort`. This is
+  the one test that proves acceptance criterion **A**.
 - Retarget `parseArgs(['--backend', 'fake', 'run', '--reasoning-effort'])` to `'--effort'` so it still
   tests "value flag missing its value is a hard error".
 - opencode's rejection tests keep only the `--effort` case.
@@ -233,21 +264,29 @@ mean every future agent session learns a flag that now exits 2.
   opencode's variant surface is unbounded and provider-specific, with no enum. Unrelated to this ticket.
 - **Changing either backend's effort enum.** 128 settled both. The design-spec §14 codex list is
   corrected here only because it disagrees with 128's settled enum, which is a transcription fix.
-- **Migrating existing job records.** Old `command.json` files keep their `reasoningEffort` key; readers
-  never require it. Rewriting history for a field that was always `null` buys nothing.
+- **Migrating existing job records.** Old `command.json` and `params.json` files keep their
+  `reasoningEffort` key; readers never require it. Rewriting history for a field that was always `null`
+  buys nothing. (A job submitted before this commit and run by a worker after it is the one edge case:
+  the worker simply ignores the extra key.)
+- **The slash-command names that differ from their CLI subcommands** — `:jobs`→`list`, `:ask`→`run`,
+  `:implement`→`run --mode implement`. The codex audit flagged these as alias-shaped. They are a
+  deliberate skill-surface convenience, documented as a mapping table in the generated skills, and they
+  are not option spellings; nothing about them contradicts itself. Out of scope, and not a follow-up.
 - **Touching `status.json`.** The field is not there. If the implementer finds it there, stop — that is
   invariant 4 territory and this ticket has not authorised it.
 
 ## Acceptance criteria
 
-- [ ] **A.** `--reasoning-effort` on any shim exits `2` as an unknown option and creates no job record.
+- [ ] **A.** `--reasoning-effort` on any shim fails with `Unknown flag: --reasoning-effort`, exits `2`,
+  and creates no job record — asserted at the parser boundary in `tests/core/cli-args.test.js`.
 - [ ] **B.** `--effort` still works on codex and claude for every documented level, and is still rejected
   by opencode with `unsupported_capability` and exit `2`.
 - [ ] **C.** An out-of-enum `--effort` value is still a `usage_error` with exit `2` and no job record —
   128's behavior is unchanged.
 - [ ] **D.** No occurrence of `reasoning-effort` or `reasoningEffort` remains anywhere outside
   `docs/tickets/`.
-- [ ] **E.** `command.json` no longer carries a `reasoningEffort` key.
+- [ ] **E.** Neither `command.json` nor `params.json` carries a `reasoningEffort` key for a newly
+  created job.
 - [ ] **F.** `docs/design-spec.md` §14 and `docs/product-spec.md` carry the exact replacement text quoted
   in this ticket.
 - [ ] **G.** ADR-004's quoted opencode error message matches the string the adapter actually emits.
@@ -261,8 +300,13 @@ mean every future agent session learns a flag that now exits 2.
 
 ```bash
 # PRE-FLIGHT — the premise of this ticket. reasoningEffort must NOT be a status.json field.
-# If this prints anything under a status-writing path, STOP and re-read the Binding constraints.
+# The codex audit of 2026-08-14 confirmed this against _defaultStatus() in core/job-store.js;
+# re-run it anyway, and if it prints anything, STOP and re-read the Binding constraints.
 grep -rn "reasoningEffort" core/status*.js core/job-store*.js 2>/dev/null
+# expect: no output
+
+# The worker path — the copy most likely to be left behind:
+grep -rn "reasoningEffort" core/commands/worker.js core/commands/submit.js
 # expect: no output
 
 # The spelling is gone from code and docs alike (tickets keep their history):
@@ -272,7 +316,7 @@ grep -rn "reasoning-effort\|reasoningEffort" --exclude-dir=node_modules --exclud
 
 # The old flag is loudly rejected, before any job exists:
 echo hi | node cli/dcli.js --backend claude run --repo . --reasoning-effort high --hard-timeout-sec 60; echo "exit=$?"
-# expect: unknown option --reasoning-effort, "No job was created."-equivalent, exit=2
+# expect: exactly "Unknown flag: --reasoning-effort", exit=2, and `dcli-claude list` unchanged
 
 # The surviving flag still works end to end on both backends:
 echo hi | node cli/dcli.js --backend codex run --repo . --effort xhigh --hard-timeout-sec 60; echo "exit=$?"
