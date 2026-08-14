@@ -190,5 +190,11 @@ Added the `backend_execution_failed` class at exit `10` and assign it in the red
 unclassified backend failures. Added `no_result` at exit `11`; the result-size/missing-artifact
 classifier gives it precedence over the generic backend execution class. Exit `1` remains the
 documented unclassified wrapper-side fallback. Direct failure-class, backend-failure, envelope,
-worktree, and opencode tests pass; full suite was intentionally not run per the implementation
-request. Generated and installed integration skills were verified byte-identical.
+worktree, and opencode tests pass. Generated and installed integration skills were verified
+byte-identical.
+
+**Full suite (2026-08-14).** `npm run check` run twice: eslint clean both times; first run 62/62
+green, second run 61 passed with one failure in `tests/core/test-runner.test.js` — the test-runner's
+own meta-test asserting that output matches across concurrency levels. That test passes 3/3
+standalone and touches nothing in this ticket's change; it is a pre-existing flake under full-suite
+load, not a regression here. Recorded rather than papered over; it deserves its own ticket.

@@ -169,6 +169,8 @@ Removed the unreachable policy field and all policy threading/readers. Pending i
 unconditionally rejected with the same outcome and class; `reply: always` now reports unsupported
 without naming a nonexistent input. No policy field was persisted: new `backend_state` still carries
 only its schema version, and diagnostics were not persisted. `Respond()` has no product caller in
-`core/`; it remains test-reachable, as scoped. Direct opencode interaction tests pass; full suite was
-intentionally not run per the implementation request. Generated and installed integration skills
-were verified byte-identical.
+`core/`; it remains test-reachable, as scoped. Direct opencode interaction tests pass. Generated and
+installed integration skills were verified byte-identical.
+
+**Full suite (2026-08-14).** `npm run check` green apart from a pre-existing flake in
+`tests/core/test-runner.test.js` under full-suite load — see ticket 121's Notes for the measurement.

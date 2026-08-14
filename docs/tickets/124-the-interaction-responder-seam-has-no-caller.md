@@ -154,4 +154,22 @@ engine has no `Respond()` caller, so only `rejected_unattended` is produced; the
 remain documented in `docs/design-spec.md` and `docs/architecture-decisions.md` but were not found in
 persisted `status.json` records or runtime emissions. The interface and live interaction facts remain
 unchanged; comments now state the deferred seam and current reachability. Direct interaction and fact
-tests pass; full suite was intentionally not run per the implementation request.
+tests pass.
+
+**Criterion B (2026-08-14) — per value, with evidence.** No adapter or engine file emits any of the
+three, so none can ever have been written to a `status.json`; the only producer of an
+`interaction_resolved` outcome is `adapters/opencode/turn.js`, which emits `rejected_unattended` and
+nothing else. All three are nevertheless named in shipped documents *and* asserted by a contract
+test, which is why branch 2b keeps them:
+
+| Value | Persisted? | Named in a shipped document | Asserted by a test |
+|---|---|---|---|
+| `pre_authorized` | never — no emission site | `docs/design-spec.md:389`, ADR-002 (`architecture-decisions.md:306`), `architecture-review-record.md:69` | `tests/contract/contract.test.js:22` |
+| `denied_by_policy` | never — no emission site | `docs/design-spec.md:390`, same ADR and record lines | `tests/contract/contract.test.js:23` |
+| `awaiting_authorized_responder` | never — no emission site | `docs/design-spec.md:391`, same ADR and record lines | `tests/contract/contract.test.js:24` |
+
+Each is therefore unproducible but not undocumented: removing any one would break a contract test and
+contradict an ADR, which settles branch 2b independently of the reachability argument.
+
+**Full suite (2026-08-14).** `npm run check` green apart from a pre-existing flake in
+`tests/core/test-runner.test.js` under full-suite load — see ticket 121's Notes for the measurement.
