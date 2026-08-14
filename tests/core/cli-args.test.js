@@ -86,7 +86,23 @@ console.log('PASS: valueless flags rejected');
 console.log('PASS: unknown flags rejected');
 
 // ===========================================================================
-// 6. Stray positionals rejected
+// 6. Ticket 131 deliberately removed --reasoning-effort; keep the old flag
+//    rejected so it cannot be reintroduced as an alias
+// ===========================================================================
+{
+  try {
+    parseArgs(['--backend', 'fake', 'run', '--reasoning-effort', 'high']);
+    assert.fail('Should have thrown for removed --reasoning-effort flag');
+  } catch (err) {
+    assert.strictEqual(err.exitCode, 2, 'removed --reasoning-effort must exit 2');
+    assert.strictEqual(err.message, 'Unknown flag: --reasoning-effort',
+      `Error must name the removed flag: ${err.message}`);
+  }
+}
+console.log('PASS: ticket 131 removed --reasoning-effort flag stays rejected');
+
+// ===========================================================================
+// 7. Stray positionals rejected
 // ===========================================================================
 {
   // For status/wait/read which take exactly one positional (job ID),
@@ -101,7 +117,7 @@ console.log('PASS: unknown flags rejected');
 console.log('PASS: stray positionals rejected');
 
 // ===========================================================================
-// 7. Range validation precedes conversion
+// 8. Range validation precedes conversion
 // ===========================================================================
 {
   // Negative timeout must be rejected BEFORE any side effect
@@ -116,7 +132,7 @@ console.log('PASS: stray positionals rejected');
 console.log('PASS: range validation precedes conversion');
 
 // ===========================================================================
-// 8. --hard-timeout-sec 0 is rejected with exit 2
+// 9. --hard-timeout-sec 0 is rejected with exit 2
 // ===========================================================================
 {
   try {
@@ -146,7 +162,7 @@ console.log('PASS: range validation precedes conversion');
 console.log('PASS: --hard-timeout-sec 0 rejected');
 
 // ===========================================================================
-// 9. --backend enum validation (unknown backend rejected)
+// 10. --backend enum validation (unknown backend rejected)
 // ===========================================================================
 {
   try {
@@ -161,7 +177,7 @@ console.log('PASS: --hard-timeout-sec 0 rejected');
 console.log('PASS: unknown backend rejected');
 
 // ===========================================================================
-// 10. --backend with path traversal rejected
+// 11. --backend with path traversal rejected
 // ===========================================================================
 {
   try {
@@ -174,7 +190,7 @@ console.log('PASS: unknown backend rejected');
 console.log('PASS: path-traversal backend rejected');
 
 // ===========================================================================
-// 11. --backend set twice is rejected
+// 12. --backend set twice is rejected
 // ===========================================================================
 {
   try {
@@ -188,7 +204,7 @@ console.log('PASS: path-traversal backend rejected');
 console.log('PASS: double --backend rejected');
 
 // ===========================================================================
-// 12. --access enum: only the contract values are accepted (ticket 108);
+// 13. --access enum: only the contract values are accepted (ticket 108);
 //     'full' is rejected at the argument boundary with a message naming the
 //     two valid values
 // ===========================================================================
@@ -212,7 +228,7 @@ console.log('PASS: double --backend rejected');
 console.log('PASS: --access enum boundary');
 
 // ===========================================================================
-// 13. --embed-diff defaults true and --no-embed-diff is an explicit opt-out
+// 14. --embed-diff defaults true and --no-embed-diff is an explicit opt-out
 // ===========================================================================
 {
   const review = (...flags) => parseArgs(['node', 'dcli', '--backend', 'fake', 'review', ...flags]);
@@ -225,7 +241,7 @@ console.log('PASS: --access enum boundary');
 console.log('PASS: review diff embedding flags');
 
 // ===========================================================================
-// 14. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
+// 15. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
 //     access, does NOT fire on plain questions or non-read-only access, and
 //     the JSON envelope path is unaffected (hint is a separate emit).
 // ===========================================================================

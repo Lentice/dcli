@@ -365,3 +365,67 @@ Direct checks passed:
   remains outside `docs/tickets/`.
 
 Per the user's instruction, the full `npm run check` was not run.
+
+Follow-up regression coverage added on 2026-08-14: `tests/core/cli-args.test.js` now pins the removed
+`--reasoning-effort` spelling at the parser boundary. The dedicated ticket-131 case passes only when
+`parseArgs(['--backend', 'fake', 'run', '--reasoning-effort', 'high'])` throws exit `2` with the exact
+message `Unknown flag: --reasoning-effort`. This is intentionally separate from the generic
+`--bogus-flag` case so adding the old spelling back to `VALUE_FLAGS` cannot stay green. The focused test
+completed with exit `0` and printed:
+
+```
+PASS: ticket 131 removed --reasoning-effort flag stays rejected
+```
+
+The non-live Agent checks produced:
+
+```
+# reasoningEffort under core status/job-store paths
+# no output (rg exit 1: no matches)
+
+# old spellings repo-wide, excluding node_modules, .git, docs/tickets, and .tmp-test
+.\tests\core\cli-args.test.js:89:// 6. Ticket 131 deliberately removed --reasoning-effort; keep the old flag
+.\tests\core\cli-args.test.js:94:    parseArgs(['--backend', 'fake', 'run', '--reasoning-effort', 'high']);
+.\tests\core\cli-args.test.js:95:    assert.fail('Should have thrown for removed --reasoning-effort flag');
+.\tests\core\cli-args.test.js:97:    assert.strictEqual(err.exitCode, 2, 'removed --reasoning-effort must exit 2');
+.\tests\core\cli-args.test.js:98:    assert.strictEqual(err.message, 'Unknown flag: --reasoning-effort',
+.\tests\core\cli-args.test.js:102:console.log('PASS: ticket 131 removed --reasoning-effort flag stays rejected');
+
+# old flag rejected before backend execution
+Unknown flag: --reasoning-effort
+exit=2
+
+# invalid Claude effort enum
+--effort must be one of low, medium, high, xhigh, max for backend claude. No job was created.
+exit=2
+
+# opencode rejection branch count
+1
+
+# xhigh|reasoning_effort|minimal under core
+# no output (rg exit 1: no matches)
+
+# generated integration check
+All generated files are up to date.
+exit=0
+```
+
+Deviation: the ticket's repo-wide grep required the additional `--exclude-dir=.tmp-test` exclusion;
+without it, old test-run scratch artifacts make the check meaningless. Even with that exclusion, the
+new acceptance-A regression test is now the only source-tree match, so the check's original "no output"
+expectation and criterion D need to allow the deliberate parser-boundary test. The live Codex
+`--effort xhigh` check was not run because it requires a live backend. A red phase was not manufactured:
+the implementation already rejects the removed flag, and this follow-up forbids changing `core/` merely
+to make the new regression test fail first.
+
+`npm run check` was run and failed for an unrelated environment reason; dependencies are not installed
+in this worktree, so ESLint is unavailable. Its output was:
+
+```
+npm notice run dcli@0.0.0 check
+npm notice run npm run lint && npm run test:full
+npm notice run dcli@0.0.0 lint
+npm notice run eslint .
+'eslint' is not recognized as an internal or external command,
+operable program or batch file.
+```
