@@ -72,6 +72,7 @@ Options:
   --path <p>                    Limit to specific path(s) (repeatable)
   --include-untracked           Include untracked files in review
   --embed-diff                  Embed the diff in the prompt (default)
+  --no-embed-diff               Do not embed the diff; the backend reads the tree itself
   --intent <s>                  One-line description of review intent
   --focus <s>                   Specific aspect to focus on
   --stat                        Show diffstat (diff command)

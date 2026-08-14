@@ -518,11 +518,14 @@ stdout **even when checks fail**.
 ## 11. Review design
 
 Scopes: `--staged`, `--working`, `--range <base>..<head>`, `--path <p>` (repeatable),
-`--include-untracked`, `--embed-diff`.
+`--include-untracked`, `--embed-diff`, `--no-embed-diff`.
 
 **`--embed-diff` is the default.** The wrapper generates the exact diff itself and embeds it
 (size-capped) in the prompt. This prevents reviewing a moving target and removes any dependence on
 the backend's ability to spawn `git`.
+`--no-embed-diff` is the explicit opt-out: the prompt then describes the scope and the backend reads
+the tree itself, which reintroduces both risks named above. If both flags are supplied, the last one
+wins.
 
 Prompt rules: state intent and focus **neutrally**; explicitly say intent is context, **not**
 evidence of correctness; require evidence against the actual diff; deny edits; order findings by

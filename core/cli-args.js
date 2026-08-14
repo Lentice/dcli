@@ -116,6 +116,12 @@ function parseArgs(argv) {
     }
 
     if (arg.startsWith('--')) {
+      if (arg === '--no-embed-diff') {
+        result.embedDiff = false;
+        i++;
+        continue;
+      }
+
       const boolKey = BOOL_FLAGS[arg];
       if (boolKey) {
         result[boolKey] = true;

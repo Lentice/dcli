@@ -41,7 +41,7 @@ whenever the choice matters for the task.
 Scoped code review. The wrapper generates the diff and embeds it in the prompt.
 
 ```
-dcli-opencode review [--working|--staged|--range <base>..<head>] [--path <p>] [--intent <s>] [--focus <s>] [--embed-diff] [--include-untracked] --hard-timeout-sec <n>
+dcli-opencode review [--working|--staged|--range <base>..<head>] [--path <p>] [--intent <s>] [--focus <s>] [--no-embed-diff] [--include-untracked] --hard-timeout-sec <n>
 ```
 
 - `--access` is always `read-only` for review

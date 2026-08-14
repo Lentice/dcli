@@ -212,7 +212,20 @@ console.log('PASS: double --backend rejected');
 console.log('PASS: --access enum boundary');
 
 // ===========================================================================
-// 13. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
+// 13. --embed-diff defaults true and --no-embed-diff is an explicit opt-out
+// ===========================================================================
+{
+  const review = (...flags) => parseArgs(['node', 'dcli', '--backend', 'fake', 'review', ...flags]);
+  assert.notStrictEqual(review().embedDiff, false, 'review defaults to embedding the diff');
+  assert.strictEqual(review('--embed-diff').embedDiff, true, '--embed-diff must enable embedding');
+  assert.strictEqual(review('--no-embed-diff').embedDiff, false, '--no-embed-diff must disable embedding');
+  assert.strictEqual(review('--embed-diff', '--no-embed-diff').embedDiff, false, 'last flag must win');
+  assert.strictEqual(review('--no-embed-diff', '--embed-diff').embedDiff, true, 'last flag must win');
+}
+console.log('PASS: review diff embedding flags');
+
+// ===========================================================================
+// 14. maybeAccessHint unit: hint fires on tool-dispatch prompts with read-only
 //     access, does NOT fire on plain questions or non-read-only access, and
 //     the JSON envelope path is unaffected (hint is a separate emit).
 // ===========================================================================
