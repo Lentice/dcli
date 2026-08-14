@@ -61,9 +61,10 @@ user reviews before applying.
 | `21` | cancellation unconfirmed |
 | `22` | session missing/expired |
 | `23` | repo/worktree preparation failure |
-| `24` | job hard timeout (tree killed) |
-| `25` | apply conflict (main repo verified restored) |
+| `24` | job hard timeout. The attempt ended and the record was written — **not** a guarantee the process tree is dead; on Windows containment is declared-degraded and survivors are named in `containment_survivors`. |
+| `25` | apply conflict, main repo **verified restored** — only the rollback-verified sites in `core/worktree.js` |
 | `26` | backend protocol incompatible/malformed |
+| `27` | apply failed and the repository could **not** be proven restored. Never retry; a human looks first. |
 
 ## 4. The two facts that shaped the whole design
 

@@ -3,6 +3,13 @@
 **Tier:** Data safety and contract correctness. `apply` is allowed to mutate the user's main repository only when a failed operation can prove that repository state was restored.
 **Filed from:** 2026-08-08 repository audit; direct rollback probe.
 
+> **Superseded in part by ticket 122 (2026-08-13).** This ticket shipped the fail-closed rollback and
+> reported every non-restoration as exit `25`, the same code as a verified-restored apply conflict — so
+> an agent branching on the code could not tell them apart. Ticket 122 appended exit `27`
+> (`repository_state_unverified`) and moved all four unverified sites in `core/commands/apply.js` to it.
+> Every "exit `25`" below is historical: read it as exit `27` wherever the text says restoration was not
+> verified. `25` now means verified-restored only, and is reached solely from `core/worktree.js`.
+
 ---
 
 ## Symptom / Goal
