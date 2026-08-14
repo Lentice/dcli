@@ -1,6 +1,6 @@
 # 125 — the runner's own byte-exact test compares a load-dependent section, so a green suite is a coin flip under load
 
-**Status:** ready
+**Status:** in progress
 **Blocked by:** —
 **Tier:** Trust in the suite itself. `npm run check` is the gate every ticket ships through. When it fails
 in `tests/core/test-runner.test.js`, the failure says nothing about the change under test — but a human
@@ -191,4 +191,19 @@ grep -niE "retry|setTimeout|sleep" tests/core/test-runner.test.js
 
 ## Notes
 
-(empty)
+Implemented Option A in `tests/core/test-runner.test.js`: the concurrency comparison now removes the
+entire trailing `--- LOAD ---` section before normalizing timings, while a separate near-cap assertion
+still proves that the report renders for `hang.test.js` with its wording and budget details intact.
+
+Scoped checks passed three consecutive times:
+
+- `node tests/core/test-runner.test.js` — `PASS: all test-runner tests` (3/3)
+- `npx eslint tests/core/test-runner.test.js` — passed
+- `git diff --check` — passed
+- A direct runner invocation observed the unchanged load report, including
+  `test-runner\\hang.test.js  (1025 ms / 1000 ms, 102% of budget)`.
+
+`FIXTURE_TIMEOUT` remains `10000`; no retry, sleep, or tolerance was added. No `README.md`, reference,
+or integration-source update is needed because this is test-only. Per the user's instruction, the full
+`npm run check` and its three consecutive full-suite runs were not executed, so this ticket remains
+`in progress` pending that gate.

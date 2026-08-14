@@ -28,7 +28,9 @@ async function main() {
     {
       const r1 = await runTests({ root: FIXTURES_DIR, concurrency: 1, timeoutMs: FIXTURE_TIMEOUT, suite: 'full' });
       const r2 = await runTests({ root: FIXTURES_DIR, concurrency: 3, timeoutMs: FIXTURE_TIMEOUT, suite: 'full' });
-      const withoutTimings = (output) => output.replace(/\d+ ms \/ \d+ ms/g, '<timing>');
+      const withoutTimings = (output) => output
+        .replace(/\n\n--- LOAD ---[\s\S]*$/, '')
+        .replace(/\d+ ms \/ \d+ ms/g, '<timing>');
       assert.strictEqual(
         withoutTimings(r1.output),
         withoutTimings(r2.output),
@@ -104,6 +106,11 @@ async function main() {
       const r = await runTests({ root: FIXTURES_DIR, concurrency: 1, timeoutMs: 1000, suite: 'full' });
       assert.ok(r.output.includes('timed out after 1000 ms'), 'Hang fixture must be reported with duration');
       assert.ok(r.anyFailed, 'Timeout must cause anyFailed=true');
+      assert.match(
+        r.output,
+        /--- LOAD ---[\s\S]*hang\.test\.js\s+\(\d+ ms \/ 1000 ms, \d+% of budget\)/,
+        'Near-cap fixtures must still be reported in the load section',
+      );
     }
 
     // -----------------------------------------------------------------------
