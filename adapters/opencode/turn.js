@@ -248,12 +248,14 @@ class OpencodeTurn {
 
       reconnectCount++;
 
-      if (statusCache === null || statusCache === 'idle') {
+      if (statusCache === 'idle') {
         break;
       }
 
       if (reconnectCount >= this._timings.maxSseReconnects) {
-        break;
+        // This cap bounds one reconnect streak; it must not complete a live
+        // turn. Keep polling/reconnecting until idle or the caller deadline.
+        reconnectCount = 0;
       }
 
       try {
@@ -296,6 +298,15 @@ class OpencodeTurn {
           return !info || info.role === 'assistant';
         });
         const totalTokens = (final.usage && final.usage.total) || 0;
+        if (!msgError && !final.completed && hasAssistantMessages) {
+          yield this._record({
+            type: 'backend_error',
+            class_hint: 'provider_error',
+            structured_payload: {
+              message: 'Backend session ended without a final assistant stop. The result may be incomplete.',
+            },
+          });
+        }
         if (!msgError && totalTokens === 0 && !hasAssistantMessages) {
           yield this._record({
             type: 'backend_error',
@@ -570,6 +581,7 @@ class OpencodeTurn {
     }
     const facts = [];
     for (const msg of messages) {
+      if (msg && msg.info && msg.info.role === 'user') continue;
       const parts = msg.parts || [];
       for (const p of parts) {
         switch (p.type || '') {
@@ -688,7 +700,7 @@ class OpencodeTurn {
           }
         }
       }
-      return { text, usage, cost, message_id: lastCompletedMid };
+      return { text, usage, cost, message_id: lastCompletedMid, completed: true };
     }
 
     if (finalFlatMid) {
@@ -708,29 +720,14 @@ class OpencodeTurn {
           if (p.cost !== undefined) cost = p.cost;
         }
       }
-      return { text, usage, cost, message_id: finalFlatMid };
+      return { text, usage, cost, message_id: finalFlatMid, completed: true };
     }
 
     if (assistantMessages.length === 0) {
-      return { text: '', usage: { input: 0, output: 0, total: 0 }, cost: null, message_id: null };
+      return { text: '', usage: { input: 0, output: 0, total: 0 }, cost: null, message_id: null, completed: false };
     }
 
-    const parts = assistantMessages[0].parts || [];
-    for (const p of parts) {
-      if (p.type === 'text') text += p.text || '';
-      if ((p.type === 'step-finish' || p.type === 'step_finish') && p.tokens) {
-        usage = {
-          total: p.tokens.total || 0,
-          input: p.tokens.input || 0,
-          output: p.tokens.output || 0,
-          reasoning: p.tokens.reasoning || null,
-          cache_read: (p.tokens.cache && p.tokens.cache.read) || null,
-          cache_write: (p.tokens.cache && p.tokens.cache.write) || null,
-        };
-        if (p.cost !== undefined) cost = p.cost;
-      }
-    }
-    return { text, usage, cost, message_id: null };
+    return { text: '', usage: { input: 0, output: 0, total: 0 }, cost: null, message_id: null, completed: false };
   }
 }
 

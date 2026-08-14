@@ -184,6 +184,72 @@ async function main() {
   });
 
   // ===========================================================================
+  // 4B. A busy session survives the per-stream reconnect cap
+  // ===========================================================================
+  await run('Busy session is not completed at the SSE reconnect cap', async () => {
+    let statusPolls = 0;
+    const { facts } = await collectTurn({
+      ...DEFAULT_SCRIPT,
+      '/event': [],
+      '/session/status': () => {
+        statusPolls++;
+        return { ses_1: { type: statusPolls > 5 ? 'idle' : 'busy' } };
+      },
+      '/session/ses_1/message': {
+        messages: [
+          {
+            info: { role: 'user', id: 'user_1' },
+            parts: [{ type: 'text', messageID: 'user_1', text: 'PROMPT' }],
+          },
+          {
+            info: { role: 'assistant', id: 'msg_tool' },
+            parts: [{ type: 'step-finish', messageID: 'msg_tool', reason: 'tool-calls', tokens: { total: 10 } }],
+          },
+          {
+            info: { role: 'assistant', id: 'msg_final' },
+            parts: [
+              { type: 'text', messageID: 'msg_final', text: 'Final answer' },
+              { type: 'step-finish', messageID: 'msg_final', reason: 'stop', tokens: { total: 20 } },
+            ],
+          },
+        ],
+      },
+    });
+
+    assert.ok(statusPolls > 5, `must keep observing after 5 busy polls, got ${statusPolls}`);
+    assert.ok(facts.some(f => f.type === 'process_exited'), 'process_exited after idle status');
+    assert.ok(facts.some(f => f.type === 'assistant_text' && f.text === 'Final answer'), 'final answer is retained');
+    assert.ok(!facts.some(f => f.type === 'assistant_text' && f.text === 'PROMPT'), 'user prompt is not assistant output');
+  });
+
+  await run('Incomplete assistant turn is not a clean completion', async () => {
+    const { turn, facts } = await collectTurn({
+      ...DEFAULT_SCRIPT,
+      '/event': [],
+      '/session/ses_1/message': {
+        messages: [
+          {
+            info: { role: 'user', id: 'user_1' },
+            parts: [{ type: 'text', messageID: 'user_1', text: 'PROMPT' }],
+          },
+          {
+            info: { role: 'assistant', id: 'msg_tool' },
+            parts: [{ type: 'step-finish', messageID: 'msg_tool', reason: 'tool-calls', tokens: { total: 10 } }],
+          },
+          {
+            info: { role: 'assistant', id: 'msg_open' },
+            parts: [{ type: 'step-start', messageID: 'msg_open' }, { type: 'reasoning', messageID: 'msg_open' }],
+          },
+        ],
+      },
+    });
+
+    assert.ok(facts.some(f => f.type === 'backend_error' && f.class_hint === 'provider_error'), 'missing final stop is an error');
+    assert.ok(facts.some(f => f.type === 'process_exited'), 'terminal fact is still emitted');
+    assert.strictEqual(turn.result.text, '', 'incomplete assistant text is not returned as a result');
+  });
+
+  // ===========================================================================
   // 5. On reconnect: event id + re-read messages to fill gaps
   // ===========================================================================
   await run('Reconnect re-reads messages — no fact lost', async () => {

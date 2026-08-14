@@ -629,6 +629,26 @@ await (async () => {
     console.log('PASS: _verifyProjectIdentity accepts canonicalDir listed in sandboxes');
   }
 
+  // Case 1b: the original project was moved or removed. Its stale path may
+  // not resolve, but a matching canonical sandbox still proves the instance
+  // is serving the right job directory.
+  {
+    const missingOriginalDir = tmpDir();
+    fs.rmSync(missingOriginalDir, { recursive: true, force: true });
+    const server = await startFakeServer({
+      worktree: missingOriginalDir,
+      sandboxes: [canonicalDir],
+    });
+    const port = server.address().port;
+    const adapter = new OpencodeAdapter({
+      transport: new HttpTransport({ baseUrl: `http://127.0.0.1:${port}` }),
+    });
+    adapter._canonicalDir = canonicalDir;
+    await adapter._verifyProjectIdentity();
+    server.close();
+    console.log('PASS: _verifyProjectIdentity accepts a missing stale worktree with a sandbox match');
+  }
+
   // Case 2: canonicalDir is neither the reported directory nor in sandboxes
   // — must still reject.
   {

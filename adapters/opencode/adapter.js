@@ -346,15 +346,19 @@ class OpencodeAdapter {
       const hasGit = fs.existsSync(path.join(this._canonicalDir, '.git'));
       if (!hasGit) return;
     }
+    const normalizedCanonical = fs.realpathSync.native(path.resolve(this._canonicalDir)).toLowerCase();
+    let normalizedEffective = null;
     try {
       const resolved = fs.realpathSync.native(path.resolve(effectiveDir));
       if ((resolved === '\\' || resolved === '/') && !fs.existsSync(path.join(this._canonicalDir, '.git'))) {
         return;
       }
-    } catch {}
-
-    const normalizedCanonical = fs.realpathSync.native(path.resolve(this._canonicalDir)).toLowerCase();
-    const normalizedEffective = fs.realpathSync.native(path.resolve(effectiveDir)).toLowerCase();
+      normalizedEffective = resolved.toLowerCase();
+    } catch {
+      // OpenCode can report a stale original project path while the actual
+      // job directory is listed under sandboxes. Check that list below before
+      // turning the stale path into a backend failure.
+    }
 
     if (normalizedEffective === normalizedCanonical) return;
 
