@@ -19,6 +19,11 @@ const { resolveHardTimeoutMs } = require('./deadlines');
 const { createDetachedWorktree, removeWorktree } = require('./worktree');
 const { persistInitFiles } = require('./result-artifact');
 const { workerIdentityDetail } = require('./process-identity');
+const {
+  assertStateRootWritable,
+  createStateRootError,
+  isStateRootUnwritableError,
+} = require('./state-root');
 
 /**
  * Create a job and its first attempt inside one ownership boundary.
@@ -80,6 +85,8 @@ function openAttempt({
   const isoNow = new Date().toISOString();
   const effectiveAccess = access || 'read-only';
 
+  if (stateRoot) assertStateRootWritable(stateRoot);
+
   let worktreePath = null;
   let worktreeBaseCommit = null;
   let worktreeCreated = false;
@@ -107,11 +114,15 @@ function openAttempt({
     if (admission) {
       const result = admission.acquireSlot(backend);
       if (!result.acquired) {
+        if (result.reason === 'state_root_unwritable' || isStateRootUnwritableError(result.error)) {
+          throw result.error || createStateRootError(stateRoot);
+        }
         // Admission slots are a lock-like resource: at capacity the local
         // queue is full right now, not the provider's credit exhausted.
         // Classify as lock/17 (bounded backoff retry) so the delegating agent
         // is never told "note it, never retry" about a transient local state.
-        const err = new Error(`System at capacity (global: ${result.active}/${result.limit}). Try again later or use "submit" instead.`);
+        const limit = result.limit === undefined ? 'unknown' : result.limit;
+        const err = new Error(`System at capacity (global: ${result.active}/${limit}). Try again later or use "submit" instead.`);
         err.exitCode = 17;
         err.failureClass = 'lock';
         throw err;

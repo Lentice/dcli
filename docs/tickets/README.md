@@ -115,6 +115,7 @@ then 114); the pure-docs ticket last. No ticket is blocked by another.
 | [131 — `--reasoning-effort` is a second spelling of `--effort` that nothing needs; delete it](131-remove-the-reasoning-effort-alias.md) | done | — |  |
 | [125 — the runner's own byte-exact test compares a load-dependent section](125-test-runner-byte-exact-comparison-is-load-dependent.md) | done | — | Ticket 105's `--- LOAD ---` report varies with concurrency by design, and block 1's scrubber does not remove it, so `npm run check` fails at random under load |
 | [126 — exit 18 claims the backend never ran when it did, and is unreachable from `submit`](126-exit-18-lies-in-one-direction-and-is-unreachable-in-the-other.md) | done | — | `SendPrompt` failures exit `18` after the child process already started; the detached worker's top-level catch discards `err.exitCode` and exits `1`. Third instance of the 121/122 family. Exit `26` audited in the same pass and found correct |
+| [132 — state-root permission failures are reported as admission capacity](132-state-root-permission-misreported-as-capacity.md) | done | — |  |
 <!-- /GENERATED: ticket table -->
 
 **A closed ticket is not necessarily an implemented one.** 81 was closed because it was fixed; 78 was

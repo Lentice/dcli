@@ -470,6 +470,50 @@ console.log('PASS: releaseAll');
 console.log('PASS: cross-process stale lock detection');
 
 // ===========================================================================
+// 13. Storage failures are not reported as lock contention
+// ===========================================================================
+
+{
+  loadModules();
+  const dir = tmpDir();
+  const stateRoot = path.join(dir, 'state');
+  const lockDir = path.join(stateRoot, 'locks');
+  fs.mkdirSync(lockDir, { recursive: true });
+  const mgr = new LockManager({ lockDir, stateRoot });
+  const originalWriteFileSync = fs.writeFileSync;
+
+  fs.writeFileSync = (filePath, ...args) => {
+    if (String(filePath).endsWith('.tmp')) {
+      const err = new Error('sandbox denied the lock write');
+      err.code = 'EPERM';
+      throw err;
+    }
+    return originalWriteFileSync(filePath, ...args);
+  };
+
+  try {
+    assert.throws(
+      () => mgr.tryAcquire('storage', 'resource'),
+      (err) => {
+        assert.strictEqual(err.code, 'DCLI_STATE_ROOT_UNWRITABLE');
+        assert.strictEqual(err.reason, 'state_root_unwritable');
+        assert.strictEqual(err.failureClass, 'permission_or_sandbox');
+        assert.strictEqual(err.exitCode, 15);
+        assert.match(err.message, /state root not writable/i);
+        assert.ok(err.message.includes(stateRoot), 'error must name the configured state root');
+        assert.match(err.message, /DCLI_STATE_ROOT/);
+        return true;
+      }
+    );
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    clean(dir);
+  }
+}
+
+console.log('PASS: storage failures are classified, not treated as contention');
+
+// ===========================================================================
 // Summary
 // ===========================================================================
 

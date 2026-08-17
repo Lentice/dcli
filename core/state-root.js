@@ -5,6 +5,12 @@ const { spawnSync } = require('child_process');
 
 let _cachedRoot = null;
 
+const STATE_ROOT_UNWRITABLE_CODE = 'DCLI_STATE_ROOT_UNWRITABLE';
+const STATE_ROOT_WRITE_ERROR_CODES = new Set([
+  'EACCES', 'EBUSY', 'EDQUOT', 'EFBIG', 'EISDIR', 'EIO', 'EINVAL',
+  'EMFILE', 'ENFILE', 'ENAMETOOLONG', 'ENOSPC', 'ENOTDIR', 'EPERM', 'EROFS',
+]);
+
 function getStateRoot() {
   if (_cachedRoot !== null) return _cachedRoot;
 
@@ -27,6 +33,50 @@ function getStateRoot() {
 
 function resetCache() {
   _cachedRoot = null;
+}
+
+function isStateRootWriteError(err) {
+  return Boolean(err && STATE_ROOT_WRITE_ERROR_CODES.has(err.code));
+}
+
+function isStateRootUnwritableError(err) {
+  return Boolean(err && err.code === STATE_ROOT_UNWRITABLE_CODE);
+}
+
+function createStateRootError(rootPath, cause) {
+  if (isStateRootUnwritableError(cause)) return cause;
+  const target = rootPath || getStateRoot();
+  const detail = cause && cause.code
+    ? ` (${cause.code}: ${cause.message})`
+    : cause && cause.message ? ` (${cause.message})` : '';
+  const error = new Error(
+    `state root not writable: ${target}. Grant the runtime access or set DCLI_STATE_ROOT to a private, sandbox-writable directory.${detail}`
+  );
+  error.code = STATE_ROOT_UNWRITABLE_CODE;
+  error.reason = 'state_root_unwritable';
+  error.failureClass = 'permission_or_sandbox';
+  error.exitCode = 15;
+  error.stateRoot = target;
+  error.cause = cause;
+  return error;
+}
+
+function toStateRootError(rootPath, cause) {
+  if (isStateRootUnwritableError(cause)) return cause;
+  return isStateRootWriteError(cause) ? createStateRootError(rootPath, cause) : null;
+}
+
+function assertStateRootWritable(rootPath) {
+  const target = rootPath || getStateRoot();
+  const probe = path.join(target, `.dcli-probe-${process.pid}-${Date.now()}`);
+  try {
+    if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(probe, 'ok', 'utf8');
+    fs.unlinkSync(probe);
+  } catch (err) {
+    try { fs.unlinkSync(probe); } catch {}
+    throw createStateRootError(target, err);
+  }
 }
 
 function ensureStateRoot(rootPath) {
@@ -84,4 +134,15 @@ function getStateRootAcl(target) {
   }
 }
 
-module.exports = { getStateRoot, resetCache, ensureStateRoot, getStateRootAcl };
+module.exports = {
+  getStateRoot,
+  resetCache,
+  ensureStateRoot,
+  assertStateRootWritable,
+  createStateRootError,
+  isStateRootWriteError,
+  isStateRootUnwritableError,
+  toStateRootError,
+  STATE_ROOT_UNWRITABLE_CODE,
+  getStateRootAcl,
+};

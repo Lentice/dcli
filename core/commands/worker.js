@@ -116,6 +116,16 @@ async function main() {
 
   const slotResult = admission.acquireSlot(backendName);
   if (!slotResult.acquired) {
+    if (slotResult.reason === 'state_root_unwritable') {
+      const error = slotResult.error || new Error(`state root not writable: ${stateRoot}`);
+      const exitCode = Number.isInteger(error.exitCode) ? error.exitCode : 15;
+      journalFailure(
+        store, null, repoKey, jobId, null,
+        'state_root_unwritable', error.message, error.failureClass || 'permission_or_sandbox'
+      );
+      writeSentinel(jobDir, exitCode, 'failed');
+      process.exit(exitCode);
+    }
     store.journalTransition(jobId, repoKey, {
       kind: 'attempt_state_changed',
       attempt: null,
@@ -252,7 +262,7 @@ async function main() {
   finish(result.exitCode, result.terminalState);
 }
 
-function journalFailure(store, slotId, repoKey, jobId, stateRoot, reason, message) {
+function journalFailure(store, slotId, repoKey, jobId, stateRoot, reason, message, failureClass = reason) {
   try {
     if (!store && stateRoot) {
       const { JobStore } = require('../job-store');
@@ -264,7 +274,7 @@ function journalFailure(store, slotId, repoKey, jobId, stateRoot, reason, messag
         attempt: 1,
         from: 'created',
         to: 'failed',
-        detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: reason, failure: { class: reason, message, source: 'wrapper' } },
+        detail: { finished_at: new Date().toISOString(), phase: 'terminal', failure_reason: reason, failure: { class: failureClass, message, source: 'wrapper' } },
       });
     }
   } catch {}

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { getOwnIdentity, generateExecutionToken, isSameProcessAlive } = require('./process-identity');
 const { resolveDeadline } = require('./deadlines');
+const { toStateRootError } = require('./state-root');
 
 // Only scopes with a real caller. Lock names are persisted as filenames, so a
 // scope is a contract the moment something takes it — add one when a caller
@@ -43,6 +44,7 @@ class LockManager {
   constructor(options = {}) {
     const stateRoot = require('./state-root').getStateRoot();
     this._lockDir = options.lockDir || path.join(stateRoot, 'locks');
+    this._stateRoot = options.stateRoot || path.dirname(this._lockDir);
     this._timeoutMs = options.timeoutMs !== undefined ? options.timeoutMs : resolveDeadline('LOCK_ACQUISITION_MS');
     this._heldLocks = new Map();
     // Deliberately the CHEAP identity: no OS creation-time lookup. A lock is
@@ -119,7 +121,11 @@ class LockManager {
     }
 
     const lockPath = this._lockPath(scope, key);
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    try {
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    } catch (err) {
+      throw toStateRootError(this._stateRoot, err) || err;
+    }
 
     const deadline = Date.now() + this._timeoutMs;
     let lastError = null;
@@ -129,7 +135,7 @@ class LockManager {
         return this._createLockFile(scope, key, lockPath, extra);
       } catch (err) {
         if (err.code !== 'EEXIST') {
-          throw err;
+          throw toStateRootError(this._stateRoot, err) || err;
         }
         if (this._isStale(lockPath)) {
           this._quarantine(lockPath);
@@ -206,12 +212,14 @@ class LockManager {
     }
 
     const lockPath = this._lockPath(scope, key);
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-
     try {
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
       return this._createLockFile(scope, key, lockPath, extra);
     } catch (err) {
-      if (err.code === 'EEXIST' && this._isStale(lockPath)) {
+      if (err.code !== 'EEXIST') {
+        throw toStateRootError(this._stateRoot, err) || err;
+      }
+      if (this._isStale(lockPath)) {
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
             this._quarantine(lockPath);
@@ -320,7 +328,7 @@ class LockManager {
  * @returns {LockManager}
  */
 function lockManagerForStore(store, options = {}) {
-  return new LockManager({ ...options, lockDir: path.join(store.stateRoot, 'locks') });
+  return new LockManager({ ...options, stateRoot: store.stateRoot, lockDir: path.join(store.stateRoot, 'locks') });
 }
 
 module.exports = {

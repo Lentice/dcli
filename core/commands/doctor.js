@@ -4,6 +4,7 @@ const { spawnSync } = require('child_process');
 const { resolveDeadline } = require('../deadlines');
 const { isAvailable, resolveHelperPath } = require('../containment');
 const { failureClassToExitCode } = require('../failure-class');
+const { assertStateRootWritable } = require('../state-root');
 
 const PROBE_TIMEOUT_MS = 10000;
 
@@ -162,16 +163,11 @@ async function runCommonProbes({ stateRoot, repoPath }) {
 }
 
 async function probeStateRoot(stateRoot) {
-  const testFile = path.join(stateRoot, '.dcli-probe-' + Date.now());
   try {
-    if (!fs.existsSync(stateRoot)) {
-      fs.mkdirSync(stateRoot, { recursive: true });
-    }
-    fs.writeFileSync(testFile, 'ok', 'utf8');
-    fs.unlinkSync(testFile);
+    assertStateRootWritable(stateRoot);
     return { name: 'state_root', ok: true, detail: `state root is writable: ${stateRoot}` };
   } catch (err) {
-    return { name: 'state_root', ok: false, detail: `state root not writable: ${err.message}` };
+    return { name: 'state_root', ok: false, detail: err.message };
   }
 }
 

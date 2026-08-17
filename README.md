@@ -141,6 +141,15 @@ They are independent: exit 20 means only that this caller stopped waiting, while
 Use `wait --json` and inspect `wait_timed_out` / `wait_timeout_sec` when automation must distinguish the two.
 The calling shell or tool needs its own finite timeout too, longer than `--hard-timeout-sec`.
 
+If the runtime sandbox cannot write the default state root, dcli exits 15 and names the problem instead of reporting
+false admission capacity. Set `DCLI_STATE_ROOT` explicitly to a private directory the sandbox allows, verify it with
+a static doctor run, and keep it outside Git; dcli never silently falls back to another root:
+
+```powershell
+$env:DCLI_STATE_ROOT = 'D:\private\dcli-state'
+dcli-claude doctor --json --live-smoke-timeout-sec 0
+```
+
 Job ids look like `20260804T123456Z-a1b2c3d4`. Anything else is rejected as a usage error rather than
 looked up — an id from another tool's runtime is not a dcli job, and `dcli list` is the list of ids
 that are. Records are per repository, so read a job with the same `--repo` you submitted it with.

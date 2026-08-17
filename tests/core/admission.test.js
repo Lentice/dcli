@@ -402,4 +402,30 @@ console.log('PASS: reconcile nudges the queue');
 
 console.log('PASS: dispatcher never launches a job that is no longer queued');
 
+// ===========================================================================
+// 13. State-root storage failures stay distinct from contention
+// ===========================================================================
+
+{
+  loadModules();
+  const root = tmpDir();
+  const ac = new AdmissionController({ stateRoot: root });
+  const storageError = new Error(`state root not writable: ${root}`);
+  storageError.code = 'EPERM';
+  ac._lockManager.tryAcquire = () => { throw storageError; };
+
+  const result = ac.acquireSlot('fake');
+  assert.strictEqual(result.acquired, false);
+  assert.strictEqual(result.queued, false);
+  assert.strictEqual(result.reason, 'state_root_unwritable');
+  assert.strictEqual(result.stateRoot, root);
+  assert.strictEqual(result.error.cause, storageError);
+  assert.strictEqual(result.error.failureClass, 'permission_or_sandbox');
+  assert.strictEqual(result.error.exitCode, 15);
+
+  clean(root);
+}
+
+console.log('PASS: admission preserves state-root storage failure');
+
 console.log('\nAll admission tests passed.');

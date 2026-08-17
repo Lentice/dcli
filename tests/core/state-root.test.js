@@ -6,7 +6,12 @@ const { spawnSync } = require('child_process');
 
 const { DEFAULT_TIMEOUT } = require('../run-tests');
 
-const { ensureStateRoot, getStateRootAcl, resetCache } = require('../../core/state-root');
+const {
+  ensureStateRoot,
+  assertStateRootWritable,
+  getStateRootAcl,
+  resetCache,
+} = require('../../core/state-root');
 
 function tmpDir() {
   return path.join(os.tmpdir(), `dcli-acl-test-${Math.random().toString(36).slice(2)}`);
@@ -87,6 +92,44 @@ function clean(dir) {
   const result = getStateRootAcl();
   assert.strictEqual(result, null, 'getStateRootAcl without path and no cache must return null');
   console.log('PASS: getStateRootAcl returns null without cache');
+}
+
+// ===========================================================================
+// 3. A failed writability probe is actionable and classified
+// ===========================================================================
+
+{
+  const testDir = tmpDir();
+  fs.mkdirSync(testDir, { recursive: true });
+  const originalWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = (filePath, ...args) => {
+    if (String(filePath).includes('.dcli-probe-')) {
+      const err = new Error('sandbox denied the probe write');
+      err.code = 'EPERM';
+      throw err;
+    }
+    return originalWriteFileSync(filePath, ...args);
+  };
+
+  try {
+    assert.throws(
+      () => assertStateRootWritable(testDir),
+      (err) => {
+        assert.strictEqual(err.code, 'DCLI_STATE_ROOT_UNWRITABLE');
+        assert.strictEqual(err.reason, 'state_root_unwritable');
+        assert.strictEqual(err.failureClass, 'permission_or_sandbox');
+        assert.strictEqual(err.exitCode, 15);
+        assert.match(err.message, /state root not writable/i);
+        assert.ok(err.message.includes(testDir));
+        assert.match(err.message, /DCLI_STATE_ROOT/);
+        return true;
+      }
+    );
+    console.log('PASS: state-root writability failure is actionable');
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+    clean(testDir);
+  }
 }
 
 console.log('\nAll state-root ACL tests passed.');

@@ -136,6 +136,11 @@ the user-space root and reported **"Job not found"** for a job that had complete
 reintroduce a repo-derived state root, and never place state in a temp directory — job records must
 outlive the machine's temp cleanup to keep `status`, `read` and `resume` meaningful.
 
+When a runtime sandbox cannot write the configured root, setup fails as
+`permission_or_sandbox`/15 and names the root plus the remedy: grant runtime access or explicitly set
+`DCLI_STATE_ROOT` to a private, sandbox-writable directory. dcli never silently falls back, because that
+would split resumable state and could expose prompt or result data under a different ACL.
+
 ```
 <state-root>/
 ├── jobs/<repo-key>/<job-id>/
@@ -331,7 +336,7 @@ translated, never surfaced.
 | `12` | Environment or compatibility failure |
 | `13` | Authentication failure |
 | `14` | Quota or rate-limit failure |
-| `15` | Permission / access-policy denial |
+| `15` | Permission / access-policy denial, including a state root the runtime cannot write |
 | `16` | Network / transport failure |
 | `17` | Lock acquisition or corrupt-state failure. (2026-08-11) Local admission capacity — "System at capacity", the local queue is full — classifies here as `lock` (bounded backoff retry), never as `14`. |
 | `18` | Worker launch / startup-sentinel failure before the backend starts. A failure after `Start()` succeeds is backend execution failure (`10`), not a claim that no provider work occurred. |
@@ -361,7 +366,7 @@ structured error type, not the status code.
 |---|---|
 | `quota_or_rate_limit` | Note it; continue without the delegated work. Never retry-loop. |
 | `auth` | Note that credentials need attention (`opencode providers login` / `codex login` / `claude auth`). No retry. |
-| `permission_or_sandbox` | Do not broaden automatically. Refine the permission profile or narrow scope on a *future* attempt. |
+| `permission_or_sandbox` | Do not broaden automatically. Refine the permission profile or narrow scope on a *future* attempt. A local state-root failure names the configured root and recommends granting access or setting `DCLI_STATE_ROOT` to a private, sandbox-writable directory. |
 | `network` | At most one explicit jittered retry, read-only jobs only. |
 | `timeout` | Never retry automatically. |
 | `no_result` | Preserve events; caller may resume or retry manually. |

@@ -247,6 +247,36 @@ async function main() {
     }
   });
 
+  // =======================================================================
+  // State-root storage failure must not become 0/undefined capacity.
+  // =======================================================================
+  await withTempDir(async (dir) => {
+    const repoRoot = createRepo(dir);
+    const stateRoot = path.join(dir, 'state');
+    const store = new JobStore({ stateRoot });
+    const controller = new AdmissionController({ stateRoot });
+    const storageError = new Error(`state root not writable: ${stateRoot}`);
+    storageError.code = 'EPERM';
+    controller._lockManager.tryAcquire = () => { throw storageError; };
+
+    let error;
+    try {
+      await openImplementAttempt({ store, repoRoot, stateRoot, admission: controller });
+    } catch (err) { error = err; }
+
+    assert.ok(error, 'state-root storage failure must fail setup');
+    assert.strictEqual(error.exitCode, 15);
+    assert.strictEqual(error.failureClass, 'permission_or_sandbox');
+    assert.strictEqual(error.reason, 'state_root_unwritable');
+    assert.ok(error.message.includes(stateRoot));
+    assert.match(error.message, /DCLI_STATE_ROOT/);
+    assert.doesNotMatch(error.message, /0\/undefined/);
+    assert.strictEqual(slotFiles(stateRoot).length, 0);
+    assert.strictEqual(worktreeDirs(stateRoot).length, 0);
+    assert.strictEqual(gitWorktrees(repoRoot).length, 1);
+    console.log('PASS: setup failure — state-root storage is not capacity');
+  });
+
   console.log('\nAll setup-failure tests passed.');
 }
 

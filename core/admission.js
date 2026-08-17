@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { LockManager } = require('./locking');
 const { TERMINAL } = require('./reducer');
+const { isStateRootUnwritableError, toStateRootError } = require('./state-root');
 
 const DEFAULT_GLOBAL_LIMIT = 5;
 const DEFAULT_PER_BACKEND_LIMIT = 5;
@@ -17,7 +18,7 @@ class AdmissionController {
     this._queueDir = path.join(stateRoot, 'queue');
     this._ownIdentity = this._captureIdentity();
     this._ownToken = this._ownIdentity.startTime + ':' + process.pid;
-    this._lockManager = new LockManager({ lockDir: path.join(stateRoot, 'locks') });
+    this._lockManager = new LockManager({ lockDir: path.join(stateRoot, 'locks'), stateRoot });
     // The dispatcher must not launch a job that is no longer queued; the
     // queue is the only coordination point between cancel and relaunch.
     this._readJobState = readJobState || ((repoKey, jobId) => {
@@ -116,13 +117,19 @@ class AdmissionController {
 
   acquireSlot(backend) {
     const b = backend || 'unknown';
-
-    const lock = this._lockManager.tryAcquire('admission', 'global');
-    if (!lock) {
-      return { acquired: false, queued: true, reason: 'contention', active: this._countActiveSlots(b).globalActive };
-    }
-
+    let lock = null;
     try {
+      lock = this._lockManager.tryAcquire('admission', 'global');
+      if (!lock) {
+        return {
+          acquired: false,
+          queued: true,
+          reason: 'contention',
+          active: this._countActiveSlots(b).globalActive,
+          limit: this._globalLimit,
+        };
+      }
+
       const { globalActive, backendActive } = this._countActiveSlots(b);
 
       if (globalActive >= this._globalLimit) {
@@ -137,8 +144,22 @@ class AdmissionController {
       const slotId = this._generateSlotId();
       const meta = this._writeSlotFile(slotId, b);
       return { acquired: true, queued: false, slotId, executionToken: meta.executionToken };
+    } catch (err) {
+      const stateError = isStateRootUnwritableError(err)
+        ? err
+        : toStateRootError(this._stateRoot, err);
+      if (stateError) {
+        return {
+          acquired: false,
+          queued: false,
+          reason: 'state_root_unwritable',
+          stateRoot: this._stateRoot,
+          error: stateError,
+        };
+      }
+      throw err;
     } finally {
-      this._lockManager.release(lock);
+      if (lock) this._lockManager.release(lock);
     }
   }
 

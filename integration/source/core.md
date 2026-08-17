@@ -263,7 +263,7 @@ adopt an unverified finding to close the loop.
 | 12 | Environment/compatibility failure | Run `doctor` for diagnostics. |
 | 13 | Authentication failure | Run `<backend> login` / `auth`. Never retry automatically. |
 | 14 | Quota or rate-limit | Note it; continue without the work. Never retry. |
-| 15 | Permission/access denied | Refine the permission profile. Never retry automatically. |
+| 15 | Permission/access denied | Refine the permission profile. A local state-root failure names the configured root and recommends granting access or setting `DCLI_STATE_ROOT` to a private, sandbox-writable directory. Never retry automatically. |
 | 16 | Network failure | At most one jittered retry for read-only jobs only. |
 | 17 | Lock, local capacity, or corrupt state | Transient: "System at capacity" means the local queue is full right now, not that a provider refused. Retry with bounded backoff, or use `submit`. A job record that exists but cannot be read also lands here — that one is not retryable, so read the message before retrying. |
 | 18 | Worker launch / startup failure | The worker or backend process could not be started, so the backend never ran. Nothing was consumed on the provider side. A failure after the backend starts (including prompt delivery) is exit `10`, not `18`. Run `doctor`, then retry once. |
