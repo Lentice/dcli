@@ -249,6 +249,37 @@ async function main() {
     assert.strictEqual(turn.result.text, '', 'incomplete assistant text is not returned as a result');
   });
 
+  // A live capture (job 20260817T060143Z-f739bcjm, opencode 1.18.18): the SSE
+  // stream dropped repeatedly and the assistant message never got past
+  // step-start + an empty reasoning part. The turn must not report that as a
+  // clean empty answer, and the user's prompt must never be echoed back as the
+  // assistant's text.
+  await run('Stalled turn (step-start + empty reasoning only) is an error, not an empty answer', async () => {
+    const { turn, facts } = await collectTurn({
+      ...DEFAULT_SCRIPT,
+      '/event': [],
+      '/session/ses_1/message': [
+        {
+          info: { role: 'user', id: 'msg_user' },
+          parts: [{ type: 'text', messageID: 'msg_user', text: 'LONG PROMPT' }],
+        },
+        {
+          info: { role: 'assistant', id: 'msg_asst', tokens: { input: 0, output: 0 } },
+          parts: [
+            { type: 'step-start', messageID: 'msg_asst', snapshot: 'abc' },
+            { type: 'reasoning', messageID: 'msg_asst', text: '' },
+          ],
+        },
+      ],
+    });
+
+    assert.ok(facts.some(f => f.type === 'backend_error' && f.class_hint === 'provider_error'),
+      'a turn with no final stop must surface as provider_error');
+    assert.ok(!facts.some(f => f.type === 'assistant_text' && f.text.includes('LONG PROMPT')),
+      'the prompt must never be emitted as assistant text');
+    assert.strictEqual(turn.result.text, '', 'no result text from a stalled turn');
+  });
+
   // ===========================================================================
   // 5. On reconnect: event id + re-read messages to fill gaps
   // ===========================================================================
